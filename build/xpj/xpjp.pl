@@ -1,0 +1,515 @@
+#!/usr/bin/perl
+#perl xpjp.pl -v 1 -t xcode -c Debug -c Release -p Macosx32 -d includePipeline=false -d includeUICLibs=true -d includeViewer=true -x UICViewer.xpj -o UICViewer
+#perl xpjp.pl -v 1 -t xcode -c Debug -c Release -p Macosx32 -d LibraryCompileTemplate=StaticLibNoWarnings -d DynamicLibraryCompileTemplate=DynamicLibNoWarnings -x UICLibs.xpj
+
+use strict;
+
+use File::Basename;
+use File::Spec::Functions;
+use Cwd qw(realpath getcwd);
+use XML::LibXML;
+use File::Path;
+
+#globals required by various functions
+my $currentdir = "";
+
+sub find_directory {
+  my $startdir = shift;
+  my $target = shift;
+  my $combined = catdir( $startdir, $target );
+  while( ( length($startdir) > 3 ) && !(-e $combined) ) {
+	$startdir = dirname($startdir);
+	$combined = catdir( $startdir, $target );
+  }
+  return realpath( $startdir );
+}
+
+sub eval_buildconf_file {
+  my $fullpath = shift;
+  my $document = do {
+    local $/ = undef;
+    open my $fh, "<", $fullpath
+        or die "could not open file: $!";
+    <$fh>;
+  };
+  my @include;
+  my $environment;
+  my $requires;
+  my $aquaConfig;
+  my $platforms;
+  my $buildConfig;
+  eval( $document );
+  my $hash_ref = {
+                    'environment' => $environment,
+                    'aquaConfig'  => $aquaConfig,
+                    'buildConfig' => $buildConfig,
+				    'platforms' => $platforms,
+                  };
+  return $hash_ref;
+}
+
+sub get_buildconf_var {
+  my $environment = shift;
+  my $platformVars = shift;
+  my $varname = uc( shift );
+  
+  if ( (exists $platformVars->{$varname} ) ) {
+	return $platformVars->{$varname};
+  }
+  if ( (exists $environment->{$varname} ) ) {
+	return $environment->{$varname};
+  }
+  die "Unrecognized environment variable: $varname\n";
+}
+
+
+sub parse_xpj_templates_element {
+  my $xmlelem = shift;
+  my $templates = shift;
+  my $elemName = $xmlelem->nodeName;
+  if ( $elemName eq "template" ) {
+	if ( $xmlelem->hasAttribute( "filename" ) ) {
+	  my $fname = $xmlelem->getAttribute( "filename" );
+	  my $templatePath = realpath( catfile( $currentdir, $fname ) );
+	  do {
+		print "parsing template file $templatePath\n";
+		my $old_current_dir = $currentdir;
+		$currentdir = dirname( $templatePath );
+		my $doc;
+		open my $fh, '<', $templatePath or die 'could not open template file $templatePath';
+		binmode $fh; # drop all PerlIO layers possibly created by a use open pragma
+		$doc = XML::LibXML->load_xml(IO => $fh);
+		parse_xpj_templates_doc($doc, $templates);
+		$currentdir = $old_current_dir;
+	  };
+	}
+	else {
+	  my $templateName = uc($xmlelem->getAttribute( "name" ));
+	  $templates->{$templateName} = $xmlelem;
+	}
+  }  
+  my @childnodes = $xmlelem->childNodes;
+  foreach my $child (@childnodes) {
+	if ( $child->nodeType == XML_ELEMENT_NODE ) {
+	  parse_xpj_templates_element( $child, $templates );
+	}
+  }
+}
+
+sub parse_xpj_templates_doc {
+  my $xmldoc = shift;
+  my $templates = shift;
+  my $topElem = $xmldoc->documentElement();
+  parse_xpj_templates_element( $topElem, $templates );
+}
+
+sub eval_xpj_string_data {
+  my $xpj_eval_context = shift;
+  my $strdata = shift;
+  my $last_match_end = 0;
+  my $str_end = length($strdata);
+  my $retval = "";
+  #iterate through the string and produce a new string
+  #performing the required substitutions for the variables
+  while( $strdata =~ m/\$([\[\{][\w:]+[\]\}])/g ) {
+	my $match_end_pos = pos($strdata);
+	my $matched_str = $&;
+	my $match_len = length($matched_str);
+	my $match_start_pos = $match_end_pos - $match_len;
+	$retval = $retval . substr( $strdata, $last_match_end, $match_start_pos - $last_match_end );
+	$last_match_end = $match_end_pos;
+	if ( my ($varname) = $matched_str =~ /\[(\w+)\]/ ) {
+	  #template variable
+	  my $varmap = $xpj_eval_context->{ 'template_variables' };
+	  if ( ( exists $varmap->{uc($varname)} ) ) {
+		$retval = $retval . eval_xpj_string_data( $xpj_eval_context, $varmap->{uc($varname)} );
+	  }
+	  else {
+		die "Undefined apply-template variable: $varname\n";
+	  }
+	}
+	elsif ( my ($prefix, $varname) = $matched_str =~ /\{(\w*):(\w+)\}/ ) {
+	  if ( $prefix eq "xpj" ) {
+		 my $varmap = $xpj_eval_context->{ 'xpj_variables' };
+		 if ( ( exists $varmap->{uc($varname)} ) ) {
+		   $retval = $retval . eval_xpj_string_data( $xpj_eval_context, $varmap->{uc($varname)} ); 
+		 }
+		 else {
+		   die "Unrecognized xpj variable: $varname";
+		 }
+	  }
+	  elsif ($prefix eq "env" ) {
+		my $envvars = $xpj_eval_context->{ 'environment' };
+		my $platenv = $xpj_eval_context->{ 'platform_environment' };
+		$retval = $retval . eval_xpj_string_data( $xpj_eval_context, get_buildconf_var( $envvars, $platenv, $varname ) );
+	  }
+	  else {
+		die "Unrecognized xpj variable prefix";
+	  }
+	}
+	elsif ( my ($varname) = $matched_str =~ /\{(\w+)\}/ ) {
+	  my $defines = $xpj_eval_context->{ 'defines' };
+	  if ( ( exists $defines->{uc($varname)} ) ) {
+		$retval = $retval . eval_xpj_string_data( $xpj_eval_context, $defines->{uc($varname)} );
+	  }
+	  else {
+		die "Unrecognized define variable: $varname";
+	  }
+	}
+  }
+  if ( $last_match_end != $str_end ) {
+	$retval = $retval . substr( $strdata, $last_match_end, $str_end - $last_match_end );
+  }
+  return $retval;
+}
+
+sub eval_xpj_conditional {
+  my $value = shift;
+  my $testname = uc(shift);
+  my $testvalue = shift;
+  if ( $testname eq "MATCH" ) {
+	$testvalue = quotemeta( $testvalue );
+	if ( $value =~ /$testvalue/i ) {
+	  return 1;
+	}
+	else {
+	  return 0;
+	}
+  }
+  elsif( $testname eq "NOTMATCH" ) {
+	$testvalue = quotemeta( $testvalue );
+	if ( $value =~ /$testvalue/i ) {
+	  return 0;
+	}
+	else {
+	  return 1;
+	}
+  }
+  elsif ( $testname eq "INCLUDEANY" ) {
+	my @pieces = split(' ', $testvalue );
+	foreach my $piece (@pieces ) {
+	  my $regexPiece = quotemeta( $piece );
+	  if ( $value =~ /$regexPiece/i ) {
+		return 1;
+	  }
+	}
+	return 0;
+  }
+  elsif ( $testname eq "INCLUDEALL" ) {
+	my @pieces = split(' ', $testvalue );
+	foreach my $piece (@pieces ) {
+	  my $regexPiece = quotemeta( $piece );
+	  if ( !($value =~ /$regexPiece/i) ) {
+		return 0;
+	  }
+	}
+	return 1;
+  }
+  elsif ( $testname eq "NOTINCLUDEANY" ) {
+	my @pieces = split(' ', $testvalue );
+	foreach my $piece (@pieces ) {
+	  my $regexPiece = quotemeta( $piece );
+	  if ( $value =~ /$regexPiece/i ) {
+		return 0;
+	  }
+	}
+	return 1;
+  }
+  else {
+	die "Unrecognized conditional test $testname";
+  }
+}
+
+sub eval_xpj_copy_attributes {
+  my $xpj_eval_context = shift;
+  my $sourceElem = shift;
+  my $destElem = shift;
+  my @srcAtts = $sourceElem->attributes;
+  my $sourceName = $sourceElem->nodeName;
+  foreach my $att (@srcAtts) {
+	my $attName = $att->nodeName;
+	my $attValue = eval_xpj_string_data( $xpj_eval_context, $att->value );
+	$destElem->setAttribute( $attName, $attValue );
+  }
+}
+
+sub eval_xpj_conditional_element {
+  my $xpj_eval_context = shift;
+  my $sourceElem = shift;
+  my $destElem = shift;
+  my @attributes = $sourceElem->getAttributes();
+  my $cond_value;
+  my $cond_test_name;
+  my $cond_test_value;
+  foreach my $attribute (@attributes ) {
+	my $attname = uc($attribute->nodeName);
+	my $attValue = $attribute->value;
+	if ( $attname eq "VALUE" ) {
+	  $cond_value = eval_xpj_string_data( $xpj_eval_context, $attValue );
+	}
+	else {
+	  $cond_test_name = $attname;
+	  $cond_test_value = eval_xpj_string_data( $xpj_eval_context, $attValue );
+	}
+  }
+  if ( eval_xpj_conditional( $cond_value, $cond_test_name, $cond_test_value ) ) {
+	my @childnodes = $sourceElem->childNodes;
+	foreach my $child (@childnodes ) {
+	  if ( $child->nodeType == XML_ELEMENT_NODE ) {
+		eval_xpj_element( $xpj_eval_context, $child, $destElem );
+	  }
+	}
+  }
+}
+
+sub eval_xpj_apply_template {
+  my $xpj_eval_context = shift;
+  my $source_elem = shift;
+  my $dest_elem = shift;
+  my $templates = $xpj_eval_context->{'templates'};
+  my $template_name = uc(eval_xpj_string_data( $xpj_eval_context, $source_elem->getAttribute("name")));
+  if ( (exists $templates->{$template_name} ) ) {
+	my $existing_template_variables = $xpj_eval_context->{'template_variables'};
+	my $new_template_variables = {};
+	my @apply_children = $source_elem->childNodes;
+	foreach my $apply_child (@apply_children ) {
+	  if ( $apply_child->nodeType == XML_ELEMENT_NODE ) {
+		my $apply_child_name = $apply_child->nodeName;
+		if ( $apply_child_name eq "define" ) {
+		  my $apply_key = uc( eval_xpj_string_data( $xpj_eval_context, $apply_child->getAttribute( "key" ) ) );
+		  my $apply_value = eval_xpj_string_data( $xpj_eval_context, $apply_child->getAttribute( "value" ) );
+		  $new_template_variables->{$apply_key} = $apply_value;
+		}
+		else {
+		  die "Unrecognized apply-template child name $apply_child_name";
+		}
+	  }
+	}
+	$xpj_eval_context->{'template_variables'} = $new_template_variables;
+	my $template = $templates->{$template_name};
+	my @template_children = $template->childNodes;
+	foreach my $template_child (@template_children) {
+	  if ( $template_child->nodeType == XML_ELEMENT_NODE ) {
+		eval_xpj_element( $xpj_eval_context, $template_child, $dest_elem );
+	  }
+	}
+	$xpj_eval_context->{'template_variables'} = $existing_template_variables;
+  }
+  else {
+	die "Unrecognized template name: $template_name\n";
+  }
+}
+
+sub eval_xpj_copy_element {
+  my $xpj_eval_context = shift;
+  #source is the element we are evaluating
+  my $source_elem = shift;
+  #dest is the element we are evaluating *into*
+  my $dest_elem = shift;
+  
+  my $dest_doc = $dest_elem->ownerDocument;
+  my $new_elem = $dest_doc->createElement( $source_elem->nodeName );
+  $dest_elem->appendChild( $new_elem );
+  eval_xpj_copy_attributes( $xpj_eval_context, $source_elem, $new_elem );
+  my @source_children = $source_elem->childNodes;
+  foreach my $source_child (@source_children) {
+	if ( $source_child->nodeType == XML_ELEMENT_NODE ) {
+	  eval_xpj_element( $xpj_eval_context, $source_child, $new_elem );
+	}
+	elsif( $source_child->nodeType == XML_TEXT_NODE ) {
+	  my $new_text_data = eval_xpj_string_data( $xpj_eval_context, $source_child->data );
+	  $new_elem->appendText( $new_text_data );
+	}
+  }
+}
+
+sub eval_xpj_element {
+  my $xpj_eval_context = shift;
+  #source is the element we are evaluating
+  my $source_elem = shift;
+  #dest is the element we are evaluating *into*
+  my $dest_elem = shift;
+  my $source_name = lc($source_elem->nodeName);
+  #export we only copy if it is the current platform
+  if ( $source_name eq 'export' ) {
+	my $export_platform = uc($source_elem->getAttribute("platform" ) );
+	my $export_tool = uc($source_elem->getAttribute("tool" ) );
+	my $xpjvars = $xpj_eval_context->{'xpj_variables'};
+	if ( ( $export_platform eq uc($xpjvars->{"PLATFORM"}) )
+		 && ( $export_tool eq uc($xpjvars->{"TOOL"}) ) ) {
+	  eval_xpj_copy_element( $xpj_eval_context, $source_elem, $dest_elem );
+	  my $exportdir = "";
+	  my @export_children = $source_elem->childNodes;
+	  foreach my $export_child (@export_children ) {
+		if ( $export_child->nodeType == XML_TEXT_NODE ) {
+		  $exportdir = $exportdir . eval_xpj_string_data( $xpj_eval_context, $export_child->data );
+		}
+	  }
+	  my $target_dir = catdir($currentdir,$exportdir);
+	  if ( !(-e $target_dir ) ) {
+		mkpath($target_dir);
+	  }
+	  $target_dir = realpath($target_dir);
+	  my $xpj_variables = $xpj_eval_context->{'xpj_variables'};
+	  $xpj_variables->{'TARGET_EXPORT_DIR'} = $target_dir;
+	}
+  }
+  #already processed this
+  elsif( $source_name eq 'template' ) {
+  }
+  elsif( $source_name eq 'apply-template' ) {
+	eval_xpj_apply_template( $xpj_eval_context, $source_elem, $dest_elem );
+  }
+  elsif( $source_name eq 'conditional' ) {
+	eval_xpj_conditional_element( $xpj_eval_context, $source_elem, $dest_elem );
+  }
+  else {
+	eval_xpj_copy_element( $xpj_eval_context, $source_elem, $dest_elem );
+  }
+}
+
+sub upcase_hash {
+  my $source_hash = shift;
+  my $dest_hash = {};
+  foreach my $keyname (keys %$source_hash) {
+	$dest_hash->{uc($keyname)} = $source_hash->{$keyname};
+  }
+  return $dest_hash;
+}
+
+#evaluate a dom document producing a new dom document with
+#all of the possible variables filled in.
+#in general we are just copying input to output *except*
+#we are going through all content and apply templates *and*
+#evaluating conditions and filling in variables.
+sub eval_xpj_file {
+  my $xpj_eval_context = shift;
+  my $xmldoc = shift;
+  my $newdoc = XML::LibXML::Document->new( "1", "utf-8" );
+  my $new_doc_elem = $newdoc->createElement( "XPJ" );
+  my $source_doc_element = $xmldoc->documentElement;
+  $newdoc->setDocumentElement( $new_doc_elem );
+
+  eval_xpj_copy_attributes( $xpj_eval_context, $source_doc_element, $new_doc_elem );
+  my @source_children = $source_doc_element->childNodes;
+  foreach my $source_child (@source_children) {
+	if ( $source_child->nodeType == XML_ELEMENT_NODE ) {
+	  eval_xpj_element( $xpj_eval_context, $source_child, $new_doc_elem );
+	}
+  }
+  return $newdoc;
+}
+
+#parse the command line parameters
+#sample invocation: 
+#-v 1 -t $vcver -c Debug -c Release -p $platform -x UICLibs.xpj
+
+my $verbose = 0;
+my $xpjtool = "";
+my @configurations = ();
+my $defines = {};
+my $xpjfile = "";
+my $outputfile = "";
+my $platform = "";
+
+my $argcount = @ARGV;
+
+for ( my $argi = 0; $argi < $argcount; ++$argi ) {
+  my $currentArg = $ARGV[$argi];
+  if ( $currentArg eq "-v" ) {
+	++$argi;
+	my $arg = $ARGV[$argi];
+	if ( $arg eq "1" ) {
+	  $verbose = 1;
+	}
+  }
+  elsif( $currentArg eq "-c" ) {
+	++$argi;
+	push( @configurations, $ARGV[$argi] );	
+  }
+  elsif( $currentArg eq "-p" ) {
+	++$argi;
+	$platform = $ARGV[$argi];
+  }
+  elsif( $currentArg eq "-t" ) {
+	++$argi;
+	$xpjtool = $ARGV[$argi];
+  }
+  elsif ( $currentArg eq "-d" ) {
+	++$argi;
+	my ($varname, $varvalue ) = $ARGV[$argi] =~ /(\w+)=(\w+)/;
+	$defines->{uc($varname)} = $varvalue;
+  }
+  elsif ( $currentArg eq "-x" ) {
+	++$argi;
+	$xpjfile = catfile( getcwd(), $ARGV[$argi] )
+  }
+  elsif( $currentArg eq "-o" ) {
+	++$argi;
+	$outputfile = $ARGV[$argi];
+  }
+}
+
+die "Unable to find xpj file $xpjfile" unless -e $xpjfile;
+$xpjfile = realpath( $xpjfile );
+$currentdir = dirname( $xpjfile );
+
+my $projectdir = find_directory( $currentdir, "Architect" );
+my $uicdir = find_directory($projectdir, "Tools/boost" );
+my $toolsdir = catdir( $uicdir, "Tools" );
+print "project directory: $projectdir\ntools directory: $toolsdir\n";
+my $buildconf = catfile( $projectdir, "buildconf.pl" );
+
+$ENV{PROJECT_ROOT} = $projectdir;
+$ENV{TOOLS_ROOT} = $uicdir;
+
+my $variables = eval_buildconf_file( $buildconf );
+my $env = upcase_hash( $variables->{'environment'} );
+my $uictopdir = $env->{'UIC_TOP_DIR'};
+my $platforms = $variables->{'platforms'};
+my $platform_hashes = upcase_hash( $variables->{'platforms'} );
+die "Undefined platform $platform\n" unless exists $platform_hashes->{uc($platform)};
+my $platformEnv = upcase_hash( $platform_hashes->{uc($platform)}->{'environment'} );
+
+print "parsing xpj file: $xpjfile\n";
+my $doc;
+do {
+  open my $fh, '<', $xpjfile or die 'could not open xpj file';
+  binmode $fh; # drop all PerlIO layers possibly created by a use open pragma
+  $doc = XML::LibXML->load_xml(IO => $fh);
+};
+
+#template references
+my $templates = {};
+
+#navigate the document pulling templates from the document.
+
+parse_xpj_templates_doc($doc, $templates);
+
+
+#now we want to produce a new document by running through the original document,
+#expanding all variable references and all template declarations.  This allows us
+#to save out the resulting document and ensure that our template engine is correct.
+#it also allows us to use a simpler engine to answer queries about the xpj dataset.
+
+#xpj has three variable sources.  The first is the environment, the second is predefined xpj vars
+#and the third is variables defined on the command line.  
+
+
+my $xpjvars = {
+	platform => $platform,
+    tool => $xpjtool,
+};
+
+
+my $xpj_eval_context = {
+   templates => $templates,
+   xpj_variables => $xpjvars,
+};
+
+
+my $newdoc = eval_xpj_file( $xpj_eval_context, $doc );
+my $testfile = $xpjfile . ".expand";
+$newdoc->toFile( $testfile, 1 );
+
+1;
