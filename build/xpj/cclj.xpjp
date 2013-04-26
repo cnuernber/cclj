@@ -4,16 +4,16 @@
 sub artifact_name
 {
 	my $config_name = shift;
-	my $platform = lc($xpj->['platform']);
 	my $config_type = shift;
-	my $target_name = $xpj->{'target_name'}; #name of the currently processing target
+	my $platform = lc($xpj->{platform});
+	my $target_name = $xpj->{target_name}; #name of the currently processing target
 	my $base_name = $target_name;
 	if ( $config_name ne "Release" ) { $base_name = "$target_name$config_name"; }
-	if ( ($platform eq 'win32') || ($platform eq 'win64')) {
-		if ( $config_type eq 'StaticLibrary' ) {
+	if ( ($platform eq 'win32') || ($platform eq 'win64') ) {
+		if ( $config_type eq 'static_library' ) {
 			return "$base_name.lib";
 		}
-		elsif( config_type eq 'DynamicLibrary' ) {
+		elsif( $config_type eq 'dynamic_library' ) {
 			return "$base_name.dll";
 		}
 		else {
@@ -24,21 +24,21 @@ sub artifact_name
 }
 	</perl>
 	<template name="base_config_t">
-		<!-- config name is anything you want.  Config type is StaticLibrary, DynamicLibrary, Executable, ConsoleExecutable -->
-		<configuration name="{{[$template->{'config_name'}}]" type="{{[$template->{'config_type'}]}}">
-			<set_artifact_name>{{[artifact_base($template->['config_name']), $template->['config_type'])}}]</set_artifact_name>
+		<!-- config name is anything you want.  Config type is static_library, dynamic_library, executable, console_executable -->
+		<configuration name="{{[$tempvar->{config_name}]}}" type="{{[$tempvar->{config_type}]}}">
+			<set_artifact_name>{{[artifact_name($tempvar->{config_name}, $tempvar->{config_type})]}}</set_artifact_name>
 		</configuration>
 	</template>
 	
 	<!-- Call a given template twice forwarding all arguments to that template but also adding
-		$template->{'config_name'} to be either release or debug -->
+		$tempvar->{'config_name'} to be either release or debug -->
 	<template name="debug_release_t">
-		<apply-template name="{{[$template->{'template'}]}}]">
+		<apply-template name="{{[$tempvar->{template}]}}">
 			<define key="config_name" value="Debug"/>
 			<!-- forward any key/value pairs to the template -->
 			<forward-defines/>
 		</apply-template>
-		<apply-template name="{{[$template->{'template'}]}}">
+		<apply-template name="{{[$tempvar->{template}]}}">
 			<define key="config_name" value="Release"/>
 			<!-- forward any key/value pairs to the template -->
 			<forward-defines/>
@@ -47,17 +47,19 @@ sub artifact_name
 	
 	<template name="static_lib_t">
 		<apply-template name="debug_release_t">
-			<forward_defines/>
+			<forward-defines/>
 			<define key="template" value="base_config_t"/>
 			<define key="config_type" value="static_library"/>
 		</apply-template>
 	</template>
 	
 	<project name="cclj">
-		<projdir>../{{["$xpj->{'tool'}" . "$xpj->{'platform'}"]}}</projdir>
-		<libdir>../../lib/{{[$xpj->{'platform'}]}}</libdir>
-		<bindir>../../bin/{{[$xpj->{'platform'}]}}</bindir>
-		<intdir>../{{["$xpj->{'tool'}" . "$xpj->{'platform'}"]}}/build"</intdir>
+		<projdir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}</projdir>
+
+		<!-- everything else is relative to the project dir -->
+		<libdir>../../lib/{{[$xpj->{platform}]}}</libdir>
+		<bindir>../../bin/{{[$xpj->{platform}]}}</bindir>
+		<intdir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}/build"</intdir>
 		<target name="gtest">
 			<apply-template name="static_lib_t"/>
 			<preprocessor type="define">
