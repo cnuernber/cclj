@@ -26,7 +26,7 @@ sub artifact_name
 	<template name="base_config_t">
 		<!-- config name is anything you want.  Config type is static_library, dynamic_library, executable, console_executable -->
 		<configuration name="{{[$tempvar->{config_name}]}}" type="{{[$tempvar->{config_type}]}}">
-			<set_artifact_name>{{[artifact_name($tempvar->{config_name}, $tempvar->{config_type})]}}</set_artifact_name>
+			<set-artifact-name>{{[artifact_name($tempvar->{config_name}, $tempvar->{config_type})]}}</set-artifact-name>
 		</configuration>
 	</template>
 	
@@ -59,18 +59,22 @@ sub artifact_name
 		<!-- everything else is relative to the project dir -->
 		<libdir>../../lib/{{[$xpj->{platform}]}}</libdir>
 		<bindir>../../bin/{{[$xpj->{platform}]}}</bindir>
-		<intdir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}/build"</intdir>
+		<builddir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}/build"</builddir>
 		<target name="gtest">
 			<apply-template name="static_lib_t"/>
-			<preprocessor type="define">
+			<preprocessor>
 				_VARIADIC_MAX=10
 			</preprocessor>
-			<search type="include">
+			<search type="header">
 				../../gtest
 				../../gtest/include
 			</search>
+			<files name="include" root="../../gtest/include/gtest">
+			  *
+			  internal/*
+			</files>
 			<files name="src" root="../../gtest/src">
-				*.cc
+				*
 				-gtest_main.cc
 				-gtest-all.cc
 			</files>

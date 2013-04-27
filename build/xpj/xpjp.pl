@@ -280,7 +280,6 @@ $newdoc->toFile( 'cclj.xpjp.expand', 1 );
 
 my $toolname = $xpj->{'tool'};
 my $bindir = $FindBin::Bin;
-print "bin dir: $FindBin::Bin\n";
 #require the backend and see what happens
 my $toolmodule = require "$toolname.pm";
 $toolmodule->{process}( $xpj, $newdoc );
