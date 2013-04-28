@@ -25,8 +25,9 @@ sub artifact_name
 	</perl>
 	<template name="base_config_t">
 		<!-- config name is anything you want.  Config type is static_library, dynamic_library, executable, console_executable -->
-		<configuration name="{{[$tempvar->{config_name}]}}" type="{{[$tempvar->{config_type}]}}">
-			<set-artifact-name>{{[artifact_name($tempvar->{config_name}, $tempvar->{config_type})]}}</set-artifact-name>
+		<configuration name="{{[$tempvar->{config_name}]}}">
+		  <configuration_type>{{[$tempvar->{config_type}]}}</configuration_type>
+		  <set-artifact-name>{{[artifact_name($tempvar->{config_name}, $tempvar->{config_type})]}}</set-artifact-name>
 		</configuration>
 	</template>
 	
@@ -44,6 +45,17 @@ sub artifact_name
 			<forward-defines/>
 		</apply-template>
 	</template>
+
+	<!--We rely on the default configs being appropriate for debug in general-->
+	<template name="default_debug_release_config_t">
+	  <configuration name="Release">
+		<optimization>max_speed</optimization>
+		<use_debug_libraries>false</use_debug_libraries>
+		<function_level_linking>true</function_level_linking>
+		<enable_comdat_folding>true</enable_comdat_folding>
+		<optimize_references>true</optimize_references>
+	  </configuration>
+	</template>
 	
 	<template name="static_lib_t">
 		<apply-template name="debug_release_t">
@@ -51,6 +63,7 @@ sub artifact_name
 			<define key="template" value="base_config_t"/>
 			<define key="config_type" value="static_library"/>
 		</apply-template>
+		<apply-template name="default_debug_release_config_t"/>
 	</template>
 	
 	<project name="cclj">

@@ -4,286 +4,200 @@ use XML::LibXML;
 use Data::UUID;
 use Cwd qw(realpath getcwd);
 
+my $om;
 my $xpj;
-my $projects = [];
-my $bindir;
-my $libdir;
-my $intdir;
-my $projdir;
 
-sub elemText {
-	my $elem = shift;
-	my $retval = "";
-	my @childNodes = $elem->childNodes;
-	foreach my $child (@childNodes) {
-		$nodeType = XML_ELEMENT_TEXT;
-		$retval = $retval . $child->data();
+sub config_type_to_vs_type {
+	my $configType = shift;
+	if ( $configType eq "static_library" ) {
+		return "StaticLibrary";
 	}
-	return $retval;
-}
-
-sub project_relative_dir {
-	my $elem = shift;
-	my $dir = catdir( $projdir, elemText( $elem ) );
-	mkpath( $dir );
-	return File::Spec::->abs2rel( realpath( $dir ), $projdir );
-}
-
-sub trim {
-	my $input = shift;
-	my ($output) = $input =~ /^\s*([^\s]?.*[^\s])\s*$/;
-	return $output;
-}
-
-sub add_node {
-	my $parent = shift;
-	my $nodeType = shift;
-	my $items = $parent->{nodes};
-	if ( !$items ) {
-		$items = [];
-		$parent->{nodes} = $items;
-	}
-	my $newItem = { type => $nodeType, values => [] };
-	push( @$items, $newItem );
-	return $newItem;
-}
-
-sub add_array_node {
-	my $parent = shift;
-	my $nodeType = shift;
-	my $newItem = add_node( $parent, $nodeType );
-	my $retval = [];
-	$newItem->{values} = $retval;
-	return $retval;
-}
-
-sub add_hash_node {
-	my $parent = shift;
-	my $nodeType = shift;
-	my $newItem = add_node( $parent, $nodeType );
-	my $retval = {};
-	$newItem->{values} = $retval;
-	return $retval;
-}
-
-sub process_target_config_child {
-	my $parent = shift;
-	my $elem = shift;
-	my $nodeName = $elem->nodeName;
-	my $lineno = $elem->line_number();
-	if( $nodeName eq "search" ) {
-		my $searchType = $elem->getAttribute( "type" );
-		die "Unrecognized search type $searchType" unless( $searchType eq "header" || $searchType eq "linker" );
-		my $arrayName = "$searchType-search-paths";
-		my $resultArray = add_array_node( $parent, $arrayName );
-		
-		my @lines = split( /\n/, elemText( $elem ) );
-		foreach my $line (@lines ) {
-			my $trimmed = trim( $line );
-			if ( $trimmed ) {
-				$fullpath = catdir( getcwd(), $trimmed );
-				if ( !( -e $fullpath ) ) {
-					die "Search path $line does not exist";
-				}
-				$fullpath = realpath( $fullpath );
-				$relpath = File::Spec->abs2rel( $fullpath, $projdir );
-				push( @$resultArray, $relpath );
-			}
-		}
-	}
-	elsif( $nodeName eq "cflags" || $nodeName eq "lflags" || $nodeName eq "preprocessor" ) {
-		$resultArray = add_array_node( $parent, $nodeName );
-		my @lines = split( /\n/, elemText( $elem ) );
-		foreach my $line (@lines ) {
-			my $trimmed = trim( $line );
-			if ( $trimmed ) {
-				push( @$resultArray, $trimmed );
-			}
-		}
+	elsif( $configType eq "dynamic_library" ) {
+		return "DynamicLibrary";
 	}
 	else {
-		return 0;
+		return "Executable";
 	}
-	return 1;
 }
 
-sub match_files_to_glob {
-	my $rootdir = shift;
-	my $globPattern = shift;
-	my $retval = [];
-	my @strdata = split( '', $globPattern );
-	my $regex = "^";
-	foreach my $char (@strdata ) {
-		if ( $char eq '*' ) {
-			$regex = $regex . ".*";
+sub dash_to_camel
+{
+	my $name = shift;
+	my $retval = "";
+	my $nextUpper = 1;
+	my @nameArray = split( '', $name );
+	foreach my $char (@nameArray) {
+		if ( $nextUpper ) {
+			$retval = $retval . uc($char);
+			$nextUpper = 0;
+		}
+		elsif( $char eq "-" ) {
+			$nextUpper = 1;
 		}
 		else {
-			$regex = $regex . $char;
+			$retval = $retval . $char;
 		}
 	}
-	$regex = $regex . "\$";
-	opendir( my $dirhandle, $rootdir ) || die "Failed to open directory $rootdir\n";
-	while( readdir( $dirhandle ) ) {
-		my $fname = $_;
-		if ( $fname eq "." || $fname eq ".." ) {
-		}
-		else {
-			if ( $fname =~m/$regex/ ) {
-				my $localfile = catfile( $rootdir, $_ );
-				push( @$retval, $localfile );
-			}
-		}
-	}
-	closedir( $dirhandle );
-	return $retval;
 }
 
-sub process_project_children {
-	my $project = shift;
-	my $projChild = shift;
-	my $ug = new Data::UUID;
-	my $name = $projChild->nodeName;
-	if ( $name eq "projdir" ) {
-		$projdir = catdir( getcwd(), elemText( $projChild ) );
-		mkpath( $projdir );
-		$projdir = realpath( $projdir );
-		$project->{project_directory} = $projdir;
+sub print_property 
+{
+	my ($file, $target, $configName, $propName) = @_;
+	my $propertyType = $om->{compilation_properties}->{type};
+	my $camelValue = $propertyType eq "set";
+	my $propValue = $om->get_target_property( $target, $configName, $propName );
+	$propName = dash_to_camel($propName);
+	if ( $camelValue ) {
+		$propValue = dash_to_camel($propValue);
 	}
-	if ( $name eq "bindir" ) {
-		$bindir = project_relative_dir( $projChild );
-		$project->{binary_directory} = $bindir;
-	}
-	elsif ( $name eq "libdir" ) {
-		$libdir = project_relative_dir( $projChild );
-		$project->{library_directory} = $bindir;
-	}
-	elsif ( $name eq "builddir" ) {
-		$intdir = project_relative_dir( $projChild );
-		$project->{build_directory} = $bindir;
-	}
-	elsif( $name eq "target" ) {
-		my $uid = $ug->to_string( $ug->create() );
-
-		my $newTarget = { name => $projChild->getAttribute( "name" ), uid => $uid, filegroups => {}, project => $project };
-		my $targets = $project->{targets};
-		push( @$targets, $newTarget );
-		my @targetChildren = $projChild->childNodes;
-		foreach my $targetChild (@targetChildren) {
-			if ( $targetChild->nodeType == XML_ELEMENT_NODE ) { 
-				
-				$nodeName = $targetChild->nodeName;
-				if ( $nodeName eq "configuration" ) {
-					#get or create config by name
-					my $configName = $targetChild->getAttribute( "name" );
-					my $configuration = add_hash_node( $newTarget, "configuration" );
-					$configuration->{configType} = $targetChild->getAttribute( "configType" );
-					
-					my @configChildren = $targetChild->childNodes;
-					foreach my $configChild (@configChildren) {
-						if ( $configChild->nodeType == XML_ELELMENT_NODE ) { 
-							my $configChildNodeName = $configChild->nodeName;
-							if ( $configChildNodeName eq "set-artifact-name" ) {
-								$configuration->{"artifact-name"} = elemText( $configChild );
-							}
-							else {
-								die "Unrecognized configuration child $configChildNodeName" 
-									unless process_target_config_child( $configuration, $configChild );
-							}
-						}
-					}
-				}
-				elsif( $nodeName eq "files" ) {
-					my $fileGroupName = $targetChild->getAttribute( "name" );
-					my $fileGroupRoot = $targetChild->getAttribute( "root" );
-					my $actualRoot = catdir( getcwd(), $fileGroupRoot );
-					if ( !( -e $actualRoot ) ) {
-						die "Unable to find directory: $actualRoot";
-					}
-					$actualRoot = realpath( $actualRoot );
-					$fileGroupRoot = File::Spec::->abs2rel( $actualRoot, $projdir );
-					my $filegroupText = elemText( $targetChild );
-					my @groupLines = split( /\n/, $filegroupText );
-					my $filegroupHash = $newTarget->{filegroups};
-					my $filegroup = $filegroupHash->{$fileGroupName};
-					if ( !$filegroup ) {
-						$filegroup = { name => $fileGroupName, root => $fileGroupRoot, files => {} };
-						$filegroupHash->{$fileGroupName} = $filegroup;
-					}
-					my $newFiles = $filegroup->{files};
-					foreach my $line ( @groupLines ) {
-						my ($negate, $dir, $filespec) = $line =~ /\s*(-?)(.*?[\/\\]?)([^\/\\\s]+)\s*$/;
-						#if negated, remove the files from the existing group that match a given pattern.
-						#if not negated, then add the files 
-						if ( !$negated ) {
-							my $globbed = $filespec =~ /\*/;
-							if ( $globbed ) {
-								my $files = match_files_to_glob( catdir( $actualRoot, $dir ), $filespec );
-								foreach my $file (@$files) {
-									$relpath = File::Spec::->abs2rel( $file, $projdir );
-									$newFiles {$relpath} = $file;
-								}
-							}
-							else {
-								$fname = catfile( catdir( $actualRoot, $dir ), $filespec );
-								if ( !( -e $fname ) ) {
-									die "Target file $fname doesn't exist";
-								}
-								$relpath = File::Spec::->abs2rel( $fname, $projdir );
-								$newFiles {$relpath} = $file;
-							}
-						}
-						else {
-							#negated files have to be listed by hand, globbing isn't supported.
-							$fname = catfile( catdir( $actualRoot, $dir ), $filespec );
-							if ( -e $fname ) {
-								$relpath = File::Spec::->abs2rel( $fname, $projdir );
-								delete $newFiles{ $relpath };
-							}
-						}
-					}
-				}
-				else {
-					die "Unrecognized target child $nodeName" unless process_target_config_child( $newTarget, $targetChild );
-				}
-			}
-		}
-	}
+	print $file "    <$propName>$propValue</$propName>\n";
 }
 
 sub process
 {
+	$om = shift;
 	$xpj = shift;
-	my $doc = shift;
-	my $docelem = $doc->documentElement;
-	my @children = $docelem->childNodes;
-	foreach my $child (@children) {
-		if ( $child->nodeType == XML_ELEMENT_NODE ) {
-			my $nodeName = $child->nodeName;
-			if ( $nodeName eq "project" ) {
-				my $projName = $child->getAttribute( "name" );
-				my $newProj = { name => $projName, targets => [] };
-				unshift( @$projects, $newProj );
-				my @projChildren = $child->childNodes;
-				foreach my $projChild (@projChildren) {
-					if ( $projChild->nodeType == XML_ELEMENT_NODE ) {
-						process_project_children( $newProj, $projChild );
-					}
+	my $projects = $om->get_projects();
+	my $uidgen = Data::UUID->new();
+	my $platform = $xpj->{platform};
+	foreach my $proj (@$projects) {
+		my $projdir = $proj->{project_directory};
+		my $projname = $proj->{name};
+		my $projfilename = catfile( $projdir, "$projname.sln" );
+		open( my $projfile, ">", $projfilename ) || die ("Unable to open solution file $projfilename" );
+		binmode $projfile; # drop all PerlIO layers possibly created by a use open pragma
+		print $projfile "\r\n";
+		print $projfile "Microsoft Visual Studio Solution File, Format Version 12.00\r\n";
+		print $projfile "# Visual Studio 2012\r\n";
+
+		my $targets = $proj->{targets};
+		my $confList = [];
+		my $confHash = {};
+
+
+		#first output the solution file
+
+		foreach my $target (@$targets) {
+			my $targetId = $target->{uid};
+			my $targetName = $target->{name};
+			my $crapid = $uidgen->to_string( $uidgen->create() );
+			my $targetConfigs = $om->get_configuration_names( $target );
+			foreach my $targetConf (@$targetConfigs) {
+				if ( !$confHash->{$targetConf} ) {
+					push( @$confList, $targetConf );
+					$confHash->{$targetConf} = 1;
 				}
 			}
+			print $projfile "Project(\"{$crapid}\") = \"$targetName\", \"$targetName.vcxproj\", \"{$targetId}\"\r\n";
+			print $projfile "EndProject\r\n";
 		}
-	}
-	foreach my $proj (@$projects) {
-	
-		my $targets = $proj->{targets};
-		foreach my $target (@$targets) {
-			foreach my $targetKey (keys %$target ) {
-				my $targetValue = $target->{$targetKey};
+		print $projfile "Global\r\n";
+		print $projfile "\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\r\n";
+		foreach my $conf (@$confList) {
+			$confName = "$conf|$platform";
+			print $projfile "\t\t$confName = $confName\r\n";
+		}
+		print $projfile "\tEndGlobalSection\r\n";
 		
+		
+		print $projfile "\tGlobalSection(ProjectConfigurationPlatforms) = postSolution\r\n";
+		foreach my $target (@$targets) {
+			my $targetId = $target->{uid};
+			my $targetConfigs = $om->get_configuration_names( $target );
+			foreach my $targetConf (@$targetConfigs) {
+				$confName = "$targetConf|$platform";
+				print $projfile "\t\t{$targetId}.$confName.ActiveCfg = $confName\r\n";
+				print $projfile "\t\t{$targetId}.$confName.Build.0 = $confName\r\n";
 			}
+		}
+		print $projfile "\tEndGlobalSection\r\n";
+		print $projfile "\tGlobalSection(SolutionProperties) = preSolution\r\n";
+		print $projfile "\t\tHideSolution = FALSE\r\n";
+		print $projfile "\tEndGlobalSection\r\n";
+		print $projfile "EndGlobal\r\n";
+		close $projfile;
 
+		#now output each target in the project
+		
+		foreach my $target (@$targets) {
+			my $targetId = $target->{uid};
+			my $targetName = $target->{name};
+			my $targetProjName = catfile( $projdir, "$targetName.vcxproj" );
+			my $targetFilterName = "$targetProjName.filters";
+			open( my $targetProj, ">", $targetProjName ) || die "unable to open target file $targetProjName";
+			open( my $targetFilter, ">", $targetFilterName ) || die "unable to open target filter $targetFilterName";
+			print $targetProj "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+			print $targetFilter "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+
+			print $targetProj 
+				"<Project DefaultTargets=\"Build\" ToolsVersion=\"4.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\n";
+			print $targetProj "  <ItemGroup Label=\"ProjectConfigurations\">\n";
+			my $targetConfigs = $om->get_configuration_names( $target );
+			foreach my $conf (@$targetConfigs) {
+				my $confName = "$conf|$platform";
+				print $targetProj <<END;
+    <ProjectConfiguration Include="$confName">
+      <Configuration>$conf</Configuration>
+      <Platform>$platform</Platform>
+    </ProjectConfiguration>
+END
+			}
+			print $targetProj "  </ItemGroup>\n";
+
+			#ask the om to merge all of the files into one array of unique names.
+
+			print $targetProj "  <ItemGroup>\n";
+			my $targetFiles = $om->get_target_files( $target );
+			foreach my $file (@$targetFiles) {
+				if ( $file =~ /\.cpp$|\.c$|\.cc$|\.cxx$|\.def$|odl|\.idl$|\.hpj$|\.bat$|\.asm$|\.asmx$/ ) {
+					print $targetProj "    <ClCompile Include=\"$file\" />\n";
+				}
+				elsif ( $file =~ /\.h$|\.hpp$|\.hxx$|\.hm$|\.inl$|\.inc$|\.xsd$/ ) {
+					print $targetProj "    <ClInclude Include=\"$file\" />\n";
+				}
+				else {
+					print $targetProj "    <None Include=\"$file\" />\n";
+				}
+			}
+			print $targetProj "  </ItemGroup>\n";
+			$projectType = $platform . "Proj";
+			print $targetProj <<END;
+  <PropertyGroup Label="Globals">
+    <ProjectGuid>{$targetId}</ProjectGuid>
+    <Keyword>$projectType</Keyword>
+    <RootNamespace>$targetName</RootNamespace>
+  </PropertyGroup>				
+END
+			print $targetProj "  <Import Project=\"$(VCTargetsPath)\Microsoft.Cpp.Default.props\" />\n";
+			foreach my $conf (@$targetConfigs) {
+				my $confName = "$conf|$platform";
+				print $targetProj "  <PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='$confName'\" Label=\"Configuration\">\n";
+				print $targetProj "    <PlatformToolset>vc110</PlatformToolset>\n";
+				print_property( $targetProj, $target, $conf, "configuration_type" );
+				print_property( $targetProj, $target, $conf, "use_debug_libraries" );
+				print_property( $targetProj, $target, $conf, "configuration_type" );
+				print_property( $targetProj, $target, $conf, "whole_program_optimization" );
+				print_property( $targetProj, $target, $conf, "character_set" );
+				print $targetProj "  </PropertyGroup>\n";
+			}
+			print $targetProj "</Project>\n";
+			close $targetProj;
+			close $targetFilter;
 		}
 	}
 }
 
 
-return { process=>\&process };
+
+my $compilation_properties = {
+	use_debug_libraries => { type=>"boolean", defaut=>"true" },
+	character_set => { type=>"set", values=>["unicode", "multibyte"], default=>"unicode" },
+	multi_processor_compilation => { type=>"boolean", default=>"true" },
+	minimal_rebuild => { type=>"boolean", default=>"false" },
+	function_level_linking => { type=>"boolean", default=>"false" },
+	enable_comdat_folding => { type=>"boolean", default=>"false" },
+	optimize_references => { type=>"boolean", default=>"false" },
+};
+
+
+return { process=>\&process, extended_compilation_properties=>$compilation_properties };

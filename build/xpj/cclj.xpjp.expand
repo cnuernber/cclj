@@ -8,11 +8,19 @@
 		<bindir>../../bin/Win32</bindir>
 		<builddir>../vc12Win32/build"</builddir>
 		<target name="gtest">
-			<configuration name="Debug" type="static_library">
-			<set-artifact-name>gtestDebug.lib</set-artifact-name>
-		</configuration><configuration name="Release" type="static_library">
-			<set-artifact-name>gtest.lib</set-artifact-name>
-		</configuration>
+			<configuration name="Debug">
+		  <configuration_type>static_library</configuration_type>
+		  <set-artifact-name>gtestDebug.lib</set-artifact-name>
+		</configuration><configuration name="Release">
+		  <configuration_type>static_library</configuration_type>
+		  <set-artifact-name>gtest.lib</set-artifact-name>
+		</configuration><configuration name="Release">
+		<optimization>max_speed</optimization>
+		<use_debug_libraries>false</use_debug_libraries>
+		<function_level_linking>true</function_level_linking>
+		<enable_comdat_folding>true</enable_comdat_folding>
+		<optimize_references>true</optimize_references>
+	  </configuration>
 			<preprocessor>
 				_VARIADIC_MAX=10
 			</preprocessor>

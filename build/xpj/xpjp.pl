@@ -9,7 +9,9 @@ use File::Spec::Functions;
 use Cwd qw(realpath getcwd);
 use XML::LibXML;
 use File::Path;
+use Data::UUID;
 use FindBin;
+use xpjpom;
 
 #globals required by various functions
 my $currentdir = "";
@@ -279,10 +281,13 @@ my $newdoc = eval_xpj_file( $doc );
 $newdoc->toFile( 'cclj.xpjp.expand', 1 );
 
 my $toolname = $xpj->{'tool'};
-my $bindir = $FindBin::Bin;
 #require the backend and see what happens
 my $toolmodule = require "$toolname.pm";
-$toolmodule->{process}( $xpj, $newdoc );
+my $om = new xpjpom;
+
+$om->extend_compilation_properties( $toolmodule->{extended_compilation_properties} );
+$om->build_object_model( $newdoc );
+$toolmodule->{process}( $om, $xpj );
 
 1;
 
