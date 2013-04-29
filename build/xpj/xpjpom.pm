@@ -75,7 +75,7 @@ sub add_property_node {
 	my $propName = shift;
 	my $propValue = shift;
 	my $nodeType = "property";
-	my $newItem = add_node( $parent, $nodeType );
+	my $newItem = add_hash_node( $parent, $nodeType );
 	$newItem->{name} = $propName;
 	$newItem->{value} = $propValue;
 }
@@ -84,12 +84,12 @@ sub add_property_node {
 #that do not apply to any backend in the system.  There should probably be a way to query the currently selected tool
 #and allow it to extend this property set array.  Initial defaults are by convention for debug builds.
 my $initial_compilation_properties = { 
-	configuration_type => { type=>"set", values=>["static_library","dynamic_library","executable","console_executable"] },
-	whole_program_optimization => { type=>"boolean", default=>"false" },
-	warning_level => { type=>"set", values=>["0","1","2","3","4"], default=>"4" },
-	optimization => { type=>"set", values=>["disabled", "max_speed"], default=>"disabled" },
-	generate_debug_info => { type=>"boolean", default=>"true" },
-	intrinsic_functions => { type=>"boolean", default=>"true" },
+	"configuration-type" => { type=>"set", values=>["static-library","dynamic-library","executable","console-executable"] },
+	"whole-program-optimization" => { type=>"boolean", default=>"false" },
+	"warning-level" => { type=>"set", values=>["0","1","2","3","4"], default=>"4" },
+	"optimization" => { type=>"set", values=>["disabled", "max-speed"], default=>"disabled" },
+	"generate-debug-info" => { type=>"boolean", default=>"true" },
+	"intrinsic-functions" => { type=>"boolean", default=>"true" },
 };
 
 sub process_target_config_child {
@@ -158,6 +158,7 @@ sub process_target_config_child {
 					my @legalValueArray = @$legalValues;
 					die "Unrecognized set value for property $nodeName: $propvalue [@legalValueArray]";
 				}
+				add_property_node( $parent, $nodeName, $propvalue );
 			}
 			else {
 				die "Unrecognized property type $proptype";
@@ -342,7 +343,6 @@ sub get_target_nodes_by_type {
 
 	foreach my $node (@$nodes) {
 		my $nodeTypeName = $node->{type};
-		print( "node type: $nodeTypeName\n" );
 		if ( $node->{type} eq $nodeType ) {
 			push( @$retval, $node->{values} );
 		}
@@ -364,11 +364,10 @@ sub get_target_and_config_nodes_by_type {
 		elsif( $node->{type} eq "configuration" ) {
 			my $configValues = $node->{values};
 			my $thisConfigName = $configValues->{name};
-			print( "searching config $configName, $thisConfigName\n" );
 			if ( $thisConfigName eq $configName ) {
 				my $confNodes = $om->get_target_nodes_by_type( $configValues, $nodeType );
 				foreach my $confNode (@$confNodes ) {
-					push( @$retval, $confNode->{values} );
+					push( @$retval, $confNode );
 				}
 			}
 		}
@@ -382,8 +381,9 @@ sub get_target_property {
 	my $properties = get_target_and_config_nodes_by_type( $om, $target, $configName, "property" );
 	my $retval;
 	foreach my $prop (@$properties) {
+		my @propkeys = keys $prop;
 		my $propName = $prop->{name};
-		print( "propName: $propName\n" );
+
 		if ( $prop->{name} eq $propname ) {
 			$retval = $prop->{value};
 		}

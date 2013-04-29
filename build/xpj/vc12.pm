@@ -38,16 +38,18 @@ sub dash_to_camel
 			$retval = $retval . $char;
 		}
 	}
+	return $retval;
 }
 
 sub print_property 
 {
 	my ($file, $target, $configName, $propName) = @_;
-	my $propertyType = $om->{compilation_properties}->{type};
+	my $propEntry = $om->{compilation_properties}->{$propName};
+	my $propertyType = $propEntry->{type};
 	my $camelValue = $propertyType eq "set";
 	my $propValue = $om->get_target_property( $target, $configName, $propName );
 	$propName = dash_to_camel($propName);
-	if ( $camelValue ) {
+	if ( $propertyType eq "set" ) {
 		$propValue = dash_to_camel($propValue);
 	}
 	print $file "    <$propName>$propValue</$propName>\n";
@@ -168,16 +170,18 @@ END
     <RootNamespace>$targetName</RootNamespace>
   </PropertyGroup>				
 END
-			print $targetProj "  <Import Project=\"$(VCTargetsPath)\Microsoft.Cpp.Default.props\" />\n";
+			my $projPath = '$(VCTargetsPath)';
+			print $targetProj "  <Import Project=\"$projPath\\Microsoft.Cpp.Default.props\" />\n";
+
 			foreach my $conf (@$targetConfigs) {
 				my $confName = "$conf|$platform";
-				print $targetProj "  <PropertyGroup Condition=\"'$(Configuration)|$(Platform)'=='$confName'\" Label=\"Configuration\">\n";
+				my $cond = '$(Configuration)|$(Platform)';
+				print $targetProj "  <PropertyGroup Condition=\"$cond=='$confName'\" Label=\"Configuration\">\n";
 				print $targetProj "    <PlatformToolset>vc110</PlatformToolset>\n";
-				print_property( $targetProj, $target, $conf, "configuration_type" );
-				print_property( $targetProj, $target, $conf, "use_debug_libraries" );
-				print_property( $targetProj, $target, $conf, "configuration_type" );
-				print_property( $targetProj, $target, $conf, "whole_program_optimization" );
-				print_property( $targetProj, $target, $conf, "character_set" );
+				print_property( $targetProj, $target, $conf, "configuration-type" );
+				print_property( $targetProj, $target, $conf, "use-debug-libraries" );
+				print_property( $targetProj, $target, $conf, "whole-program-optimization" );
+				print_property( $targetProj, $target, $conf, "character-set" );
 				print $targetProj "  </PropertyGroup>\n";
 			}
 			print $targetProj "</Project>\n";
@@ -190,13 +194,13 @@ END
 
 
 my $compilation_properties = {
-	use_debug_libraries => { type=>"boolean", defaut=>"true" },
-	character_set => { type=>"set", values=>["unicode", "multibyte"], default=>"unicode" },
-	multi_processor_compilation => { type=>"boolean", default=>"true" },
-	minimal_rebuild => { type=>"boolean", default=>"false" },
-	function_level_linking => { type=>"boolean", default=>"false" },
-	enable_comdat_folding => { type=>"boolean", default=>"false" },
-	optimize_references => { type=>"boolean", default=>"false" },
+	"use-debug-libraries" => { type=>"boolean", default=>"true" },
+	"character-set" => { type=>"set", values=>["unicode", "multibyte"], default=>"unicode" },
+	"multi-processor-compilation" => { type=>"boolean", default=>"true" },
+	"minimal-rebuild" => { type=>"boolean", default=>"false" },
+	"function-level-linking" => { type=>"boolean", default=>"false" },
+	"enable-comdat-folding" => { type=>"boolean", default=>"false" },
+	"optimize-references" => { type=>"boolean", default=>"false" },
 };
 
 
