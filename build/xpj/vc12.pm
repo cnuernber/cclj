@@ -55,6 +55,74 @@ sub print_property
 	print $file "    <$propName>$propValue</$propName>\n";
 }
 
+sub print_property_itemdef
+{
+	my ($file, $target, $configName, $propName) = @_;
+	print $file "  ";
+	print_property( $file, $target, $configName, $propName );
+}
+
+sub to_semi_delim {
+	my $list = shift;
+	my $retval = "";
+	
+	foreach my $item (@$list) {
+		if ( length($retval) ) {
+			$retval = $retval . ';';
+		}
+		$retval = $retval . $item;
+	}
+	return $retval;
+}
+
+sub to_semi_delim_list_of_lists
+{
+	my $listoflists = shift;
+	my $retval = "";
+	foreach my $list (@$listoflists) {
+		foreach my $item (@$list) {
+			if ( length($retval) ) {
+				$retval = $retval . ';';
+			}
+			$retval = $retval . $item;
+		}
+	}
+	return $retval;
+}
+
+
+sub to_space_delim_list_of_lists
+{
+	my $listoflists = shift;
+	my $retval = "";
+	foreach my $list (@$listoflists) {
+		foreach my $item (@$list) {
+			if ( length($retval) ) {
+				$retval = $retval . ' ';
+			}
+			$retval = $retval . $item;
+		}
+	}
+	return $retval;
+}
+my $FILE_TYPE_COMPILE = 1;
+my $FILE_TYPE_HEADER = 2;
+my $FILE_TYPE_UKNOWN = 3;
+
+sub get_file_type
+{
+	my $file = shift;
+	if ( $file =~ /\.cpp$|\.c$|\.cc$|\.cxx$|\.def$|odl|\.idl$|\.hpj$|\.bat$|\.asm$|\.asmx$/ ) {
+		return $FILE_TYPE_COMPILE;
+	}
+	elsif ( $file =~ /\.h$|\.hpp$|\.hxx$|\.hm$|\.inl$|\.inc$|\.xsd$/ ) {
+		return $FILE_TYPE_HEADER;
+	}
+	else {
+		return $FILE_TYPE_UNKNOWN;
+	}
+}
+
 sub process
 {
 	$om = shift;
@@ -129,7 +197,6 @@ sub process
 			open( my $targetProj, ">", $targetProjName ) || die "unable to open target file $targetProjName";
 			open( my $targetFilter, ">", $targetFilterName ) || die "unable to open target filter $targetFilterName";
 			print $targetProj "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
-			print $targetFilter "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
 
 			print $targetProj 
 				"<Project DefaultTargets=\"Build\" ToolsVersion=\"4.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\n";
@@ -151,10 +218,11 @@ END
 			print $targetProj "  <ItemGroup>\n";
 			my $targetFiles = $om->get_target_files( $target );
 			foreach my $file (@$targetFiles) {
-				if ( $file =~ /\.cpp$|\.c$|\.cc$|\.cxx$|\.def$|odl|\.idl$|\.hpj$|\.bat$|\.asm$|\.asmx$/ ) {
+				my $filetype = get_file_type( $file );
+				if ( $filetype == $FILE_TYPE_COMPILE ) {
 					print $targetProj "    <ClCompile Include=\"$file\" />\n";
 				}
-				elsif ( $file =~ /\.h$|\.hpp$|\.hxx$|\.hm$|\.inl$|\.inc$|\.xsd$/ ) {
+				elsif ( $filetype == $FILE_TYPE_HEADER ) {
 					print $targetProj "    <ClInclude Include=\"$file\" />\n";
 				}
 				else {
@@ -184,8 +252,109 @@ END
 				print_property( $targetProj, $target, $conf, "character-set" );
 				print $targetProj "  </PropertyGroup>\n";
 			}
+			print $targetProj "  <Import Project=\"\$(VCTargetsPath)\Microsoft.Cpp.props\" />\n";
+			foreach my $conf (@$targetConfigs) {
+				my $confName = "$conf|$platform";
+				print $targetProj <<END;
+  <ImportGroup Label="PropertySheets" Condition="'\$(Configuration)|\$(Platform)'=='$confName'">
+    <Import Project="\$(UserRootDir)\Microsoft.Cpp.\$(Platform).user.props" Condition="exists('\$(UserRootDir)\Microsoft.Cpp.\$(Platform).user.props')" Label="LocalAppDataPlatform" />
+  </ImportGroup>
+END
+			}
+			foreach my $conf (@$targetConfigs) {
+				my $confName = "$conf|$platform";
+				my $headerlist = to_semi_delim( $om->get_path_list( $target, $conf, "header" ) );
+				my $linkerlist = to_semi_delim( $om->get_path_list( $target, $conf, "linker" ) );
+				my $preprocessor = to_semi_delim_list_of_lists( 
+					$om->get_target_and_config_nodes_by_type( $target, $conf, "preprocessor" ) );
+				my $cflags = to_space_delim_list_of_lists( $om->get_target_and_config_nodes_by_type( $target, $conf, "cflags" ) );
+				my $lflags = to_space_delim_list_of_lists( $om->get_target_and_config_nodes_by_type( $target, $conf, "lflags" ) );
+				my $level = $om->get_target_property( $target, $conf, "warning-level" );
+				
+				print $targetProj "  <ItemDefinitionGroup Condition=\"'\$(Configuration)|\$(Platform)'=='$confName'\">\n";
+				print $targetProj "    <ClCompile>\n";
+				print $targetProj "      <WarningLevel>Level$level</WarningLevel>\n";
+				print_property_itemdef( $targetProj, $target, $conf, "optimization" );
+				print $targetProj "      <PreprocessorDefinitions>$preprocessor;%(PreprocessorDefinitions)</PreprocessorDefinitions>\n";
+				print $targetProj "      <AdditionalIncludeDirectories>$headerlist;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>\n";
+				print_property_itemdef( $targetProj, $target, $conf, "multi-processor-compilation" );
+				print_property_itemdef( $targetProj, $target, $conf, "minimal-rebuild" );
+
+				print $targetProj "      <AdditionalOptions>$cflags %(AdditionalOptions)</AdditionalOptions>\n";
+				print $targetProj "    </ClCompile>\n";
+				print $targetProj "    <Link>\n";
+				print $targetProj "      <SubSystem>Windows</SubSystem>\n";
+				print_property_itemdef( $targetProj, $target, $conf, "generate-debug-information" );
+				print $targetProj "    </Link>\n";
+				print $targetProj "  </ItemDefinitionGroup>\n";
+
+			}
+			print $targetProj "  <Import Project=\"\$(VCTargetsPath)\Microsoft.Cpp.targets\" />\n";
 			print $targetProj "</Project>\n";
 			close $targetProj;
+			
+			print $targetFilter "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n";
+			print $targetFilter "<Project ToolsVersion=\"4.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\n";
+			print $targetFilter "  <ItemGroup>\n";
+			my $groups = $target->{filegroups};
+			my @groupNames = keys %$groups;
+			my $actualGroups = {};
+			my $actualFiles = {};
+			my $uuidgen = new Data::UUID;
+			foreach my $groupName (@groupNames) {
+				my $filegroup = $groups->{$groupName};
+				my $fileHash = $filegroup->{files};
+				my $name = $filegroup->{name};
+				my $groupRoot = $filegroup->{root};
+				my $root = realpath( catdir( $projdir, $filegroup->{root} ) );
+				my @files = sort( keys %$fileHash );
+				foreach my $file (@files) {
+					my $fullpath = realpath( catfile( $projdir, $file ) );
+					if ( !$actualFiles->{$fullpath} ) {
+						$actualFiles->{$fullPath} = 1;
+						my $relpath = File::Spec->abs2rel( $fullpath, $root );
+						my @pathParts = split( /\\|\//, $relpath );
+						#remove the actual file from pathParts
+						pop(@pathParts);
+
+						#if name exists, then name is at the head of path parts
+						if ( length( $name ) ) {
+							unshift( @pathParts, $name );
+						}
+						my $chopLen = $#pathParts;
+						my $filterName = "";
+						foreach my $part (@pathParts) {
+							if ( length($filterName) ) {
+								$filterName = $filterName . "\\";
+							}
+							$filterName = $filterName . $part;
+							if ( !$actualGroups{$filterName} ) {
+								$actualGroups{$filterName} = 1;
+								my $filterId = $uuidgen->to_string( $uuidgen->create() );
+								print $targetFilter "    <Filter Include=\"$filterName\">\n";
+								print $targetFilter "      <UniqueIdentifier>{$filterId}</UniqueIdentifier>\n";
+								print $targetFilter "    </Filter>\n";
+							}
+						}	
+						my $filetype = get_file_type( $file );
+						my $xmltag = "";
+						if ( $filetype == $FILE_TYPE_COMPILE ) {
+							$xmltag = "ClCompile";
+						}
+						elsif( $filetype == $FILE_TYPE_HEADER ) {
+							$xmltag = "ClInclude";
+						}
+						else {
+							$xmltag = "None";
+						}   
+						print $targetFilter "    <$xmltag Include=\"$file\">\n";
+						print $targetFilter "      <Filter>$filterName</Filter>\n";
+						print $targetFilter "    </$xmltag>\n";
+					}
+				}
+			}
+			print $targetFilter "  </ItemGroup>\n";
+			print $targetFilter "</Project>\n";
 			close $targetFilter;
 		}
 	}

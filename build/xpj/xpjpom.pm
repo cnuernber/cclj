@@ -88,7 +88,7 @@ my $initial_compilation_properties = {
 	"whole-program-optimization" => { type=>"boolean", default=>"false" },
 	"warning-level" => { type=>"set", values=>["0","1","2","3","4"], default=>"4" },
 	"optimization" => { type=>"set", values=>["disabled", "max-speed"], default=>"disabled" },
-	"generate-debug-info" => { type=>"boolean", default=>"true" },
+	"generate-debug-information" => { type=>"boolean", default=>"true" },
 	"intrinsic-functions" => { type=>"boolean", default=>"true" },
 };
 
