@@ -1,3 +1,4 @@
+use strict;
 use File::Basename;
 use File::Spec::Functions;
 use XML::LibXML;
@@ -107,7 +108,7 @@ sub to_space_delim_list_of_lists
 }
 my $FILE_TYPE_COMPILE = 1;
 my $FILE_TYPE_HEADER = 2;
-my $FILE_TYPE_UKNOWN = 3;
+my $FILE_TYPE_UNKNOWN = 3;
 
 sub get_file_type
 {
@@ -121,6 +122,21 @@ sub get_file_type
 	else {
 		return $FILE_TYPE_UNKNOWN;
 	}
+}
+
+my $enable_exceptions_map = { "false"=>"false", "true"=>"Sync", "true-with-c"=>"SyncWithC", "true-with-SEH"=>"Async" };
+my $struct_member_alignment_map = { "default"=>"Default", "1"=>"1Byte", "2"=>"2Bytes", "4"=>"4Bytes", "8"=>"8Bytes", "16"=>"16Bytes" };
+my $warning_level_map = { "0"=>"TurnOffAllWarnings", "1"=>"Level1", "2"=>"Level2", "3"=>"Level3", "4"=>"Level4", "5"=>"EnableAllWarnings" };
+my $configuration_type_map = { "static-library"=>"StaticLibrary", "dynamic-library"=>"DynamicLibrary", "executable" => "Application", "console-executable"=>"Application" };
+
+sub safe_lookup 
+{
+	my ($hashKey, $hash, $hashname) = @_;
+	my $retval = $hash->{$hashKey};
+	if ( !$retval ) {
+		die "Unrecognized key $hashKey for hash $hashname";
+	}
+	return $retval;
 }
 
 sub process
@@ -164,7 +180,7 @@ sub process
 		print $projfile "Global\r\n";
 		print $projfile "\tGlobalSection(SolutionConfigurationPlatforms) = preSolution\r\n";
 		foreach my $conf (@$confList) {
-			$confName = "$conf|$platform";
+			my $confName = "$conf|$platform";
 			print $projfile "\t\t$confName = $confName\r\n";
 		}
 		print $projfile "\tEndGlobalSection\r\n";
@@ -175,7 +191,7 @@ sub process
 			my $targetId = $target->{uid};
 			my $targetConfigs = $om->get_configuration_names( $target );
 			foreach my $targetConf (@$targetConfigs) {
-				$confName = "$targetConf|$platform";
+				my $confName = "$targetConf|$platform";
 				print $projfile "\t\t{$targetId}.$confName.ActiveCfg = $confName\r\n";
 				print $projfile "\t\t{$targetId}.$confName.Build.0 = $confName\r\n";
 			}
@@ -230,7 +246,7 @@ END
 				}
 			}
 			print $targetProj "  </ItemGroup>\n";
-			$projectType = $platform . "Proj";
+			my $projectType = $platform . "Proj";
 			print $targetProj <<END;
   <PropertyGroup Label="Globals">
     <ProjectGuid>{$targetId}</ProjectGuid>
@@ -238,26 +254,38 @@ END
     <RootNamespace>$targetName</RootNamespace>
   </PropertyGroup>				
 END
-			my $projPath = '$(VCTargetsPath)';
-			print $targetProj "  <Import Project=\"$projPath\\Microsoft.Cpp.Default.props\" />\n";
+			print $targetProj "  <Import Project=\"\$(VCTargetsPath)\\Microsoft.Cpp.Default.props\" />\n";
 
 			foreach my $conf (@$targetConfigs) {
 				my $confName = "$conf|$platform";
 				my $cond = '$(Configuration)|$(Platform)';
-				print $targetProj "  <PropertyGroup Condition=\"$cond=='$confName'\" Label=\"Configuration\">\n";
-				print $targetProj "    <PlatformToolset>vc110</PlatformToolset>\n";
-				print_property( $targetProj, $target, $conf, "configuration-type" );
+				my $configType = safe_lookup( $om->get_target_property( $target, $conf, "configuration-type" ), $configuration_type_map, "vc12-configuration-type" );
+				my $artifactName = $om->get_target_property( $target, $conf, "artifact-name" );
+				my ($targetName, $targetExt) = $artifactName =~ /([^\.]*)(\..*)$/;
+				my $outDir = $proj->{binary_directory};
+				if ( $configType eq "StaticLibrary" ) {
+					$outDir = $proj->{library_directory};
+				}
+				my $buildDir = catdir( $proj->{build_directory}, $conf );
+				
+				print $targetProj "  <PropertyGroup Condition=\"'$cond'=='$confName'\" Label=\"Configuration\">\n";
+				print $targetProj "    <PlatformToolset>v110</PlatformToolset>\n";
+				print $targetProj "    <ConfigurationType>$configType</ConfigurationType>\n";
 				print_property( $targetProj, $target, $conf, "use-debug-libraries" );
 				print_property( $targetProj, $target, $conf, "whole-program-optimization" );
 				print_property( $targetProj, $target, $conf, "character-set" );
+				print $targetProj "    <OutDir>$outDir\\</OutDir>\n";
+				print $targetProj "    <IntDir>$buildDir\\</IntDir>\n";
+				print $targetProj "    <TargetName>$targetName</TargetName>\n";
+				print $targetProj "    <TargetExt>$targetExt</TargetExt>\n";
 				print $targetProj "  </PropertyGroup>\n";
 			}
-			print $targetProj "  <Import Project=\"\$(VCTargetsPath)\Microsoft.Cpp.props\" />\n";
+			print $targetProj "  <Import Project=\"\$(VCTargetsPath)\\Microsoft.Cpp.props\" />\n";
 			foreach my $conf (@$targetConfigs) {
 				my $confName = "$conf|$platform";
 				print $targetProj <<END;
   <ImportGroup Label="PropertySheets" Condition="'\$(Configuration)|\$(Platform)'=='$confName'">
-    <Import Project="\$(UserRootDir)\Microsoft.Cpp.\$(Platform).user.props" Condition="exists('\$(UserRootDir)\Microsoft.Cpp.\$(Platform).user.props')" Label="LocalAppDataPlatform" />
+    <Import Project="\$(UserRootDir)\\Microsoft.Cpp.\$(Platform).user.props" Condition="exists('\$(UserRootDir)\\Microsoft.Cpp.\$(Platform).user.props')" Label="LocalAppDataPlatform" />
   </ImportGroup>
 END
 			}
@@ -269,27 +297,44 @@ END
 					$om->get_target_and_config_nodes_by_type( $target, $conf, "preprocessor" ) );
 				my $cflags = to_space_delim_list_of_lists( $om->get_target_and_config_nodes_by_type( $target, $conf, "cflags" ) );
 				my $lflags = to_space_delim_list_of_lists( $om->get_target_and_config_nodes_by_type( $target, $conf, "lflags" ) );
-				my $level = $om->get_target_property( $target, $conf, "warning-level" );
+				my $level = safe_lookup( $om->get_target_property( $target, $conf, "warning-level" ), $warning_level_map, "vc12-warning-level" );
+				my $rtti = $om->get_target_property( $target, $conf, "enable-rtti" );
+				my $exceptions = safe_lookup( $om->get_target_property( $target, $conf, "enable-exceptions" ), $enable_exceptions_map, "vc12-enable-exceptions" );
+				my $sma = safe_lookup( $om->get_target_property( $target, $conf, "struct-member-alignment" ), $struct_member_alignment_map, "vc12-struct-member-alignment" );
+				my $confType = $om->get_target_property($target,$conf,"configuration-type");
+				my $subsystem = "Windows";
+				if ( $confType eq "console-executable" ) {
+					$subsystem = "Console";
+				}
 				
 				print $targetProj "  <ItemDefinitionGroup Condition=\"'\$(Configuration)|\$(Platform)'=='$confName'\">\n";
 				print $targetProj "    <ClCompile>\n";
-				print $targetProj "      <WarningLevel>Level$level</WarningLevel>\n";
+				print $targetProj "      <WarningLevel>$level</WarningLevel>\n";
 				print_property_itemdef( $targetProj, $target, $conf, "optimization" );
 				print $targetProj "      <PreprocessorDefinitions>$preprocessor;%(PreprocessorDefinitions)</PreprocessorDefinitions>\n";
 				print $targetProj "      <AdditionalIncludeDirectories>$headerlist;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>\n";
 				print_property_itemdef( $targetProj, $target, $conf, "multi-processor-compilation" );
 				print_property_itemdef( $targetProj, $target, $conf, "minimal-rebuild" );
-
+				print_property_itemdef( $targetProj, $target, $conf, "enable-enhanced-instruction-set" );
+				print_property_itemdef( $targetProj, $target, $conf, "floating-point-model" );
+				print_property_itemdef( $targetProj, $target, $conf, "runtime-library" );
+				print_property_itemdef( $targetProj, $target, $conf, "intrinsic-functions" );
+				print_property_itemdef( $targetProj, $target, $conf, "string-pooling" );
+				print_property_itemdef( $targetProj, $target, $conf, "buffer-security-check" );
+				print $targetProj "      <StructMemberAlignment>$sma</StructMemberAlignment>\n";
+				print $targetProj "      <ProgramDataBaseFileName>\$(OutDir)\$(TargetName).pdb</ProgramDataBaseFileName>\n";
 				print $targetProj "      <AdditionalOptions>$cflags %(AdditionalOptions)</AdditionalOptions>\n";
+				print $targetProj "      <ExceptionHandling>$exceptions</ExceptionHandling>\n";
+				print $targetProj "      <RuntimeTypeInfo>$rtti</RuntimeTypeInfo>\n";
 				print $targetProj "    </ClCompile>\n";
 				print $targetProj "    <Link>\n";
-				print $targetProj "      <SubSystem>Windows</SubSystem>\n";
+				print $targetProj "      <SubSystem>$subsystem</SubSystem>\n";
 				print_property_itemdef( $targetProj, $target, $conf, "generate-debug-information" );
 				print $targetProj "    </Link>\n";
 				print $targetProj "  </ItemDefinitionGroup>\n";
 
 			}
-			print $targetProj "  <Import Project=\"\$(VCTargetsPath)\Microsoft.Cpp.targets\" />\n";
+			print $targetProj "  <Import Project=\"\$(VCTargetsPath)\\Microsoft.Cpp.targets\" />\n";
 			print $targetProj "</Project>\n";
 			close $targetProj;
 			
@@ -311,7 +356,7 @@ END
 				foreach my $file (@files) {
 					my $fullpath = realpath( catfile( $projdir, $file ) );
 					if ( !$actualFiles->{$fullpath} ) {
-						$actualFiles->{$fullPath} = 1;
+						$actualFiles->{$fullpath} = 1;
 						my $relpath = File::Spec->abs2rel( $fullpath, $root );
 						my @pathParts = split( /\\|\//, $relpath );
 						#remove the actual file from pathParts
@@ -328,8 +373,8 @@ END
 								$filterName = $filterName . "\\";
 							}
 							$filterName = $filterName . $part;
-							if ( !$actualGroups{$filterName} ) {
-								$actualGroups{$filterName} = 1;
+							if ( !$actualGroups->{$filterName} ) {
+								$actualGroups->{$filterName} = 1;
 								my $filterId = $uuidgen->to_string( $uuidgen->create() );
 								print $targetFilter "    <Filter Include=\"$filterName\">\n";
 								print $targetFilter "      <UniqueIdentifier>{$filterId}</UniqueIdentifier>\n";
@@ -370,6 +415,9 @@ my $compilation_properties = {
 	"function-level-linking" => { type=>"boolean", default=>"false" },
 	"enable-comdat-folding" => { type=>"boolean", default=>"false" },
 	"optimize-references" => { type=>"boolean", default=>"false" },
+	"enable-exceptions" => { type=>"set", values=>["false", "true", "true-with-c", "true-with-SEH"], default=>"true-with-SEH" },
+	"enable-enhanced-instruction-set" => { type=>"set", values=>["no-extensions", "advanced-vector-extensions", "streaming-SIMD-extensions-2", "streaming-SIMD-extensions"], default=>"no-extensions" },
+	"runtime-library" => { type=>"set", values=>["multi-threaded-DLL", "multi-threaded-debug-DLL", "multi-threaded", "multi-threaded-debug"], default=>"multi-threaded-debug-dll" },
 };
 
 

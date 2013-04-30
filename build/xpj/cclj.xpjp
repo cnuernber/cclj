@@ -10,10 +10,10 @@ sub artifact_name
 	my $base_name = $target_name;
 	if ( $config_name ne "Release" ) { $base_name = "$target_name$config_name"; }
 	if ( ($platform eq 'win32') || ($platform eq 'win64') ) {
-		if ( $config_type eq 'static_library' ) {
+		if ( $config_type eq 'static-library' ) {
 			return "$base_name.lib";
 		}
-		elsif( $config_type eq 'dynamic_library' ) {
+		elsif( $config_type eq 'dynamic-library' ) {
 			return "$base_name.dll";
 		}
 		else {
@@ -24,10 +24,10 @@ sub artifact_name
 }
 	</perl>
 	<template name="base_config_t">
-		<!-- config name is anything you want.  Config type is static_library, dynamic_library, executable, console_executable -->
+		<!-- config name is anything you want.  Config type is static-library, dynamic-library, executable, console-executable -->
 		<configuration name="{{[$tempvar->{config_name}]}}">
 		  <configuration-type>{{[$tempvar->{config_type}]}}</configuration-type>
-		  <set-artifact-name>{{[artifact_name($tempvar->{config_name}, $tempvar->{config_type})]}}</set-artifact-name>
+		  <artifact-name>{{[artifact_name($tempvar->{config_name}, $tempvar->{config_type})]}}</artifact-name>
 		</configuration>
 	</template>
 	
@@ -54,6 +54,10 @@ sub artifact_name
 		<function-level-linking>true</function-level-linking>
 		<enable-comdat-folding>true</enable-comdat-folding>
 		<optimize-references>true</optimize-references>
+		<runtime-library>multi-threaded-DLL</runtime-library>
+		<intrinsic-functions>true</intrinsic-functions>
+		<buffer-security-check>false</buffer-security-check>
+		<enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
 	  </configuration>
 	</template>
 	
@@ -66,15 +70,24 @@ sub artifact_name
 		<apply-template name="default_debug_release_config_t"/>
 	</template>
 	
+	<template name="console_t">
+		<apply-template name="debug_release_t">
+			<forward-defines/>
+			<define key="template" value="base_config_t"/>
+			<define key="config_type" value="console-executable"/>
+		</apply-template>
+		<apply-template name="default_debug_release_config_t"/>
+	</template>
+	
 	<project name="cclj">
 		<projdir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}</projdir>
 
 		<!-- everything else is relative to the project dir -->
-		<libdir>../../lib/{{[$xpj->{platform}]}}</libdir>
-		<bindir>../../bin/{{[$xpj->{platform}]}}</bindir>
-		<builddir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}/build"</builddir>
+		<libdir>../lib/{{[$xpj->{platform}]}}</libdir>
+		<bindir>../bin/{{[$xpj->{platform}]}}</bindir>
+		<builddir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}/build</builddir>
 		<target name="gtest">
-			<apply-template name="static_lib_t"/>
+			<apply-template name="console_t"/>
 			<preprocessor>
 				_VARIADIC_MAX=10
 			</preprocessor>

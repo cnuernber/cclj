@@ -11,9 +11,6 @@ use XML::LibXML;
 use File::Path;
 use Data::UUID;
 
-my $bindir;
-my $libdir;
-my $intdir;
 my $projdir;
 
 sub elemText {
@@ -86,10 +83,17 @@ sub add_property_node {
 my $initial_compilation_properties = { 
 	"configuration-type" => { type=>"set", values=>["static-library","dynamic-library","executable","console-executable"] },
 	"whole-program-optimization" => { type=>"boolean", default=>"false" },
-	"warning-level" => { type=>"set", values=>["0","1","2","3","4"], default=>"4" },
-	"optimization" => { type=>"set", values=>["disabled", "max-speed"], default=>"disabled" },
+	"warning-level" => { type=>"set", values=>["0","1","2","3","4","5"], default=>"4" },
+	"optimization" => { type=>"set", values=>["disabled", "max-speed", "min-space", "full"], default=>"disabled" },
 	"generate-debug-information" => { type=>"boolean", default=>"true" },
-	"intrinsic-functions" => { type=>"boolean", default=>"true" },
+	"intrinsic-functions" => { type=>"boolean", default=>"false" },
+	"artifact-name" => { type=>"string" },
+	"enable-rtti" => { type=>"boolean", default=>"true" },
+	"enable-exceptions" => { type=>"boolean", default=>"true" },
+	"floating-point-model" => { type=>"set", values=>["strict", "precise", "fast"], default=>"strict" },
+	"string-pooling" => { type=>"boolean", default=>"true" }, #I don't see why you wouldn't enable this one by default.
+	"buffer-security-check" => { type=>"boolean", default=>"true" },
+	"struct-member-alignment" => { type=>"set", values=>["default", "1", "2", "4", "8", "16"], default=>"default" },
 };
 
 sub process_target_config_child {
@@ -160,6 +164,9 @@ sub process_target_config_child {
 				}
 				add_property_node( $parent, $nodeName, $propvalue );
 			}
+			elsif( $proptype eq "string" ) {
+				add_property_node( $parent, $nodeName, $propvalue );
+			}
 			else {
 				die "Unrecognized property type $proptype";
 			}
@@ -217,16 +224,13 @@ sub process_project_children {
 		$project->{project_directory} = $projdir;
 	}
 	if ( $name eq "bindir" ) {
-		$bindir = project_relative_dir( $projChild );
-		$project->{binary_directory} = $bindir;
+		$project->{binary_directory} = project_relative_dir( $projChild );
 	}
 	elsif ( $name eq "libdir" ) {
-		$libdir = project_relative_dir( $projChild );
-		$project->{library_directory} = $bindir;
+		$project->{library_directory} = project_relative_dir( $projChild );
 	}
 	elsif ( $name eq "builddir" ) {
-		$intdir = project_relative_dir( $projChild );
-		$project->{build_directory} = $bindir;
+		$project->{build_directory} = project_relative_dir( $projChild );
 	}
 	elsif( $name eq "target" ) {
 		my $uid = $ug->to_string( $ug->create() );
@@ -250,13 +254,8 @@ sub process_project_children {
 					foreach my $configChild (@configChildren) {
 						if ( $configChild->nodeType == XML_ELEMENT_NODE ) { 
 							my $configChildNodeName = $configChild->nodeName;
-							if ( $configChildNodeName eq "set-artifact-name" ) {
-								$configuration->{"artifact-name"} = elemText( $configChild );
-							}
-							else {
-								die "Unrecognized configuration child $configChildNodeName" 
-									unless process_target_config_child( $om, $configuration, $configChild );
-							}
+							die "Unrecognized configuration child $configChildNodeName" 
+								unless process_target_config_child( $om, $configuration, $configChild );
 						}
 					}
 				}

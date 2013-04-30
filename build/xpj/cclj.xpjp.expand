@@ -4,22 +4,26 @@
 		<projdir>../vc12Win32</projdir>
 
 		
-		<libdir>../../lib/Win32</libdir>
-		<bindir>../../bin/Win32</bindir>
-		<builddir>../vc12Win32/build"</builddir>
+		<libdir>../lib/Win32</libdir>
+		<bindir>../bin/Win32</bindir>
+		<builddir>../vc12Win32/build</builddir>
 		<target name="gtest">
 			<configuration name="Debug">
-		  <configuration-type>static-library</configuration-type>
-		  <set-artifact-name>gtestDebug.exe</set-artifact-name>
+		  <configuration-type>console-executable</configuration-type>
+		  <artifact-name>gtestDebug.exe</artifact-name>
 		</configuration><configuration name="Release">
-		  <configuration-type>static-library</configuration-type>
-		  <set-artifact-name>gtest.exe</set-artifact-name>
+		  <configuration-type>console-executable</configuration-type>
+		  <artifact-name>gtest.exe</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
 		<use-debug-libraries>false</use-debug-libraries>
 		<function-level-linking>true</function-level-linking>
 		<enable-comdat-folding>true</enable-comdat-folding>
 		<optimize-references>true</optimize-references>
+		<runtime-library>multi-threaded-DLL</runtime-library>
+		<intrinsic-functions>true</intrinsic-functions>
+		<buffer-security-check>false</buffer-security-check>
+		<enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
 	  </configuration>
 			<preprocessor>
 				_VARIADIC_MAX=10
