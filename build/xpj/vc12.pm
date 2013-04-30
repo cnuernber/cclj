@@ -91,6 +91,13 @@ sub to_semi_delim_list_of_lists
 	return $retval;
 }
 
+sub to_semi_delim_list
+{
+	my $list = shift;
+	my $listoflists = [$list];
+	return to_semi_delim_list_of_lists( $listoflists );
+}
+
 
 sub to_space_delim_list_of_lists
 {
@@ -139,6 +146,16 @@ sub safe_lookup
 	return $retval;
 }
 
+sub get_target_uuid
+{
+	my ($targets, $targetName) = @_;
+	foreach my $target (@$targets) {
+		if ( $target->{name} eq $targetName ) {
+			return $target->{uid};
+		}
+	}
+}
+
 sub process
 {
 	$om = shift;
@@ -160,9 +177,6 @@ sub process
 		my $confList = [];
 		my $confHash = {};
 
-
-		#first output the solution file
-
 		foreach my $target (@$targets) {
 			my $targetId = $target->{uid};
 			my $targetName = $target->{name};
@@ -175,6 +189,17 @@ sub process
 				}
 			}
 			print $projfile "Project(\"{$crapid}\") = \"$targetName\", \"$targetName.vcxproj\", \"{$targetId}\"\r\n";
+			my $targetDependsHash = $target->{depends};
+			foreach my $dependTarget (keys %$targetDependsHash) {
+				my $dependUid = get_target_uuid( $targets, $dependTarget );
+				if ( $dependUid ) {
+					print $projfile <<END;
+	ProjectSection(ProjectDependencies) = postProject
+		{$dependUid} = {$dependUid}
+	EndProjectSection
+END
+				}
+			}
 			print $projfile "EndProject\r\n";
 		}
 		print $projfile "Global\r\n";
@@ -297,6 +322,7 @@ END
 					$om->get_target_and_config_nodes_by_type( $target, $conf, "preprocessor" ) );
 				my $cflags = to_space_delim_list_of_lists( $om->get_target_and_config_nodes_by_type( $target, $conf, "cflags" ) );
 				my $lflags = to_space_delim_list_of_lists( $om->get_target_and_config_nodes_by_type( $target, $conf, "lflags" ) );
+				my $libraries = to_semi_delim_list( $om->get_target_libraries( $target, $conf ) );
 				my $level = safe_lookup( $om->get_target_property( $target, $conf, "warning-level" ), $warning_level_map, "vc12-warning-level" );
 				my $rtti = $om->get_target_property( $target, $conf, "enable-rtti" );
 				my $exceptions = safe_lookup( $om->get_target_property( $target, $conf, "enable-exceptions" ), $enable_exceptions_map, "vc12-enable-exceptions" );
@@ -330,6 +356,8 @@ END
 				print $targetProj "    <Link>\n";
 				print $targetProj "      <SubSystem>$subsystem</SubSystem>\n";
 				print_property_itemdef( $targetProj, $target, $conf, "generate-debug-information" );
+				print $targetProj "      <AdditionalLibraryDirectories>$linkerlist;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>\n";
+				print $targetProj "      <AdditionalDependencies>$libraries;%(AdditionalDependencies)</AdditionalDependencies>\n";
 				print $targetProj "    </Link>\n";
 				print $targetProj "  </ItemDefinitionGroup>\n";
 

@@ -109,9 +109,6 @@ sub parse_xpj_templates_element {
 	  eval( $elemText );
 	  die "Failed to eval $elemText: $@" if $@;
   }
-  elsif( $elemName eq "target" ) {
-	  $xpj->{target_name} = $xmlelem->getAttribute( "name" );
-  }
 
   foreach my $child (@childnodes) {
 	if ( $child->nodeType == XML_ELEMENT_NODE ) {
@@ -242,6 +239,9 @@ sub eval_xpj_element {
 	eval_xpj_apply_template( $source_elem, $dest_elem );
   }
   else {
+	if( $source_name eq "target" ) {
+		$xpj->{target_name} = $source_elem->getAttribute( "name" );
+	}
 	eval_xpj_copy_element( $source_elem, $dest_elem );
   }
 }

@@ -122,7 +122,7 @@ sub process_target_config_child {
 			}
 		}
 	}
-	elsif( $nodeName eq "cflags" || $nodeName eq "lflags" || $nodeName eq "preprocessor" ) {
+	elsif( $nodeName eq "cflags" || $nodeName eq "lflags" || $nodeName eq "preprocessor" || $nodeName eq "libraries" ) {
 		my $resultArray = add_array_node( $parent, $nodeName );
 		my @lines = split( /\n/, elemText( $elem ) );
 		foreach my $line (@lines ) {
@@ -235,7 +235,7 @@ sub process_project_children {
 	elsif( $name eq "target" ) {
 		my $uid = $ug->to_string( $ug->create() );
 
-		my $newTarget = { name => $projChild->getAttribute( "name" ), uid => $uid, filegroups => {}, project => $project };
+		my $newTarget = { name => $projChild->getAttribute( "name" ), uid => $uid, filegroups => {}, project => $project, depends=> {} };
 		my $targets = $project->{targets};
 		push( @$targets, $newTarget );
 		my @targetChildren = $projChild->childNodes;
@@ -314,6 +314,15 @@ sub process_project_children {
 								}
 							}
 						}
+					}
+				}
+				elsif( $nodeName eq "depends" ) {
+					my $dependsText = elemText( $targetChild );
+					my @groupLines = split( /\n/, $dependsText );
+					my $dependsHash = $newTarget->{depends};
+					foreach my $line (@groupLines) {
+						my $trimmed = trim($line);
+						$dependsHash->{$trimmed} = 1;
 					}
 				}
 				else {
@@ -401,6 +410,17 @@ sub get_target_property {
 	return $retval;
 }
 
+sub get_target_out_dir {
+	my ($om, $target, $configname ) = @_;
+	my $configType = $om->get_target_property( $target, $configname, "configuration-type" );
+	my $project = $target->{project};
+	my $outDir = $project->{binary_directory};
+	if ( $configType  eq "static-library" ) {
+		$outDir = $project->{library_directory};
+	}
+	return $outDir;
+}
+
 #path lists are header and linker path lists so far
 sub get_path_list {
 	my ($om, $target, $configname, $listname) = @_;
@@ -417,7 +437,56 @@ sub get_path_list {
 			}
 		}
 	}
+	if ( $listname == "linker" ) {
+		my $project = $target->{project};
+		my $targets = $project->{targets};
+		my $depends = $target->{depends};
+		foreach my $depend (keys %$depends) {
+			foreach my $subTarget (@$targets) {
+				my $subName = $subTarget->{name};
+				if ( $subName eq $depend ) {
+					my $outDir = $om->get_target_out_dir( $subTarget, $configname );
+					print( "found sub target: $subName, $outDir\n" );
+					if ( !$found_items->{$outDir} ) {
+						push( @retval, $outDir );
+						$found_items->{$outDir} = 1;
+					}
+				}
+			}
+		}
+	}
 	#don't even think of sorting them.  Header/linker include lists are extremely sensitive to ordering
+	return \@retval;
+}
+
+sub get_target_libraries {
+	my ($om, $target, $configname) = @_;
+	my $node_values = get_target_and_config_nodes_by_type( $om, $target, $configname, "libraries" );
+	my $found_items = {};
+	my @retval;
+	foreach my $node_value (@$node_values)  {
+		foreach my $path (@$node_value) {
+			if ( !$found_items->{$path} ) {
+				push( @retval, $path );
+				$found_items->{$path} = 1;
+			}
+		}
+	}
+	my $project = $target->{project};
+	my $targets = $project->{targets};
+	my $depends = $target->{depends};
+	foreach my $depend (keys %$depends) {
+		foreach my $subTarget (@$targets) {
+			my $subName = $subTarget->{name};
+			if ( $subName eq $depend ) {
+				my $artifact_name = $om->get_target_property( $subTarget, $configname, "artifact-name" );
+				if ( !$found_items->{$artifact_name} ) {
+					push( @retval, $artifact_name );
+					$found_items->{$artifact_name} = 1;
+				}
+			}
+		}
+	}
 	return \@retval;
 }
 

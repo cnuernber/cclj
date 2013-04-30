@@ -79,6 +79,16 @@ sub artifact_name
 		<apply-template name="default_debug_release_config_t"/>
 	</template>
 	
+	<template name="gtest_headers">
+		<search type="header">
+			../../gtest
+			../../gtest/include
+		</search>
+		<preprocessor>
+			_VARIADIC_MAX=10
+		</preprocessor>
+	</template>
+	
 	<project name="cclj">
 		<projdir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}</projdir>
 
@@ -87,14 +97,8 @@ sub artifact_name
 		<bindir>../bin/{{[$xpj->{platform}]}}</bindir>
 		<builddir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}/build</builddir>
 		<target name="gtest">
-			<apply-template name="console_t"/>
-			<preprocessor>
-				_VARIADIC_MAX=10
-			</preprocessor>
-			<search type="header">
-				../../gtest
-				../../gtest/include
-			</search>
+			<apply-template name="static_lib_t"/>
+			<apply-template name="gtest_headers"/>
 			<files name="include" root="../../gtest/include/gtest">
 			  *
 			  internal/*
@@ -103,6 +107,19 @@ sub artifact_name
 				*
 				-gtest_main.cc
 				-gtest-all.cc
+			</files>
+		</target>
+		<target name="cclj_tests">
+			<apply-template name="console_t"/>
+			<apply-template name="gtest_headers"/>
+			<depends>
+				gtest
+			</depends>
+			<files name="gtest" root="../../gtest/src">
+				gtest_main.cc
+			</files>
+			<files name="cclj_test" root="../../cclj/test/">
+				*.cpp
 			</files>
 		</target>
 	</project>
