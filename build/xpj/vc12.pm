@@ -291,7 +291,7 @@ END
 				if ( $configType eq "StaticLibrary" ) {
 					$outDir = $proj->{library_directory};
 				}
-				my $buildDir = catdir( $proj->{build_directory}, $conf );
+				my $buildDir = catdir( catdir( $proj->{build_directory}, $targetName ), $conf);
 				
 				print $targetProj "  <PropertyGroup Condition=\"'$cond'=='$confName'\" Label=\"Configuration\">\n";
 				print $targetProj "    <PlatformToolset>v110</PlatformToolset>\n";

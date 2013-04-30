@@ -437,7 +437,7 @@ sub get_path_list {
 			}
 		}
 	}
-	if ( $listname == "linker" ) {
+	if ( $listname eq "linker-search-paths" ) {
 		my $project = $target->{project};
 		my $targets = $project->{targets};
 		my $depends = $target->{depends};
@@ -446,7 +446,6 @@ sub get_path_list {
 				my $subName = $subTarget->{name};
 				if ( $subName eq $depend ) {
 					my $outDir = $om->get_target_out_dir( $subTarget, $configname );
-					print( "found sub target: $subName, $outDir\n" );
 					if ( !$found_items->{$outDir} ) {
 						push( @retval, $outDir );
 						$found_items->{$outDir} = 1;
