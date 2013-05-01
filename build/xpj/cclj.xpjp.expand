@@ -16,14 +16,14 @@
 		  <artifact-name>libgtest.a</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
+		<intrinsic-functions>true</intrinsic-functions>
+		<buffer-security-check>false</buffer-security-check>
 		
 	  </configuration>
 			<search type="header">
 			../../gtest
 			../../gtest/include
-		</search><preprocessor>
-			_VARIADIC_MAX=10
-		</preprocessor>
+		</search>
 			<files name="include" root="../../gtest/include/gtest">
 			  *
 			  internal/*
@@ -43,14 +43,14 @@
 		  <artifact-name>cclj_tests</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
+		<intrinsic-functions>true</intrinsic-functions>
+		<buffer-security-check>false</buffer-security-check>
 		
 	  </configuration>
 			<search type="header">
 			../../gtest
 			../../gtest/include
-		</search><preprocessor>
-			_VARIADIC_MAX=10
-		</preprocessor>
+		</search>
 			<depends>
 				gtest
 			</depends>

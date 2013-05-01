@@ -58,14 +58,14 @@ sub artifact_name
 	<template name="default_debug_release_config_t">
 	  <configuration name="Release">
 		<optimization>max-speed</optimization>
+		<intrinsic-functions>true</intrinsic-functions>
+		<buffer-security-check>false</buffer-security-check>
 		<if cond="lc($xpj->{platform}) =~ /^win/">
 		  <use-debug-libraries>false</use-debug-libraries>
 		  <function-level-linking>true</function-level-linking>
 		  <enable-comdat-folding>true</enable-comdat-folding>
 		  <optimize-references>true</optimize-references>
 		  <runtime-library>multi-threaded-DLL</runtime-library>
-		  <intrinsic-functions>true</intrinsic-functions>
-		  <buffer-security-check>false</buffer-security-check>
 		  <enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
 		</if>
 	  </configuration>
@@ -94,9 +94,12 @@ sub artifact_name
 			../../gtest
 			../../gtest/include
 		</search>
-		<preprocessor>
+
+		<if cond="(lc($xpj->{platform}) =~ /win/)">
+		  <preprocessor>
 			_VARIADIC_MAX=10
-		</preprocessor>
+		  </preprocessor>
+		</if>
 	</template>
 	
 	<project name="cclj">

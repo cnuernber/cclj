@@ -51,6 +51,46 @@ sub add_project_config
 	$projectConfigs->{$config} = $existing;
 }
 
+my $compilation_maps = {
+	"warning-level" => { "0" => "-w", "1" => "", "2" => "", "3" => "", "4" => "-Wall", "5" => "-Wextra" },
+	"optimization" => { "disabled" => "-O0", "max-speed" => "-O3", "min-space" => "-Os", full=>"-O3" },
+	"generate-debug-information" => { "false" => "", "true" => "-gstabs" },
+	"intrinsic-functions" => { "false" => "-fno-builtin", "true"=>"" },
+	"enable-rtti" => { "false" => "-fno-rtti", "true"=>"-frtti" },
+	"enable-exceptions" => { "false"=>"-fno-exceptions", "true"=>"-fexceptions" },
+	"buffer-security-check" => { "false"=>"-fno-stack-protector", "true"=>"-fstack-protector" },
+	"struct-member-alignment" => { "default"=>"", "1"=>"-fpack-struct=1", "2"=>"-fpack-struct=2"
+									   , "4"=>"-fpack-struct=4", "8"=>"-fpack-struct=8", "16"=>"-fpack-struct=16" },
+};
+
+my $generate_debug_info_map = { "false" => "", "true" => "-gstabs" };
+
+
+sub safe_lookup_and_append
+{
+	my ($target, $config, $varname, $file, $propname) = @_;
+	my $key = $om->get_target_property( $target, $config, $propname );
+	my $map = $compilation_maps->{$propname};
+	die "unable to find mapping for property $propname" if (!$map);
+	
+	
+	my $result = $map->{$key};
+	if ( !$result && !(exists $map->{$key} ) ) {
+		die "key $key doesn't exist in map $propname";
+	}
+	if ( $result ) {
+		print $file "$varname += $result\n";
+	}
+}
+
+sub translate_xpj_compilation_properties
+{
+	my ($target, $config, $varname, $file) = @_;
+	foreach my $compKey (keys %$compilation_maps ) {
+		safe_lookup_and_append( $target, $config, $varname, $file, $compKey );
+	}
+}
+
 sub process
 {
 	($om, $xpj) = @_;
@@ -115,6 +155,7 @@ sub process
 			my $cleanStr = "";
 			my $allStr = "";
 			foreach my $config (@$configs) {
+				print $targetMakefile "\n\n";
 				my $builddir = catdir( catdir( $project->{build_directory}, $targetName ), $config );
 				mkpath( $builddir );
 				my $includePathVar = get_makefile_variable_name( $targetName, $config, "hpaths" );
@@ -133,7 +174,9 @@ sub process
 				my $configuration_type = $om->get_target_property( $target, $config, "configuration-type" );
 				my $out_dir = $om->get_target_out_dir( $target, $config );
 				my $cflagsVar = get_makefile_variable_name( $targetName, $config, "cflags" );
-				my $cflags = build_makefile_variable_list_of_lists( 
+				#output the nice-named build system cflags first
+				my $cflags = translate_xpj_compilation_properties( $target, $config, $cflagsVar, $targetMakefile );
+				my $cflags = $cflags . build_makefile_variable_list_of_lists( 
 					$om->get_target_and_config_nodes_by_type( $target, $config, "cflags" ), $cflagsVar );
 				my $lflagsVar = get_makefile_variable_name( $targetName, $config, "lflags" );
 				my $lflags = build_makefile_variable_list_of_lists( 
