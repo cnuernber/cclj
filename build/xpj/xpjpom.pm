@@ -458,35 +458,64 @@ sub get_path_list {
 	return \@retval;
 }
 
-sub get_target_libraries {
-	my ($om, $target, $configname) = @_;
+sub get_target_input_libraries 
+{
+	my ($om, $target, $configname, $retval, $found_items) = @_;
 	my $node_values = get_target_and_config_nodes_by_type( $om, $target, $configname, "libraries" );
-	my $found_items = {};
-	my @retval;
 	foreach my $node_value (@$node_values)  {
 		foreach my $path (@$node_value) {
 			if ( !$found_items->{$path} ) {
-				push( @retval, $path );
+				push( @$retval, $path );
 				$found_items->{$path} = 1;
 			}
 		}
 	}
+}
+
+sub get_target_depends_libraries 
+{
+	my ($om, $target, $configname, $retval, $found_items, $fullpath) = @_;
+	my $found_items = {};
+
 	my $project = $target->{project};
 	my $targets = $project->{targets};
 	my $depends = $target->{depends};
 	foreach my $depend (keys %$depends) {
 		foreach my $subTarget (@$targets) {
 			my $subName = $subTarget->{name};
+
 			if ( $subName eq $depend ) {
 				my $artifact_name = $om->get_target_property( $subTarget, $configname, "artifact-name" );
-				if ( !$found_items->{$artifact_name} ) {
-					push( @retval, $artifact_name );
-					$found_items->{$artifact_name} = 1;
+				my $artifact_fullpath = catfile( $om->get_target_out_dir( $subTarget, $configname ), $artifact_name );
+				if ( !$found_items->{$artifact_fullpath} ) {
+					if ( $fullpath ) {
+						push( @$retval, $artifact_fullpath );
+					}
+					else {
+						push( @$retval, $artifact_name );
+					}
+					$found_items->{$artifact_fullpath} = 1;
 				}
 			}
 		}
 	}
-	return \@retval;
+}
+
+
+sub get_target_depends_libraries_full_path
+{
+	my ($om, $target, $configname, $retval, $found_items) = @_;
+	return $om->get_target_depends_libraries( $target, $configname, $retval, $found_items, 1 );
+}
+
+
+sub get_target_libraries {
+	my ($om, $target, $configname) = @_;
+	my $foundLibs = {};
+	my $retval = [];
+	get_target_input_libraries( $om, $target, $configname, $retval, $foundLibs );
+	get_target_depends_libraries( $om, $target, $configname, $retval, $foundLibs );
+	return $retval;
 }
 
 sub get_configuration_names {
@@ -523,6 +552,44 @@ sub get_target_files {
 	}
 	my @sorted = sort( @retval );
 	return \@sorted;
+}
+
+sub get_project_configuration_names 
+{
+	my ($om, $project) = @_;
+	my $targets = $project->{targets};
+	my $confHash = {};
+	my $confList = [];
+  	foreach my $target (@$targets) {
+		my $targetConfigs = $om->get_configuration_names( $target );
+		foreach my $targetConf (@$targetConfigs) {
+			if ( !$confHash->{$targetConf} ) {
+				push( @$confList, $targetConf );
+				$confHash->{$targetConf} = 1;
+			}
+		}
+	}
+	return $confList;
+}
+
+
+my $FILE_TYPE_COMPILE = 1;
+my $FILE_TYPE_HEADER = 2;
+my $FILE_TYPE_UNKNOWN = 3;
+
+sub get_file_type
+{
+	my ($om, $file) = @_;
+	$file = lc($file);
+	if ( $file =~ /\.cpp$|\.c$|\.cc$|\.cxx$|\.def$|odl|\.idl$|\.hpj$|\.bat$|\.asm$|\.asmx$/ ) {
+		return $FILE_TYPE_COMPILE;
+	}
+	elsif ( $file =~ /\.h$|\.hpp$|\.hxx$|\.hm$|\.inl$|\.inc$|\.xsd$/ ) {
+		return $FILE_TYPE_HEADER;
+	}
+	else {
+		return $FILE_TYPE_UNKNOWN;
+	}
 }
 
 sub build_object_model
@@ -562,7 +629,10 @@ sub extend_compilation_properties
 sub new
 {
 	my $class = shift;
-	my $self = { compilation_properties=>$initial_compilation_properties };
+	my $self = { compilation_properties=>$initial_compilation_properties
+					 , FILE_TYPE_COMPILE => $FILE_TYPE_COMPILE
+					 , FILE_TYPE_HEADER => $FILE_TYPE_HEADER
+					 , FILE_TYPE_NONE => $FILE_TYPE_UNKNOWN };
 	bless $self, $class;
 	return $self;
 }

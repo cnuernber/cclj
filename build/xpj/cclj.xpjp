@@ -20,6 +20,14 @@ sub artifact_name
 			return "$base_name.exe";
 		}
 	}
+	else {
+	    if ( $config_type eq 'static-library' ) {
+		    return "lib$base_name.a";
+		}
+		elsif( $config_type eq 'dynamic-library' ) {
+		    return "lib$base_name.so";
+		}
+	}
 	return $base_name;
 }
 	</perl>
@@ -50,14 +58,16 @@ sub artifact_name
 	<template name="default_debug_release_config_t">
 	  <configuration name="Release">
 		<optimization>max-speed</optimization>
-		<use-debug-libraries>false</use-debug-libraries>
-		<function-level-linking>true</function-level-linking>
-		<enable-comdat-folding>true</enable-comdat-folding>
-		<optimize-references>true</optimize-references>
-		<runtime-library>multi-threaded-DLL</runtime-library>
-		<intrinsic-functions>true</intrinsic-functions>
-		<buffer-security-check>false</buffer-security-check>
-		<enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
+		<if cond="lc($xpj->{platform}) =~ /^win/">
+		  <use-debug-libraries>false</use-debug-libraries>
+		  <function-level-linking>true</function-level-linking>
+		  <enable-comdat-folding>true</enable-comdat-folding>
+		  <optimize-references>true</optimize-references>
+		  <runtime-library>multi-threaded-DLL</runtime-library>
+		  <intrinsic-functions>true</intrinsic-functions>
+		  <buffer-security-check>false</buffer-security-check>
+		  <enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
+		</if>
 	  </configuration>
 	</template>
 	
@@ -115,6 +125,11 @@ sub artifact_name
 			<depends>
 				gtest
 			</depends>
+			<if cond="!(lc($xpj->{platform}) =~ /win/)">
+			  <libraries>
+				pthread
+			  </libraries>
+			</if>
 			<files name="gtest" root="../../gtest/src">
 				gtest_main.cc
 			</files>

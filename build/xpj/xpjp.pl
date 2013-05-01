@@ -83,7 +83,6 @@ sub parse_xpj_templates_element {
 	  my $fname = $xmlelem->getAttribute( "filename" );
 	  my $templatePath = realpath( catfile( $currentdir, $fname ) );
 	  do {
-		print "parsing template file $templatePath\n";
 		my $old_current_dir = $currentdir;
 		$currentdir = dirname( $templatePath );
 		my $doc;
@@ -238,6 +237,37 @@ sub eval_xpj_element {
   elsif( $source_name eq 'apply-template' ) {
 	eval_xpj_apply_template( $source_elem, $dest_elem );
   }
+  elsif ($source_name eq "if" ) {
+	  #run a set of if-else blocks.  I think the logic here is sound.
+	  #once a condition returns true, we start running elements and don't check
+	  #any more conditions.
+	  my $condition = $source_elem->getAttribute( "cond" );
+	  my $result = eval( $condition );
+	  die "Execution of $condition failed: $@" if $@;
+	  my $ifChildren = $source_elem->childNodes;
+	  foreach my $ifchild (@$ifChildren) {
+		  if ( $ifchild->nodeType == XML_ELEMENT_NODE ) {
+			  my $ifChildName = $ifchild->nodeName;
+			  if ( $ifChildName eq "elseif" ) {
+				  if ( !$result ) {
+					  $condition = $ifchild->getAttribute( "cond" );
+					  my $result = eval( $condition );
+					  die "Execution of $condition failed: $@" if $@;
+				  }
+			  }
+			  elsif( $ifChildName eq "else" ) {
+				  if ( !$result ) {
+					  eval_xpj_copy_element( $ifchild, $dest_elem );
+				  }
+			  }
+			  else {
+				  if ( $result ) {
+					  eval_xpj_copy_element( $ifchild, $dest_elem );
+				  }
+			  }
+		  }
+	  }
+  }
   else {
 	if( $source_name eq "target" ) {
 		$xpj->{target_name} = $source_elem->getAttribute( "name" );
@@ -270,8 +300,8 @@ sub eval_xpj_file {
 
 
 $xpj = {};
-$xpj->{'tool'} = "vc12";
-$xpj->{'platform'} = 'Win32';
+$xpj->{'tool'} = "xpjmake";
+$xpj->{'platform'} = 'linux';
 
 my $parser = XML::LibXML->new({ line_numbers => 1 });
 my $doc = $parser->parse_file( 'cclj.xpjp' );

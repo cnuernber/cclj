@@ -113,22 +113,10 @@ sub to_space_delim_list_of_lists
 	}
 	return $retval;
 }
-my $FILE_TYPE_COMPILE = 1;
-my $FILE_TYPE_HEADER = 2;
-my $FILE_TYPE_UNKNOWN = 3;
-
 sub get_file_type
 {
 	my $file = shift;
-	if ( $file =~ /\.cpp$|\.c$|\.cc$|\.cxx$|\.def$|odl|\.idl$|\.hpj$|\.bat$|\.asm$|\.asmx$/ ) {
-		return $FILE_TYPE_COMPILE;
-	}
-	elsif ( $file =~ /\.h$|\.hpp$|\.hxx$|\.hm$|\.inl$|\.inc$|\.xsd$/ ) {
-		return $FILE_TYPE_HEADER;
-	}
-	else {
-		return $FILE_TYPE_UNKNOWN;
-	}
+	return $om->get_file_type( $file );
 }
 
 my $enable_exceptions_map = { "false"=>"false", "true"=>"Sync", "true-with-c"=>"SyncWithC", "true-with-SEH"=>"Async" };
@@ -174,20 +162,11 @@ sub process
 		print $projfile "# Visual Studio 2012\r\n";
 
 		my $targets = $proj->{targets};
-		my $confList = [];
-		my $confHash = {};
-
+		my $confList = $om->get_project_configuration_names( $proj );
 		foreach my $target (@$targets) {
 			my $targetId = $target->{uid};
 			my $targetName = $target->{name};
 			my $crapid = $uidgen->to_string( $uidgen->create() );
-			my $targetConfigs = $om->get_configuration_names( $target );
-			foreach my $targetConf (@$targetConfigs) {
-				if ( !$confHash->{$targetConf} ) {
-					push( @$confList, $targetConf );
-					$confHash->{$targetConf} = 1;
-				}
-			}
 			print $projfile "Project(\"{$crapid}\") = \"$targetName\", \"$targetName.vcxproj\", \"{$targetId}\"\r\n";
 			my $targetDependsHash = $target->{depends};
 			foreach my $dependTarget (keys %$targetDependsHash) {
@@ -260,10 +239,10 @@ END
 			my $targetFiles = $om->get_target_files( $target );
 			foreach my $file (@$targetFiles) {
 				my $filetype = get_file_type( $file );
-				if ( $filetype == $FILE_TYPE_COMPILE ) {
+				if ( $filetype == $om->{FILE_TYPE_COMPILE} ) {
 					print $targetProj "    <ClCompile Include=\"$file\" />\n";
 				}
-				elsif ( $filetype == $FILE_TYPE_HEADER ) {
+				elsif ( $filetype == $om->{FILE_TYPE_HEADER} ) {
 					print $targetProj "    <ClInclude Include=\"$file\" />\n";
 				}
 				else {
@@ -411,10 +390,10 @@ END
 						}	
 						my $filetype = get_file_type( $file );
 						my $xmltag = "";
-						if ( $filetype == $FILE_TYPE_COMPILE ) {
+						if ( $filetype == $om->{FILE_TYPE_COMPILE} ) {
 							$xmltag = "ClCompile";
 						}
-						elsif( $filetype == $FILE_TYPE_HEADER ) {
+						elsif( $filetype == $om->{FILE_TYPE_HEADER} ) {
 							$xmltag = "ClInclude";
 						}
 						else {
