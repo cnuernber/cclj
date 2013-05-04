@@ -96,6 +96,17 @@ my $initial_compilation_properties = {
 	"struct-member-alignment" => { type=>"set", values=>["default", "1", "2", "4", "8", "16"], default=>"default" },
 };
 
+sub project_relative_file 
+{
+	my ($fname, $srcPath, $message) = @_;
+	$fname = catfile( $srcPath, $fname );
+	if ( !(-f $fname) ) {
+		die "$message: $fname doesn't exist or isn't a file";
+	}
+	$fname = realpath( $fname );
+	return File::Spec->abs2rel( $fname, $projdir );
+}
+
 sub process_target_config_child {
 	my $om = shift;
 	my $parent = shift;
@@ -130,6 +141,20 @@ sub process_target_config_child {
 			if ( $trimmed ) {
 				push( @$resultArray, $trimmed );
 			}
+		}
+	}
+	elsif( $nodeName eq "precompiled-header" ) {
+		my $root = $elem->getAttribute( "root" );
+		my $header = $elem->getAttribute( "header" );
+		my $source = $elem->getAttribute( "source" );
+		my $srcPath = realpath( catdir( getcwd(), $root ) );
+		if ( $header ) {
+			$header = project_relative_file( $header, $srcPath, "precompiled-header" );
+			if ( $source ) {
+				$source = project_relative_file( $source, $srcPath, "precompiled-header" );
+			}
+			my $propvalue = { header=>$header, source=>$source };
+			add_property_node( $parent, "precompiled-header", $propvalue );
 		}
 	}
 	else {
@@ -384,7 +409,8 @@ sub get_target_and_config_nodes_by_type {
 }
 #properties are things that have a distinct value and a later definition overrides an earlier
 #definition
-sub get_target_property {
+
+sub get_target_property_no_default {
 	my ($om, $target, $configName, $propname) = @_;
 	my $properties = get_target_and_config_nodes_by_type( $om, $target, $configName, "property" );
 	my $retval;
@@ -396,6 +422,11 @@ sub get_target_property {
 			$retval = $prop->{value};
 		}
 	}
+	return $retval;
+}
+sub get_target_property {
+	my ($om, $target, $configName, $propname) = @_;
+	my $retval = get_target_property_no_default( $om, $target, $configName, $propname);
 	if ( !$retval ) {
 		my $compilation_properties = $om->{compilation_properties};
 		my $propertyDefinition = $compilation_properties->{$propname};
@@ -408,6 +439,44 @@ sub get_target_property {
 		}
 	}
 	return $retval;
+}
+
+sub get_target_precompiled_header {
+	my ($om, $target, $configName) = @_;
+	return $om->get_target_property_no_default( $target,  $configName, "precompiled-header" );
+}
+
+sub append_precomp_header
+{
+	my ( $precompiledHeaders, $header, $conf ) = @_;
+	if ( $header ) {
+		my $array = $precompiledHeaders->{$header};
+		if ( !$array ) {
+			$array = [];
+			$precompiledHeaders->{$header} = $array;
+		}
+		push( @$array, $conf );
+	}
+}
+
+# - return a map from file to configuration name where this file is a precompiled header.
+sub get_target_precompiled_header_map {
+	my ($om, $target) = @_;
+	my $precompiledHeaders = {};
+	my $targetConfigs = $om->get_configuration_names( $target );
+	foreach my $conf (@$targetConfigs) {
+		my $precompHeader = $om->get_target_precompiled_header( $target, $conf );
+		if ( $precompHeader ) {
+			my $header = $precompHeader->{header};
+			my $source = $precompHeader->{source};
+			if ( $header ) {
+				append_precomp_header( $precompiledHeaders, $header, $conf );
+				append_precomp_header( $precompiledHeaders, $source, $conf );
+			}
+		}
+	}
+		
+	return $precompiledHeaders;
 }
 
 sub get_target_out_dir {

@@ -9,7 +9,7 @@ sub artifact_name
 	my $target_name = $xpj->{target_name}; #name of the currently processing target
 	my $base_name = $target_name;
 	if ( $config_name ne "Release" ) { $base_name = "$target_name$config_name"; }
-	if ( ($platform eq 'win32') || ($platform eq 'win64') ) {
+	if ( ($platform =~ /win/) ) {
 		if ( $config_type eq 'static-library' ) {
 			return "$base_name.lib";
 		}
@@ -60,7 +60,7 @@ sub artifact_name
 		<optimization>max-speed</optimization>
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
-		<if cond="lc($xpj->{platform}) =~ /^win/">
+		<if cond="lc($xpj->{platform}) =~ /win/">
 		  <use-debug-libraries>false</use-debug-libraries>
 		  <function-level-linking>true</function-level-linking>
 		  <enable-comdat-folding>true</enable-comdat-folding>
@@ -103,12 +103,12 @@ sub artifact_name
 	</template>
 	
 	<project name="cclj">
-		<projdir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}</projdir>
+		<projdir>../{{["$xpj->{platform}"]}}</projdir>
 
 		<!-- everything else is relative to the project dir -->
 		<libdir>../lib/{{[$xpj->{platform}]}}</libdir>
 		<bindir>../bin/{{[$xpj->{platform}]}}</bindir>
-		<builddir>../{{["$xpj->{tool}" . "$xpj->{platform}"]}}/build</builddir>
+		<builddir>../{{["$xpj->{platform}"]}}/build</builddir>
 		<target name="gtest">
 			<apply-template name="static_lib_t"/>
 			<apply-template name="gtest_headers"/>
@@ -121,7 +121,7 @@ sub artifact_name
 				-gtest_main.cc
 				-gtest-all.cc
 			</files>
-		</target>
+		</target> 
 		<target name="cclj_tests">
 			<apply-template name="console_t"/>
 			<apply-template name="gtest_headers"/>
@@ -133,12 +133,11 @@ sub artifact_name
 				pthread
 			  </libraries>
 			</if>
-			<files name="gtest" root="../../gtest/src">
-				gtest_main.cc
-			</files>
 			<files name="cclj_test" root="../../cclj/test/">
 				*.cpp
+				*.h
 			</files>
+			<precompiled-header root="../../cclj/test/" header="cclj_test_precompile.h" source="cclj_test_precompile.cpp"/>
 		</target>
 	</project>
 </xpjp>

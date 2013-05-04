@@ -297,11 +297,20 @@ sub eval_xpj_file {
   }
   return $newdoc;
 }
-
-
 $xpj = {};
-$xpj->{'tool'} = "xpjmake";
-$xpj->{'platform'} = 'linux';
+
+$xpj->{'platform'} = $^O;
+if ( lc($^O) =~ /win/ ) {
+	$xpj->{tool} = "vc12";
+	$xpj->{platform} = "Win32";
+}
+else
+{
+	$xpj->{tool} = "xpjmake";
+}
+
+
+print ("running xpjp for platform $^O\n" );
 
 my $parser = XML::LibXML->new({ line_numbers => 1 });
 my $doc = $parser->parse_file( 'cclj.xpjp' );

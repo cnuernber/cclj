@@ -144,6 +144,28 @@ sub get_target_uuid
 	}
 }
 
+sub output_target_file
+{
+	my ($om, $target, $targetFile, $elemName, $file, $precompiledHeaderMap ) = @_;
+	print $targetFile "    <$elemName Include=\"$file\"";
+	my $configs = $precompiledHeaderMap->{$file};
+	if ( $configs && $elemName eq "ClCompile" ) {
+		print $targetFile ">\n";
+		my $platform = $xpj->{platform};
+		foreach my $conf (@$configs) {
+			print $targetFile "      <PrecompiledHeader Condition=\"'\$(Configuration)|\$(Platform)'=='$conf|$platform'\">Create</PrecompiledHeader>\n";
+			my $precompiledEntry = $om->get_target_precompiled_header( $target, $conf );
+			my $header = $precompiledEntry->{header};
+			my($filename, $directories, $suffix) = fileparse($header);
+			print $targetFile "      <PrecompiledHeaderFile Condition=\"'\$(Configuration)|\$(Platform)'=='$conf|$platform'\">$filename</PrecompiledHeaderFile>\n";
+		}
+		print $targetFile "    </$elemName>\n";
+	}
+	else {
+		print $targetFile "/>\n";
+	}
+}
+
 sub process
 {
 	$om = shift;
@@ -222,6 +244,7 @@ END
 				"<Project DefaultTargets=\"Build\" ToolsVersion=\"4.0\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">\n";
 			print $targetProj "  <ItemGroup Label=\"ProjectConfigurations\">\n";
 			my $targetConfigs = $om->get_configuration_names( $target );
+			my $precompiledHeaders = {};
 			foreach my $conf (@$targetConfigs) {
 				my $confName = "$conf|$platform";
 				print $targetProj <<END;
@@ -235,19 +258,19 @@ END
 
 			#ask the om to merge all of the files into one array of unique names.
 
+			my $precompHeaderMap = $om->get_target_precompiled_header_map( $target );
 			print $targetProj "  <ItemGroup>\n";
 			my $targetFiles = $om->get_target_files( $target );
 			foreach my $file (@$targetFiles) {
 				my $filetype = get_file_type( $file );
+				my $elemName = "None";
 				if ( $filetype == $om->{FILE_TYPE_COMPILE} ) {
-					print $targetProj "    <ClCompile Include=\"$file\" />\n";
+					$elemName = "ClCompile";
 				}
 				elsif ( $filetype == $om->{FILE_TYPE_HEADER} ) {
-					print $targetProj "    <ClInclude Include=\"$file\" />\n";
+					$elemName = "ClInclude";
 				}
-				else {
-					print $targetProj "    <None Include=\"$file\" />\n";
-				}
+				output_target_file( $om, $target, $targetProj, $elemName, $file, $precompHeaderMap );
 			}
 			print $targetProj "  </ItemGroup>\n";
 			my $projectType = $platform . "Proj";
@@ -307,6 +330,7 @@ END
 				my $exceptions = safe_lookup( $om->get_target_property( $target, $conf, "enable-exceptions" ), $enable_exceptions_map, "vc12-enable-exceptions" );
 				my $sma = safe_lookup( $om->get_target_property( $target, $conf, "struct-member-alignment" ), $struct_member_alignment_map, "vc12-struct-member-alignment" );
 				my $confType = $om->get_target_property($target,$conf,"configuration-type");
+				my $precompHeader = $om->get_target_precompiled_header( $target, $conf );
 				my $subsystem = "Windows";
 				if ( $confType eq "console-executable" ) {
 					$subsystem = "Console";
@@ -331,6 +355,13 @@ END
 				print $targetProj "      <AdditionalOptions>$cflags %(AdditionalOptions)</AdditionalOptions>\n";
 				print $targetProj "      <ExceptionHandling>$exceptions</ExceptionHandling>\n";
 				print $targetProj "      <RuntimeTypeInfo>$rtti</RuntimeTypeInfo>\n";
+				if ( $precompHeader ) {
+					my $header = $precompHeader->{header};
+					#get just the name of the file.
+					my($filename, $directories, $suffix) = fileparse($header);
+					print $targetProj "      <PrecompiledHeader>Use</PrecompiledHeader>\n";
+					print $targetProj "      <PrecompiledHeaderFile>$filename</PrecompiledHeaderFile>\n";
+				}
 				print $targetProj "    </ClCompile>\n";
 				print $targetProj "    <Link>\n";
 				print $targetProj "      <SubSystem>$subsystem</SubSystem>\n";
