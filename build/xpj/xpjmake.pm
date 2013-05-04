@@ -184,8 +184,25 @@ sub process
 				my $preprocessorVar = get_makefile_variable_name( $targetName, $config, "preprocessor" );
 				my $preprocessor = build_makefile_variable_list_of_lists( 
 					$om->get_target_and_config_nodes_by_type( $target, $config, "preprocessor" ), $preprocessorVar );
+
+				my $precompiledHeader = $om->get_target_precompiled_header( $target, $config );
+				my $precompiledHeaderVar = ""; 
 				
-				print $targetMakefile "\n\n";
+				print $targetMakefile "\n\n#  Configuration $config\n";
+				#if there is a precompiled header then that is added as a dependency to every object
+				#also it is 
+				my $precompiledHeaderCflag = "";
+				if ( $precompiledHeader ) {
+					$precompiledHeaderVar = get_makefile_variable_name( $targetName, $config, "precompile" );
+					my $header = $precompiledHeader->{header};
+					my($filename, $directories, $suffix) = fileparse($header);
+					print $targetMakefile "$precompiledHeaderVar=$builddir/$filename.gch\n";
+					$precompiledHeaderCflag =  "-include $builddir/$filename";
+				}
+				
+					
+					
+				
 				print $targetMakefile $includePath;
 				print $targetMakefile $linkPath;
 				print $targetMakefile $libraries;
@@ -210,6 +227,21 @@ sub process
 					$allobjs = $allobjs . $dependLib;
 				}
 
+				#output step to create the precompiled header
+				if ( $precompiledHeader ) {
+					print $targetMakefile "\n\n";
+					my $header = $precompiledHeader->{header};
+					my($filename, $directories, $suffix) = fileparse($header, qr/\.[^.]*/);
+					my $dependsFile = "$builddir/$filename.d";
+					
+					print $targetMakefile "-include $dependsFile\n";
+					print $targetMakefile "\$($precompiledHeaderVar): $header\n";
+					print $targetMakefile "\t\$(MKDIR) $builddir\n";
+					print $targetMakefile "\tcp $header $builddir/$filename\n";
+					print $targetMakefile "\tchmod a+rw $builddir/$filename\n";
+					print $targetMakefile "\t\$(CXX) \$($cflagsVar) -MMD -MP -MF $dependsFile -x c++-header -c $header -o \$($precompiledHeaderVar)\n";
+				}
+
 				foreach my $compile_varname (keys %$compileGroups ) {
 					print $targetMakefile "\n";
 					my $compileGroup = $compileGroups->{$compile_varname};
@@ -224,10 +256,10 @@ sub process
 					print $targetMakefile "-include \$($objs_varname:%o=%d)\n";
 					#output build rule for all files in this compile group
 					print $targetMakefile <<END;
-\$($objs_varname): $builddir/%.o: 
+\$($objs_varname): $builddir/%.o: \$($precompiledHeaderVar)
 	\@\$(ECHO) $targetName: compiling Debug \$(filter %\$*,\$($compile_varname))...
 	\@\$(MKDIR) \$(dir \$(\@))
-	\$($compiler) \$($cflagsVar) -MMD -MP -MF \$(subst .$extension.o,.$extension.d,\$\@) -c \$(filter %\$*,\$($compile_varname)) -o \$\@
+	\$($compiler) \$($cflagsVar) $precompiledHeaderCflag -MMD -MP -MF \$(subst .$extension.o,.$extension.d,\$\@) -c \$(filter %\$*,\$($compile_varname)) -o \$\@
 END
 
 				}

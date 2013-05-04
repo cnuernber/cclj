@@ -1,31 +1,29 @@
 <?xml version="1" encoding="utf-8"?>
 <xpjp version="1.0">
   <project name="cclj">
-		<projdir>../Win32</projdir>
+		<projdir>../linux</projdir>
 
 		
-		<libdir>../lib/Win32</libdir>
-		<bindir>../bin/Win32</bindir>
-		<builddir>../Win32/build</builddir>
+		<libdir>../lib/linux</libdir>
+		<bindir>../bin/linux</bindir>
+		<builddir>../linux/build</builddir>
 		<target name="gtest">
 			<configuration name="Debug">
 		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>gtestDebug.lib</artifact-name>
+		  <artifact-name>libgtestDebug.a</artifact-name>
 		</configuration><configuration name="Release">
 		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>gtest.lib</artifact-name>
+		  <artifact-name>libgtest.a</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
-		<use-debug-libraries>false</use-debug-libraries><function-level-linking>true</function-level-linking><enable-comdat-folding>true</enable-comdat-folding><optimize-references>true</optimize-references><runtime-library>multi-threaded-DLL</runtime-library><enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
+		
 	  </configuration>
 			<search type="header">
 			../../gtest
 			../../gtest/include
-		</search><preprocessor>
-			_VARIADIC_MAX=10
-		  </preprocessor>
+		</search>
 			<files name="include" root="../../gtest/include/gtest">
 			  *
 			  internal/*
@@ -39,26 +37,26 @@
 		<target name="cclj_tests">
 			<configuration name="Debug">
 		  <configuration-type>console-executable</configuration-type>
-		  <artifact-name>cclj_testsDebug.exe</artifact-name>
+		  <artifact-name>cclj_testsDebug</artifact-name>
 		</configuration><configuration name="Release">
 		  <configuration-type>console-executable</configuration-type>
-		  <artifact-name>cclj_tests.exe</artifact-name>
+		  <artifact-name>cclj_tests</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
-		<use-debug-libraries>false</use-debug-libraries><function-level-linking>true</function-level-linking><enable-comdat-folding>true</enable-comdat-folding><optimize-references>true</optimize-references><runtime-library>multi-threaded-DLL</runtime-library><enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
+		
 	  </configuration>
 			<search type="header">
 			../../gtest
 			../../gtest/include
-		</search><preprocessor>
-			_VARIADIC_MAX=10
-		  </preprocessor>
+		</search>
 			<depends>
 				gtest
 			</depends>
-			
+			<libraries>
+				pthread
+			  </libraries>
 			<files name="cclj_test" root="../../cclj/test/">
 				*.cpp
 				*.h

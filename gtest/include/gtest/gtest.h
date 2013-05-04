@@ -46,7 +46,7 @@
 //
 // Acknowledgment: Google Test borrowed the idea of automatic test
 // registration from Barthelemy Dagenais' (barthelemy@prologique.com)
-// easyUnit framework.
+// easyUnit framework.  
 
 #ifndef GTEST_INCLUDE_GTEST_GTEST_H_
 #define GTEST_INCLUDE_GTEST_GTEST_H_
