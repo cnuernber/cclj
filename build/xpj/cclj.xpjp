@@ -102,6 +102,18 @@ sub artifact_name
 		</if>
 	</template>
 	
+	<template name="cclj_headers">
+		<search type="header">
+			../../cclj
+		</search>
+	</template>
+	
+	<template name="eastl_headers">
+		<search type="header">
+			../../EASTL/include
+		</search>
+	</template>
+	
 	<project name="cclj">
 		<projdir>../{{["$xpj->{platform}"]}}</projdir>
 
@@ -121,12 +133,38 @@ sub artifact_name
 				-gtest_main.cc
 				-gtest-all.cc
 			</files>
+		</target>
+		<target name="eastl">
+			<apply-template name="static_lib_t"/>
+			<apply-template name="eastl_headers"/>
+			<files name="include" root="../../EASTL/include">
+				EASTL/*
+				EASTL/internal/*
+				EASTL/bonus/*
+				EABase/*
+				EABase/config/*
+			</files>
+			<files name="src" root="../../EASTL/src">
+				*
+			</files>
+		</target>
+		<target name="cclj">
+			<apply-template name="static_lib_t"/>
+			<apply-template name="cclj_headers"/>
+			<apply-template name="eastl_headers"/>
+			<files name="cclj" root="../../cclj/cclj/">
+				*
+			</files>
 		</target> 
 		<target name="cclj_tests">
 			<apply-template name="console_t"/>
 			<apply-template name="gtest_headers"/>
+			<apply-template name="cclj_headers"/>
+			<apply-template name="eastl_headers"/>
 			<depends>
 				gtest
+				cclj
+				eastl
 			</depends>
 			<if cond="!(lc($xpj->{platform}) =~ /win/)">
 			  <libraries>
@@ -134,8 +172,7 @@ sub artifact_name
 			  </libraries>
 			</if>
 			<files name="cclj_test" root="../../cclj/test/">
-				*.cpp
-				*.h
+				*
 			</files>
 			<precompiled-header root="../../cclj/test/" header="cclj_test_precompile.h" source="cclj_test_precompile.cpp"/>
 		</target>
