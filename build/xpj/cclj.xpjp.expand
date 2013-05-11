@@ -36,33 +36,6 @@
 				-gtest-all.cc
 			</files>
 		</target>
-		<target name="eastl">
-			<configuration name="Debug">
-		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>eastlDebug.lib</artifact-name>
-		</configuration><configuration name="Release">
-		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>eastl.lib</artifact-name>
-		</configuration><configuration name="Release">
-		<optimization>max-speed</optimization>
-		<intrinsic-functions>true</intrinsic-functions>
-		<buffer-security-check>false</buffer-security-check>
-		<use-debug-libraries>false</use-debug-libraries><function-level-linking>true</function-level-linking><enable-comdat-folding>true</enable-comdat-folding><optimize-references>true</optimize-references><runtime-library>multi-threaded-DLL</runtime-library><enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
-	  </configuration>
-			<search type="header">
-			../../EASTL/include
-		</search>
-			<files name="include" root="../../EASTL/include">
-				EASTL/*
-				EASTL/internal/*
-				EASTL/bonus/*
-				EABase/*
-				EABase/config/*
-			</files>
-			<files name="src" root="../../EASTL/src">
-				*
-			</files>
-		</target>
 		<target name="cclj">
 			<configuration name="Debug">
 		  <configuration-type>static-library</configuration-type>
@@ -78,9 +51,6 @@
 	  </configuration>
 			<search type="header">
 			../../cclj/include
-		</search>
-			<search type="header">
-			../../EASTL/include
 		</search>
 			<files name="include" root="../../cclj/include/cclj/">
 				*
@@ -112,13 +82,9 @@
 			<search type="header">
 			../../cclj/include
 		</search>
-			<search type="header">
-			../../EASTL/include
-		</search>
 			<depends>
 				gtest
 				cclj
-				eastl
 			</depends>
 			
 			<search type="header">

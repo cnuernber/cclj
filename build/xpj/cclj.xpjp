@@ -108,12 +108,6 @@ sub artifact_name
 		</search>
 	</template>
 	
-	<template name="eastl_headers">
-		<search type="header">
-			../../EASTL/include
-		</search>
-	</template>
-	
 	<project name="cclj">
 		<projdir>../{{["$xpj->{platform}"]}}</projdir>
 
@@ -137,7 +131,6 @@ sub artifact_name
 		<target name="cclj">
 			<apply-template name="static_lib_t"/>
 			<apply-template name="cclj_headers"/>
-			<apply-template name="eastl_headers"/>
 			<files name="include" root="../../cclj/include/cclj/">
 				*
 			</files>
@@ -150,7 +143,6 @@ sub artifact_name
 			<apply-template name="console_t"/>
 			<apply-template name="gtest_headers"/>
 			<apply-template name="cclj_headers"/>
-			<apply-template name="eastl_headers"/>
 			<depends>
 				gtest
 				cclj

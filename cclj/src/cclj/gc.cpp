@@ -7,12 +7,6 @@
 //==============================================================================
 #include "precompile.h"
 #include "cclj/gc.h"
-#include <unordered_set>
-#include <unordered_map>
-#include <vector>
-#include <limits>
-#include <algorithm>
-#include <cassert>
 
 using namespace cclj;
 using std::unordered_set;
@@ -22,6 +16,8 @@ using std::for_each;
 using std::remove_if;
 using std::unordered_map;
 using std::make_pair;
+using std::copy_if;
+using std::inserter;
 namespace cclj {
 
 	template<typename enumType, typename storage>
@@ -85,6 +81,46 @@ namespace {
 
 	typedef vector<gc_object*> obj_ptr_list;
 	typedef unordered_map<gc_object*,uint32_t> obj_ptr_int_map;
+
+	class gc_obj_vector_set
+	{
+		obj_ptr_list		object_list;
+		obj_ptr_int_map		object_map;
+	public:
+		bool insert( gc_object* obj )
+		{
+			pair<obj_ptr_int_map::iterator,bool> insert_item 
+					= object_map.insert( make_pair( obj, (uint32_t)object_list.size() ) );
+			if ( insert_item.second )
+				object_list.push_back( obj );
+			return insert_item.second;
+		}
+		bool erase( gc_object* obj )
+		{
+			obj_ptr_int_map::iterator iter = object_map.find( obj );
+			if ( iter != object_map.end() )
+			{
+				uint32_t itemIdx = iter->second;
+				object_map.erase( iter );
+				//perform a replace-with-last operation.
+				gc_object* end = object_list.back();
+				if ( end != obj )
+				{
+					object_map[end] = itemIdx;
+					object_list[itemIdx] = end;
+				}
+				object_list.pop_back();
+				return true;
+			}
+		}
+		bool contains( gc_object* obj )
+		{
+			return object_map.find(obj) != object_map.end();
+		}
+		obj_ptr_list::iterator begin() { return object_list.begin(); }
+		obj_ptr_list::iterator end() { return object_list.end(); }
+		void clear() { object_list.clear(); object_map.clear(); }
+	};
 	
 	//Implement a single-threaded garbage collector
 	//that uses one or more nurseries and a final mark/sweep long-lived
@@ -98,7 +134,7 @@ namespace {
 	{
 		allocator_ptr						alloc;
 		reference_tracker_ptr				reftrack;
-		obj_ptr_list						roots;
+		gc_obj_vector_set					roots;
 		obj_ptr_list						all_objects;
 		obj_ptr_int_map						locked_objects;
 		gc_object_flag_values::val			last_mark;
@@ -138,12 +174,12 @@ namespace {
 			auto is_root_or_locked = root || locked;
 			if ( was_root_or_locked != is_root_or_locked ) {
 				if ( is_root_or_locked ) {
-					roots.push_back( &object );
+					assert( !roots.contains( &object ) );
+					roots.insert( &object );
 				}
 				else {
-					roots.erase( remove_if( roots.begin(), roots.end()
-								, [&](gc_object*obj) { return obj == &object; } )
-							, roots.end() );
+					assert( roots.contains( &object ) );
+					roots.erase( &object );
 				}
 			}
 			object.flags.set_root( root );
@@ -211,7 +247,10 @@ namespace {
 					reference_count != 0; 
 					reference_count = reftrack->get_outgoing_references( obj, reference_index, obj_buffer, 64 ) )
 			{
-				mark_buffer.insert( mark_buffer.end(), obj_buffer + 0, obj_buffer + reference_count );
+				copy_if( obj_buffer + 0
+						, obj_buffer + reference_count
+						, inserter( mark_buffer, mark_buffer.end() )
+						, [=]( gc_object* mark_obj ) { return mark_obj->flags.has_value( current_mark ) == false; } );
 				reference_index += reference_count;
 			}
 		}
@@ -232,12 +271,14 @@ namespace {
 		virtual void perform_gc()
 		{
 			//toggle the marker.
-			gc_object_flag_values::val current_mark = last_mark == gc_object_flag_values::mark_left ? gc_object_flag_values::mark_right : gc_object_flag_values::mark_left;
+			gc_object_flag_values::val current_mark = ( last_mark == gc_object_flag_values::mark_left ? 
+															gc_object_flag_values::mark_right 
+															: gc_object_flag_values::mark_left );
 			//Run through all roots, marking anything reachable that hasn't been marked.
 			//Ensure to remove the mark from last time.
 			int mark_buffer_index = 0;
 
-			mark_buffers[mark_buffer_index] = roots;
+			mark_buffers[mark_buffer_index].assign( roots.begin(), roots.end() );
 			while( mark_buffers[mark_buffer_index].empty() == false ) {
 				obj_ptr_list& current_buffer(mark_buffers[mark_buffer_index]);
 				increment_mark_buffer_index( mark_buffer_index );
