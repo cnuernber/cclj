@@ -9,15 +9,6 @@
 #include "cclj/gc.h"
 
 using namespace cclj;
-using std::unordered_set;
-using std::vector;
-using std::numeric_limits;
-using std::for_each;
-using std::remove_if;
-using std::unordered_map;
-using std::make_pair;
-using std::copy_if;
-using std::inserter;
 namespace cclj {
 
 	template<typename enumType, typename storage>
@@ -87,6 +78,7 @@ namespace {
 		obj_ptr_list		object_list;
 		obj_ptr_int_map		object_map;
 	public:
+
 		bool insert( gc_object* obj )
 		{
 			pair<obj_ptr_int_map::iterator,bool> insert_item 
@@ -95,6 +87,7 @@ namespace {
 				object_list.push_back( obj );
 			return insert_item.second;
 		}
+
 		bool erase( gc_object* obj )
 		{
 			obj_ptr_int_map::iterator iter = object_map.find( obj );
@@ -112,16 +105,20 @@ namespace {
 				object_list.pop_back();
 				return true;
 			}
+			return false;
 		}
+
 		bool contains( gc_object* obj )
 		{
 			return object_map.find(obj) != object_map.end();
 		}
+
 		obj_ptr_list::iterator begin() { return object_list.begin(); }
 		obj_ptr_list::iterator end() { return object_list.end(); }
 		void clear() { object_list.clear(); object_map.clear(); }
 	};
 	
+	//TODO - 
 	//Implement a single-threaded garbage collector
 	//that uses one or more nurseries and a final mark/sweep long-lived
 	//area.  For multithreaded use, we will implement a larger object
@@ -129,8 +126,10 @@ namespace {
 	//minor collectors will communicate when necessary (minor object becomes visible to
 	//multiple threads).
 
-	//main collector is stop-the-world, mark-sweep.
-	struct gc_impl : public garbage_collector
+
+	//main collector is stop-the-world, mark-sweep.  
+	//Start with this and then add other ones in slowly.
+	struct gc_mark_sweep_impl : public garbage_collector
 	{
 		allocator_ptr						alloc;
 		reference_tracker_ptr				reftrack;
@@ -143,14 +142,14 @@ namespace {
 		
 			
 
-		gc_impl( allocator_ptr _alloc, reference_tracker_ptr _reftrack )
+		gc_mark_sweep_impl( allocator_ptr _alloc, reference_tracker_ptr _reftrack )
 			: alloc( _alloc )
 			, reftrack( _reftrack )
 			, last_mark( gc_object_flag_values::mark_left )
 		{
 		}
 
-		~gc_impl()
+		~gc_mark_sweep_impl()
 		{
 			for_each (all_objects.begin(), all_objects.end()
 						,  [this](gc_object* obj) { reftrack->object_deallocated(*obj); alloc->deallocate( &obj ); } );
@@ -158,7 +157,7 @@ namespace {
 			roots.clear();
 		}
 		
-		virtual gc_object& allocate( size_t size, const int8_t* file, int line )
+		virtual gc_object& allocate( size_t size, const char* file, int line )
 		{
 			size_t alloc_size = sizeof( gc_object ) + size;
 			uint8_t* newmem = (uint8_t*)alloc->allocate( alloc_size, file, line );
@@ -299,4 +298,9 @@ namespace {
 			all_objects.erase( remove, all_objects.end() );
 		}
 	};
+}
+
+shared_ptr<garbage_collector> garbage_collector::create_mark_sweep( allocator_ptr alloc, reference_tracker_ptr refTracker )
+{
+	return make_shared<gc_mark_sweep_impl>( alloc, refTracker );
 }

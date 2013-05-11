@@ -9,26 +9,13 @@
 #define CCLJ_GC_H
 #pragma once
 
-#include <memory>
-#include <utility>
-#include <cstdint>
+#include "cclj/cclj.h"
+#include "cclj/allocator.h"
 
 namespace cclj
 {
 	using std::shared_ptr;
 	using std::pair;
-	class allocator
-	{
-	protected:
-		virtual ~allocator(){}
-	public:
-		friend class shared_ptr<allocator>;
-		virtual void* allocate( size_t size, const int8_t* file, int line ) = 0;
-		virtual size_t get_alloc_size( void* ptr ) = 0;
-		virtual void deallocate( void* memory ) = 0;
-	};
-
-	typedef shared_ptr<allocator> allocator_ptr;
 
 	class gc_object;
 
@@ -55,7 +42,7 @@ namespace cclj
 
 		friend class shared_ptr<garbage_collector>;
 
-		virtual gc_object& allocate( size_t size, const int8_t* file, int line ) = 0;
+		virtual gc_object& allocate( size_t size, const char* file, int line ) = 0;
 		virtual void mark_root( gc_object& object ) = 0;
 		virtual void unmark_root( gc_object& object ) = 0;
 		virtual bool is_root( gc_object& object ) = 0;
@@ -64,7 +51,7 @@ namespace cclj
 		virtual void unlock( gc_object& obj ) = 0;
 		virtual void perform_gc() = 0;
 
-		static shared_ptr<garbage_collector> create( allocator_ptr alloc, reference_tracker_ptr refTracker );
+		static shared_ptr<garbage_collector> create_mark_sweep( allocator_ptr alloc, reference_tracker_ptr refTracker );
 	};
 
 	typedef shared_ptr<garbage_collector> garbage_collector_ptr;
