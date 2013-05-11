@@ -104,7 +104,7 @@ sub artifact_name
 	
 	<template name="cclj_headers">
 		<search type="header">
-			../../cclj
+			../../cclj/include
 		</search>
 	</template>
 	
@@ -152,9 +152,13 @@ sub artifact_name
 			<apply-template name="static_lib_t"/>
 			<apply-template name="cclj_headers"/>
 			<apply-template name="eastl_headers"/>
-			<files name="cclj" root="../../cclj/cclj/">
+			<files name="include" root="../../cclj/include/cclj/">
 				*
 			</files>
+			<files name="src" root="../../cclj/src/cclj/">
+				*
+			</files>
+			<precompiled-header root="../../cclj/src/cclj" header="precompile.h" source="precompile.cpp"/>
 		</target> 
 		<target name="cclj_tests">
 			<apply-template name="console_t"/>
@@ -171,10 +175,13 @@ sub artifact_name
 				pthread
 			  </libraries>
 			</if>
-			<files name="cclj_test" root="../../cclj/test/">
+			<search type="header">
+				../../cclj/include/test/
+			</search>
+			<files name="cclj_test" root="../../cclj/src/test/">
 				*
 			</files>
-			<precompiled-header root="../../cclj/test/" header="cclj_test_precompile.h" source="cclj_test_precompile.cpp"/>
+			<precompiled-header root="../../cclj/src/test" header="precompile.h" source="precompile.cpp"/>
 		</target>
 	</project>
 </xpjp>
