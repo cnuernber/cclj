@@ -134,20 +134,6 @@ sub artifact_name
 				-gtest-all.cc
 			</files>
 		</target>
-		<target name="eastl">
-			<apply-template name="static_lib_t"/>
-			<apply-template name="eastl_headers"/>
-			<files name="include" root="../../EASTL/include">
-				EASTL/*
-				EASTL/internal/*
-				EASTL/bonus/*
-				EABase/*
-				EABase/config/*
-			</files>
-			<files name="src" root="../../EASTL/src">
-				*
-			</files>
-		</target>
 		<target name="cclj">
 			<apply-template name="static_lib_t"/>
 			<apply-template name="cclj_headers"/>
@@ -168,7 +154,6 @@ sub artifact_name
 			<depends>
 				gtest
 				cclj
-				eastl
 			</depends>
 			<if cond="!(lc($xpj->{platform}) =~ /win/)">
 			  <libraries>
