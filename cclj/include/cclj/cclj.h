@@ -35,6 +35,9 @@ namespace cclj
 	using std::make_shared;
 	using std::shared_ptr;
 	using std::string;
+	using std::hash;
+	using std::pair;
+
 
 	class garbage_collector;
 	class allocator;
