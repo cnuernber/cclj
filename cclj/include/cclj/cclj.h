@@ -35,6 +35,10 @@ namespace cclj
 	using std::make_shared;
 	using std::shared_ptr;
 	using std::string;
+
+	class garbage_collector;
+	class allocator;
+	class reference_tracker;
 }
 
 #endif
