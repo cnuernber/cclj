@@ -107,7 +107,8 @@ namespace cclj
 
 		gc_obj_ptr obj() const { return _gc_object; }
 
-		gc_object* raw_obj() const { return _gc_object.object(); }
+		gc_object* object() const { return _gc_object.object(); }
+		garbage_collector_ptr gc() const { return _gc_object.gc(); }
 	};
 
 	struct lang_type_creator
@@ -240,7 +241,7 @@ namespace cclj
 		data_buffer() : _buffer( nullptr ), _size( 0 ) {}
 		size_t size() const { return _size; }
 		TDataType* begin() const { return _buffer; }
-		TDataType* end() const { return _buffer + size; }
+		TDataType* end() const { return _buffer + size(); }
 		TDataType& operator[]( int idx ) const { assert( idx < size ); return _buffer[idx]; }
 	};
 

@@ -22,6 +22,7 @@
 #include <string>
 #include <functional>
 #include <vector>
+#include <regex>
 
 namespace cclj
 {

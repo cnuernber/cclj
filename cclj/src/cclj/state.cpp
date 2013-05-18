@@ -7,6 +7,7 @@
 //==============================================================================
 #include "precompile.h"
 #include "cclj/state.h"
+#include <cstdlib>
 
 using namespace cclj;
 
@@ -71,6 +72,18 @@ namespace
 			case type_ids::context:
 				{
 					context* ctx = reinterpret_cast<context*>( data.first );
+					size_t addition = 0;
+					if ( index == 0 && ctx->get_parent_context() )
+					{
+						*buffer = ctx->get_parent_context();
+						++buffer;
+						--buffer_len;
+						++addition;
+					}
+
+					if ( ctx->get_parent_context() )
+						--index;
+					
 					if ( ctx != last_context || index != next_idx ) {
 						last_context = ctx;
 						next_idx = index;
@@ -86,7 +99,7 @@ namespace
 					for (; next_idx < end_idx; ++next_idx, ++next_iter, ++output_ptr ) {
 						*output_ptr = next_iter->second;
 					}
-					return next_chunk;
+					return next_chunk + addition;
 				}
 			}
 			assert(false);
@@ -121,23 +134,153 @@ namespace
 		~user_fn_connection() { fn->set_body( user_function() ); }
 	};
 
+	struct script_executor
+	{
+		string	_script;
+		string	_file;
+		int		_line;
+		lang_type_ptr<context> _context;
+		string::iterator script_pos;
+		string::iterator end_pos;
+		string_table_ptr string_table;
+		//to avoid a shitload of reverse calls
+		script_executor( const char* s, const char* f, lang_type_ptr<context> ctx, string_table_ptr strt )
+			: _script( non_null( s ) )
+			, _file( non_null( f ) )
+			, _line( 0 )
+			, _context( ctx )
+			, script_pos( _script.begin() )
+			, end_pos( _script.end() )
+			, string_table( strt )
+		{
+		}
+
+		void eatwhite()
+		{
+			size_t non_white_pos = _script.find_first_not_of( "\r\n\t ", script_pos - _script.begin() );
+			if ( non_white_pos != string::npos )
+				script_pos = _script.begin() + non_white_pos;
+			else
+				script_pos = end_pos;
+		}
+
+		bool is_numeric( char val )
+		{
+			return val == '-' || val >= '0' || val <= '9';
+		}
+
+		gc_obj_ptr parse_value()
+		{
+			char val = *script_pos;
+			size_t val_end = _script.find_first_of( "\r\n\t ", script_pos - _script.begin() );
+			if ( val_end == string::npos )
+				val_end = _script.size();
+			string::iterator val_end_iter = _script.begin() + val_end;
+
+			if ( is_numeric( val ) )
+			{
+				double val = strtod( _script.c_str() + (script_pos - _script.begin() ), NULL );
+				gc_object& newObj = _context.gc()->allocate( 0, _file.c_str(), _line );
+				newObj.user_flags = type_ids::number;
+				number_to_gc_object( newObj , static_cast<cclj_number>( val ) );
+				return gc_obj_ptr( _context.gc(), newObj );
+			}
+			else
+			{
+				lang_type_ptr<symbol> retval = symbol::create( _context.gc(), _file.c_str(), _line );
+				size_t start = script_pos - _script.begin();
+				size_t end = val_end_iter - _script.begin();
+				string temp_val = _script.substr( start, end - start );
+				retval->set_name( string_table->register_str( temp_val.c_str() ) );
+				return retval.obj();
+			}
+		}
+
+		gc_obj_ptr parse_list()
+		{
+			typedef vector<lang_type_ptr<cons_cell> > list_vec;
+
+			garbage_collector_ptr gc = _context.gc();
+			eatwhite();
+			list_vec retval;
+			if ( script_pos == end_pos )
+				return gc_obj_ptr();
+			if ( *script_pos == '(' )
+			{
+				++script_pos;
+				eatwhite();
+				while ( *script_pos != ')' && script_pos != end_pos )
+				{
+					lang_type_ptr<cons_cell> cell = cons_cell::create( gc, _file.c_str(), _line );
+					retval.push_back( cell );
+					char next_char = *script_pos;
+					if ( next_char == '(' )
+					{
+						cell->set_value( parse_list().object() );
+					}
+					else
+					{
+						cell->set_value( parse_value().object() );
+					}
+					eatwhite();
+				}
+			}
+			if ( retval.size() )
+			{
+				for( size_t idx = 0, end = retval.size() - 1; idx < end; ++idx )
+					retval[idx]->set_next( retval[idx+1].object() );
+				return retval.front().obj();
+			}
+			return gc_obj_ptr();
+		}
+		
+		gc_obj_ptr parse()
+		{
+			return parse_list();
+		}
+
+		gc_obj_ptr execute_object( gc_obj_ptr val )
+		{
+			lang_type_ptr<cons_cell> first_cell( val );
+			if ( !first_cell )
+				return gc_obj_ptr();
+
+			return gc_obj_ptr();
+		}
+		
+		gc_obj_ptr execute()
+		{
+			gc_obj_ptr retval;
+
+			for ( gc_obj_ptr next_parse_obj = parse(); next_parse_obj; next_parse_obj = parse() )
+				retval = execute_object( next_parse_obj );
+
+			return retval;
+		}
+	};
+
 	struct state_impl : public state
 	{
 		garbage_collector_ptr	_gc;
 		lang_type_ptr<context>	_context;
 		vector<connection_ptr>  _std_functions;
+		string_table_ptr		_str_table;
 
 		state_impl(allocator_ptr alloc)
 			: _gc( garbage_collector::create_mark_sweep( alloc, make_shared<ref_tracker_impl>() ) )
+			, _str_table( string_table::create() )
 		{
 			_context = context::create( _gc, __FILE__, __LINE__ );
 
 		}
 
-		virtual gc_obj_ptr eval( const char* /*script*/
-								, lang_type_ptr<context> /*script_context*/ )
+		virtual gc_obj_ptr eval( const char* script
+								, const char* file
+								, lang_type_ptr<context> script_context )
 		{
-			return gc_obj_ptr();
+			lang_type_ptr<context> exe_context = script_context ? script_context : _context;
+			script_executor executor( script, file, exe_context, _str_table );
+			return executor.execute();
 		}
 
 		virtual lang_type_ptr<context> global_context()
@@ -162,6 +305,34 @@ namespace
 			connection_ptr retval = make_shared<user_fn_connection>( item );
 			return pair<connection_ptr,lang_type_ptr<cclj::user_fn> > ( retval, item);
 		}
+
+		void register_std_function( const char* name, const user_function& input_fn )
+		{
+			pair<connection_ptr, lang_type_ptr<user_fn> > register_result = register_function( input_fn );
+			_std_functions.push_back( register_result.first );
+			lang_type_ptr<fn> function = fn::create( _gc, __FILE__, __LINE__ );
+			function->set_context( _context.object() );
+			function->set_body( register_result.second.object() );
+			_context->get_values().insert( make_pair( _str_table->register_str( name ), function.object() ) );
+		}
+
+		gc_obj_ptr add( gc_obj_ptr context, gc_obj_ptr_buffer objects )
+		{
+			cclj_number sum = 0;
+			for_each( objects.begin(), objects.end()
+					, [&](gc_obj_ptr item) 
+					  { 
+						  if ( item->user_flags == type_ids::number ) {
+							  sum += number_from_gc_object( *item );
+						  }
+					  } );
+			gc_obj_ptr retval( _gc, _gc->allocate( 0, __FILE__, __LINE__ ) );
+			retval->user_flags = type_ids::number;
+			number_to_gc_object( *retval, sum );
+			return retval;
+		}
 		
 	};
 }
+
+state_ptr state::create(allocator_ptr alloc ) { return make_shared<state_impl>( alloc ); }

@@ -20,6 +20,11 @@ namespace cclj
 		return data == NULL || *data == 0;
 	}
 
+	inline const char* non_null( const char* data )
+	{
+		return data ? data : "";
+	}
+
 	class string_table_str
 	{
 		const char* data;

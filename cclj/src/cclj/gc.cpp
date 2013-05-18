@@ -97,7 +97,7 @@ namespace {
 		~gc_mark_sweep_impl()
 		{
 			for_each (all_objects.begin(), all_objects.end()
-						,  [this](gc_object* obj) { reftrack->object_deallocated(*obj); alloc->deallocate( &obj ); } );
+						,  [this](gc_object* obj) { reftrack->object_deallocated(*obj, get_object_data(*obj)); alloc->deallocate( &obj ); } );
 			all_objects.clear();
 			roots.clear();
 		}
@@ -150,14 +150,19 @@ namespace {
 			//write barrier isn't particularly useful right now.
 		}
 
+		pair<void*,size_t> get_object_data( gc_object& obj )
+		{
+			uint8_t* memStart = (uint8_t*)&obj;
+			uint8_t* userMem = memStart + sizeof( gc_object );
+			return make_pair( userMem, alloc->get_alloc_size( memStart ) );
+		}
+
 		virtual pair<void*,size_t> lock( gc_object& obj )
 		{
 			pair<obj_ptr_int_map::iterator,bool> inserter = locked_objects.insert( make_pair( &obj, 0 ) );
 			++inserter.first->second;
 			set_root_or_locked( obj, obj.flags.is_root(), true );
-			uint8_t* memStart = (uint8_t*)&obj;
-			uint8_t* userMem = memStart + sizeof( gc_object );
-			return make_pair( userMem, alloc->get_alloc_size( memStart ) );
+			return get_object_data( obj );
 		}
 
 		virtual void unlock( gc_object& obj )
@@ -187,9 +192,11 @@ namespace {
 			obj.flags.set( last_mark, false );
 			gc_object* obj_buffer[64];
 			size_t reference_index = 0;
-			for ( size_t reference_count = reftrack->get_outgoing_references( obj, reference_index, obj_buffer, 64 );
+			for ( size_t reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
+														, reference_index, obj_buffer, 64 );
 					reference_count != 0; 
-					reference_count = reftrack->get_outgoing_references( obj, reference_index, obj_buffer, 64 ) )
+					reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
+														, reference_index, obj_buffer, 64 ) )
 			{
 				copy_if( obj_buffer + 0
 						, obj_buffer + reference_count
@@ -208,7 +215,7 @@ namespace {
 		void deallocate_object( gc_object& obj ) 
 		{
 			assert( obj.flags.is_root() == false && obj.flags.is_locked() == false );
-			reftrack->object_deallocated( obj );
+			reftrack->object_deallocated( obj, get_object_data(obj) );
 			alloc->deallocate( &obj );
 		}
 

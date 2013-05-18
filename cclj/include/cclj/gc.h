@@ -185,7 +185,7 @@ namespace cclj
 
 		operator bool () const { return _object != NULL; }
 
-		garbage_collector_ptr gc() { return _gc; }
+		garbage_collector_ptr gc() const { return _gc; }
 		gc_object* operator->() const { assert(_object); return _object; }
 		gc_object& operator*() const { assert(_object); return *_object; }
 
