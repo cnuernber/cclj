@@ -242,6 +242,9 @@ namespace {
 			for_each( remove, all_objects.end(), [this](gc_object* obj) { deallocate_object( *obj ); } );
 			all_objects.erase( remove, all_objects.end() );
 		}
+		
+		virtual allocator_ptr allocator() { return alloc; }
+		virtual reference_tracker_ptr reference_tracker() { return reftrack; }
 	};
 }
 

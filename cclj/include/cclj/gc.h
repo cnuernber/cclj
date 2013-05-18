@@ -25,8 +25,9 @@ namespace cclj
 		virtual ~reference_tracker(){}
 	public:
 		friend class shared_ptr<reference_tracker>;
-		virtual size_t get_outgoing_references( gc_object& object, size_t index, gc_object** buffer, size_t bufferLen ) = 0;
-		virtual void object_deallocated( gc_object& object ) = 0;
+		virtual size_t get_outgoing_references( gc_object& object, pair<void*,size_t> data
+												, size_t index, gc_object** buffer, size_t bufferLen ) = 0;
+		virtual void object_deallocated( gc_object& object, pair<void*,size_t> data ) = 0;
 		//It should be noted that the collector could be copying.  
 		virtual void object_copied( gc_object& object, pair<void*,size_t>& oldMem, pair<void*,size_t> newMem ) = 0;
 	};
@@ -116,10 +117,86 @@ namespace cclj
 		virtual void unlock( gc_object& obj ) = 0;
 		virtual void perform_gc() = 0;
 
+		virtual allocator_ptr allocator() = 0;
+		virtual reference_tracker_ptr reference_tracker() = 0;
+
 		static shared_ptr<garbage_collector> create_mark_sweep( allocator_ptr alloc, reference_tracker_ptr refTracker );
 	};
 
 	typedef shared_ptr<garbage_collector> garbage_collector_ptr;
+
+	
+	//safe-ish public access to the gc object.
+	class gc_obj_ptr
+	{
+		garbage_collector_ptr	_gc;
+		gc_object*				_object;
+		pair<void*,size_t>		_data;
+		void acquire()
+		{
+			_data = pair<void*,size_t>( nullptr, 0 );
+			if ( _object && _gc )
+				_data = _gc->lock( *_object );
+		}
+		void release()
+		{
+			if ( _object && _gc )
+			{
+				_gc->unlock( *_object );
+				_data.first = nullptr;
+				_data.second = 0;
+			}
+			_object = nullptr;
+		}
+	public:
+
+		gc_obj_ptr() : _object( nullptr ), _data( nullptr, 0 ) {}
+
+		gc_obj_ptr(garbage_collector_ptr gc, gc_object& obj )
+			: _gc( _gc )
+			, _object( &obj )
+		{
+			acquire();
+		}
+
+		gc_obj_ptr( const gc_obj_ptr& obj )
+			: _gc( obj._gc )
+			, _object( obj._object )
+		{
+			acquire();
+		}
+
+		~gc_obj_ptr()
+		{
+			release();
+		}
+
+		gc_obj_ptr& operator=( const gc_obj_ptr& other )
+		{
+			if ( _object != other._object )
+			{
+				release();
+				_gc = other._gc;
+				_object = other._object;
+				acquire();
+			}
+			return *this;
+		}
+
+		operator bool () const { return _object != NULL; }
+
+		garbage_collector_ptr gc() { return _gc; }
+		gc_object* operator->() const { assert(_object); return _object; }
+		gc_object& operator*() const { assert(_object); return *_object; }
+
+		pair<void*,size_t> data() const { return _data; }
+
+		gc_object* object() const { return _object; }
+		void unsafe_release_type()
+		{
+			release();
+		}
+	};
 
 }
 

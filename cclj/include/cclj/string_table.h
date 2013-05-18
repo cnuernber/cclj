@@ -15,7 +15,7 @@ namespace cclj
 {
 	class string_table;
 
-	bool is_trivial( const char* data )
+	inline bool is_trivial( const char* data )
 	{
 		return data == NULL || *data == 0;
 	}

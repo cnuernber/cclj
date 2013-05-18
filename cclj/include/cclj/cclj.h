@@ -20,6 +20,8 @@
 #include <cstdint>
 #include <utility>
 #include <string>
+#include <functional>
+#include <vector>
 
 namespace cclj
 {
@@ -37,11 +39,16 @@ namespace cclj
 	using std::string;
 	using std::hash;
 	using std::pair;
+	using std::advance;
+	using std::copy;
+	using std::function;
+	using std::vector;
 
 
 	class garbage_collector;
 	class allocator;
 	class reference_tracker;
+	class gc_object;
 }
 
 #endif
