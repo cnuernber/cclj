@@ -6,7 +6,7 @@
 //	license are located under the top cclj directory
 //==============================================================================
 #include "precompile.h"
-#include "cclj/gc.h"
+#include "cclj/garbage_collector.h"
 
 using namespace cclj;
 namespace cclj {

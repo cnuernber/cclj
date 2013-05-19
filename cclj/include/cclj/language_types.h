@@ -8,7 +8,7 @@
 #ifndef CCLJ_LANGUAGE_TYPES_H
 #define CCLJ_LANGUAGE_TYPES_H
 #include "cclj/cclj.h"
-#include "cclj/gc.h"
+#include "cclj/garbage_collector.h"
 #include "cclj/string_table.h"
 
 namespace cclj
