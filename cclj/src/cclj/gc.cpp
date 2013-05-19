@@ -80,6 +80,7 @@ namespace {
 		reference_tracker_ptr				reftrack;
 		gc_obj_vector_set					roots;
 		obj_ptr_list						all_objects;
+		obj_ptr_list						all_objects_temp;
 		obj_ptr_int_map						locked_objects;
 		gc_object_flag_values::val			last_mark;
 
@@ -97,7 +98,7 @@ namespace {
 		~gc_mark_sweep_impl()
 		{
 			for_each (all_objects.begin(), all_objects.end()
-						,  [this](gc_object* obj) { reftrack->object_deallocated(*obj, get_object_data(*obj)); alloc->deallocate( &obj ); } );
+						,  [this](gc_object* obj) { reftrack->object_deallocated(*obj, get_object_data(*obj)); alloc->deallocate( obj ); } );
 			all_objects.clear();
 			roots.clear();
 		}
@@ -206,7 +207,7 @@ namespace {
 			}
 		}
 
-		int increment_mark_buffer_index( int& oldIndex ) 
+		int increment_mark_buffer_index( int oldIndex ) 
 		{
 			if ( oldIndex ) return 0;
 			return 1;
@@ -214,7 +215,9 @@ namespace {
 
 		void deallocate_object( gc_object& obj ) 
 		{
-			assert( obj.flags.is_root() == false && obj.flags.is_locked() == false );
+			if ( obj.flags.is_root() ||  obj.flags.is_locked() )
+				throw std::runtime_error( "bad object in deallocate_object" );
+			
 			reftrack->object_deallocated( obj, get_object_data(obj) );
 			alloc->deallocate( &obj );
 		}
@@ -232,7 +235,7 @@ namespace {
 			mark_buffers[mark_buffer_index].assign( roots.begin(), roots.end() );
 			while( mark_buffers[mark_buffer_index].empty() == false ) {
 				obj_ptr_list& current_buffer(mark_buffers[mark_buffer_index]);
-				increment_mark_buffer_index( mark_buffer_index );
+				mark_buffer_index = increment_mark_buffer_index( mark_buffer_index );
 				obj_ptr_list& next_buffer( mark_buffers[mark_buffer_index] );
 				next_buffer.clear();
 				for_each( current_buffer.begin(), current_buffer.end()
@@ -243,11 +246,17 @@ namespace {
 
 			//this step may not be the most efficient way to do this but it is so concise it 
 			//is truly hard to resist.
-			obj_ptr_list::iterator remove = remove_if( all_objects.begin(), all_objects.end()
-				, [=]( gc_object* obj ) { return obj->flags.has_value( current_mark ) == false; } );
+			all_objects_temp.clear();
+			for_each( all_objects.begin(), all_objects.end()
+					, [=]( gc_object* obj ) 
+					{ 
+						if ( obj->flags.has_value( current_mark ) )
+							all_objects_temp.push_back( obj );
+						else
+							deallocate_object( *obj );
+					} );
 
-			for_each( remove, all_objects.end(), [this](gc_object* obj) { deallocate_object( *obj ); } );
-			all_objects.erase( remove, all_objects.end() );
+			swap( all_objects, all_objects_temp );
 		}
 		
 		virtual allocator_ptr allocator() { return alloc; }

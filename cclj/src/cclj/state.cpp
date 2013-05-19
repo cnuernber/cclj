@@ -166,7 +166,7 @@ namespace
 
 		bool is_numeric( char val )
 		{
-			return val == '-' || val >= '0' || val <= '9';
+			return val == '-' || (val >= '0' && val <= '9');
 		}
 
 		gc_obj_ptr parse_value()
@@ -177,23 +177,26 @@ namespace
 				val_end = _script.size();
 			string::iterator val_end_iter = _script.begin() + val_end;
 
+			gc_obj_ptr retval;
 			if ( is_numeric( val ) )
 			{
 				double val = strtod( _script.c_str() + (script_pos - _script.begin() ), NULL );
 				gc_object& newObj = _context.gc()->allocate( 0, _file.c_str(), _line );
 				newObj.user_flags = type_ids::number;
 				number_to_gc_object( newObj , static_cast<cclj_number>( val ) );
-				return gc_obj_ptr( _context.gc(), newObj );
+				retval = gc_obj_ptr( _context.gc(), newObj );
 			}
 			else
 			{
-				lang_type_ptr<symbol> retval = symbol::create( _context.gc(), _file.c_str(), _line );
+				lang_type_ptr<symbol> new_symbol = symbol::create( _context.gc(), _file.c_str(), _line );
 				size_t start = script_pos - _script.begin();
 				size_t end = val_end_iter - _script.begin();
 				string temp_val = _script.substr( start, end - start );
-				retval->set_name( string_table->register_str( temp_val.c_str() ) );
-				return retval.obj();
+				new_symbol->set_name( string_table->register_str( temp_val.c_str() ) );
+				retval = new_symbol.obj();
 			}
+			script_pos = val_end_iter;
+			return retval;
 		}
 
 		gc_obj_ptr parse_list()
@@ -209,7 +212,7 @@ namespace
 			{
 				++script_pos;
 				eatwhite();
-				while ( *script_pos != ')' && script_pos != end_pos )
+				while ( script_pos != end_pos && *script_pos != ')' )
 				{
 					lang_type_ptr<cons_cell> cell = cons_cell::create( gc, _file.c_str(), _line );
 					retval.push_back( cell );
@@ -239,12 +242,78 @@ namespace
 			return parse_list();
 		}
 
+		gc_obj_ptr resolve( gc_object* obj )
+		{
+			if ( !obj ) return gc_obj_ptr();
+			lang_type_ptr<symbol> sym( gc_obj_ptr( _context.gc(), *obj ) );
+			if ( !sym )
+			{
+				if ( obj->user_flags == type_ids::cons_cell )
+					return execute_object( gc_obj_ptr( _context.gc(), *obj ) );
+				else
+					return gc_obj_ptr(_context.gc(), *obj);
+			}
+			string_table_str name = sym->get_name();
+			string_object_map::iterator iter = _context->get_values().find( name );
+			if ( iter != _context->get_values().end() )
+			{
+				return gc_obj_ptr( _context.gc(), *iter->second );
+			}
+			return gc_obj_ptr();
+		}
+
+		lang_type_ptr<fn> resolve_function( gc_object* obj )
+		{
+			return lang_type_ptr<fn>( resolve( obj ) );
+		}
+
+		lang_type_ptr<cons_cell> next_cell( lang_type_ptr<cons_cell> cell )
+		{
+			if ( cell )
+				return lang_type_ptr<cons_cell>( gc_obj_ptr( _context.gc(), *cell->get_next() ) );
+			return lang_type_ptr<cons_cell>();
+		}
+
 		gc_obj_ptr execute_object( gc_obj_ptr val )
 		{
 			lang_type_ptr<cons_cell> first_cell( val );
 			if ( !first_cell )
 				return gc_obj_ptr();
+			lang_type_ptr<fn> symbol_res = resolve_function( first_cell->get_value() );
+			if ( symbol_res && symbol_res->get_body() )
+			{
+				vector<gc_obj_ptr> fn_args;
+				for ( lang_type_ptr<cons_cell> arg_cell = next_cell( first_cell );
+						arg_cell; arg_cell = next_cell( arg_cell ) )
+				{
+					fn_args.push_back( gc_obj_ptr( _context.gc(), *arg_cell->get_value() ) );
+				}
+				//Resolve from the back to the front.
+				for_each( fn_args.rbegin(), fn_args.rend()
+							, [this](gc_obj_ptr& arg) {
+								arg = resolve(arg.object());
+							  } );
 
+				gc_obj_ptr call_context = gc_obj_ptr( _context.obj() );
+				if ( symbol_res->get_context() )
+					call_context = symbol_res->get_context();
+
+				gc_obj_ptr_buffer args( fn_args );
+				gc_object* body = symbol_res->get_body();
+				lang_type_ptr<user_fn> fn_ptr( gc_obj_ptr( _context.gc(), *body ) );
+				if ( fn_ptr )
+				{
+					user_function& body_fn(fn_ptr->get_body());
+					if ( body_fn )
+						return body_fn( call_context, args );
+					else
+						assert(false);
+				}
+				else
+				{
+					assert(false);
+				}
+			}
 			return gc_obj_ptr();
 		}
 		
@@ -271,7 +340,11 @@ namespace
 			, _str_table( string_table::create() )
 		{
 			_context = context::create( _gc, __FILE__, __LINE__ );
-
+			register_std_function( "+"
+				, [this]( gc_obj_ptr context, gc_obj_ptr_buffer objects ) 
+					{ 
+						return add( context, objects ); 
+					} );
 		}
 
 		virtual gc_obj_ptr eval( const char* script

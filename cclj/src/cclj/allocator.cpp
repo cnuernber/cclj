@@ -67,7 +67,7 @@ namespace {
 			}
 			else
 			{
-				assert( false );
+				throw std::runtime_error( "deallocating memory that was not allocated" );
 			}
 		}
 	};

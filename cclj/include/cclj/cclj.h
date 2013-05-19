@@ -44,6 +44,7 @@ namespace cclj
 	using std::copy;
 	using std::function;
 	using std::vector;
+	using std::swap;
 
 
 	class garbage_collector;

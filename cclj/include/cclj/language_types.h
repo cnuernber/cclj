@@ -238,6 +238,12 @@ namespace cclj
 			, _size( size )
 		{
 		}
+		data_buffer( vector<TDataType>& buf )
+			: _buffer( nullptr )
+			, _size( buf.size() )
+		{
+			if ( buf.size() ) _buffer = &(buf[0]);
+		}
 		data_buffer() : _buffer( nullptr ), _size( 0 ) {}
 		size_t size() const { return _size; }
 		TDataType* begin() const { return _buffer; }

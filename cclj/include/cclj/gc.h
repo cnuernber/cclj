@@ -153,7 +153,7 @@ namespace cclj
 		gc_obj_ptr() : _object( nullptr ), _data( nullptr, 0 ) {}
 
 		gc_obj_ptr(garbage_collector_ptr gc, gc_object& obj )
-			: _gc( _gc )
+			: _gc( gc )
 			, _object( &obj )
 		{
 			acquire();
@@ -178,6 +178,17 @@ namespace cclj
 				release();
 				_gc = other._gc;
 				_object = other._object;
+				acquire();
+			}
+			return *this;
+		}
+		
+		gc_obj_ptr& operator=( gc_object* other )
+		{
+			if ( _object != other )
+			{
+				release();
+				_object = other;
 				acquire();
 			}
 			return *this;
