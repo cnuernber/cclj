@@ -7,6 +7,8 @@
 //==============================================================================
 #include "precompile.h"
 #include "cclj/allocator.h"
+#include "cclj/variant.h"
+#include "cclj/virtual_machine.h"
 
 using namespace cclj;
 

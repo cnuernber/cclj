@@ -23,6 +23,7 @@
 #include <functional>
 #include <vector>
 #include <regex>
+#include <cstdlib>
 
 namespace cclj
 {
@@ -45,6 +46,8 @@ namespace cclj
 	using std::function;
 	using std::vector;
 	using std::swap;
+	using std::runtime_error;
+	using std::is_pod;
 
 
 	class garbage_collector;
