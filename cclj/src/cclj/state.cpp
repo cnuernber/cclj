@@ -7,6 +7,7 @@
 //==============================================================================
 #include "precompile.h"
 #include "cclj/state.h"
+#include "cclj/virtual_machine.h"
 #include <cstdlib>
 
 using namespace cclj;
@@ -143,8 +144,12 @@ namespace
 		string::iterator script_pos;
 		string::iterator end_pos;
 		string_table_ptr string_table;
+		register_file_ptr _registers;
 		//to avoid a shitload of reverse calls
-		script_executor( const char* s, const char* f, lang_type_ptr<context> ctx, string_table_ptr strt )
+		script_executor( const char* s, const char* f
+							, lang_type_ptr<context> ctx
+							, string_table_ptr strt
+							, register_file_ptr reg_file )
 			: _script( non_null( s ) )
 			, _file( non_null( f ) )
 			, _line( 0 )
@@ -152,6 +157,7 @@ namespace
 			, script_pos( _script.begin() )
 			, end_pos( _script.end() )
 			, string_table( strt )
+			, _registers( reg_file )
 		{
 		}
 
@@ -169,7 +175,8 @@ namespace
 			return val == '-' || (val >= '0' && val <= '9');
 		}
 
-		gc_obj_ptr parse_value()
+		//returns the register file index and the type.
+		pair<uint32_t,type_ids::val> parse_value()
 		{
 			char val = *script_pos;
 			size_t val_end = _script.find_first_of( "\r\n\t ", script_pos - _script.begin() );
@@ -177,10 +184,15 @@ namespace
 				val_end = _script.size();
 			string::iterator val_end_iter = _script.begin() + val_end;
 
-			gc_obj_ptr retval;
+			pair<uint32_t,type_ids::val> retval;
 			if ( is_numeric( val ) )
 			{
 				double val = strtod( _script.c_str() + (script_pos - _script.begin() ), NULL );
+				data_register datareg;
+				float* dataPtr = reinterpret_cast<float*>( &datareg._data );
+
+
+				retval.second = 
 				gc_object& newObj = _context.gc()->allocate( 0, _file.c_str(), _line );
 				newObj.user_flags = type_ids::number;
 				number_to_gc_object( newObj , static_cast<cclj_number>( val ) );

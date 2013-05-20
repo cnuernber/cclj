@@ -10,6 +10,9 @@
 #include "cclj/cclj.h"
 #include "cclj/garbage_collector.h"
 #include "cclj/string_table.h"
+#include "cclj/data_buffer.h"
+#include "cclj/virtual_machine.h"
+#include "cclj/variant.h"
 
 namespace cclj
 {
@@ -225,35 +228,15 @@ namespace cclj
 			return lang_type_creator::do_create_lang_type<context>( gc, file, line );
 		}
 	};
+	
+	// a language value is like a gc type except that is it is always unboxed when possible.
+	class language_value;
+	typedef data_buffer<language_value> language_value_buffer;
+
 
 	
-	template<typename TDataType>
-	class data_buffer
-	{
-		TDataType*	_buffer;
-		size_t		_size;
-	public:
-		data_buffer( TDataType* bufData, size_t size )
-			: _buffer( bufData )
-			, _size( size )
-		{
-		}
-		data_buffer( vector<TDataType>& buf )
-			: _buffer( nullptr )
-			, _size( buf.size() )
-		{
-			if ( buf.size() ) _buffer = &(buf[0]);
-		}
-		data_buffer() : _buffer( nullptr ), _size( 0 ) {}
-		size_t size() const { return _size; }
-		TDataType* begin() const { return _buffer; }
-		TDataType* end() const { return _buffer + size(); }
-		TDataType& operator[]( int idx ) const { assert( idx < size ); return _buffer[idx]; }
-	};
-
-	typedef data_buffer<gc_obj_ptr> gc_obj_ptr_buffer;
-	
-	typedef std::function<gc_obj_ptr (gc_obj_ptr, gc_obj_ptr_buffer buffer)> user_function;
+	//function takes the register file and a uint32_t arg count.
+	typedef std::function<language_value (language_value_buffer buffer)> user_function;
 	
 	//is used as the body of a fn.
 	class user_fn : cclj_noncopyable

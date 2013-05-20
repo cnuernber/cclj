@@ -7,7 +7,7 @@
 //==============================================================================
 #ifndef CCLJ_STATE_H
 #define CCLJ_STATE_H
-#include "cclj.h"
+#include "cclj/cclj.h"
 #include "cclj/language_types.h"
 #include "cclj/garbage_collector.h"
 

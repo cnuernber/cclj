@@ -7,7 +7,7 @@
 //==============================================================================
 #ifndef CCLJ_VARIANT_H
 #define CCLJ_VARIANT_H
-#include "cclj.h"
+#include "cclj/cclj.h"
 #include <cstdlib>
 
 namespace cclj
@@ -19,12 +19,12 @@ namespace cclj
 	template<typename traits_type>
 	class variant
 	{
-		typename traits_type::id_type _type_id;
 		char _data[traits_type::buffer_size];
+		typename traits_type::id_type _type_id;
 
 		void destruct()
 		{
-			if (_type_id != traits_type::empty_type(); )
+			if (_type_id != traits_type::empty_type() )
 			{
 				traits_type::destruct( _data, _type_id );
 				_type_id = traits_type::empty_type();
@@ -67,9 +67,12 @@ namespace cclj
 		//of in a valid state.
 		variant& operator=( const variant& other )
 		{
-			if ( &other == this ) return *this;
-			destruct();
-			copy_construct( other );
+			if ( &other != this )
+			{
+				destruct();
+				copy_construct( other );
+			}
+			return *this;
 		}
 
 		typename traits_type::id_type type() const { return _type_id; }
@@ -147,6 +150,22 @@ namespace cclj
 	};
 
 	
+	template<typename trettype,typename tvisitortype>
+	struct const_visitor
+	{
+		tvisitortype _visitor;
+		const_visitor( const tvisitortype& vs ) : _visitor( vs ) {}
+		template<typename tdtype>
+		trettype operator()( const tdtype& type )
+		{
+			return _visitor( type );
+		}
+		
+		trettype operator()()
+		{
+			return _visitor();
+		}
+	};
 
 	template<typename tbasetype>
 	struct variant_traits_impl : public tbasetype
@@ -165,6 +184,19 @@ namespace cclj
 		static void destruct( char* data, typename tbasetype::id_type type )
 		{
 			visit<void>( data, type, variant_destructor() );
+		}
+		
+		template<typename trettype, typename tvisitor>
+		static trettype visit( char* data, typename tbasetype::id_type type, tvisitor visitor )
+		{
+			return do_visit<trettype>( data, type, visitor );
+		}
+
+		//so base classes only have to define one visit type.
+		template<typename trettype, typename tvisitor>
+		static trettype visit( const char* data, typename tbasetype::id_type type, tvisitor visitor )
+		{
+			return do_visit<trettype>( const_cast<char*>(data), type, const_visitor<trettype,tvisitor>(visitor) );
 		}
 	};
 }
