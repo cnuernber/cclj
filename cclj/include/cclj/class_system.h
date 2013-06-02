@@ -53,6 +53,8 @@ namespace cclj
 	typedef option<property_entry> property_entry_opt;
 
 
+	//These are actually user defined by en large.  The class system only needs specific 
+	//functions, 
 	class class_function
 	{
 	protected:
@@ -89,6 +91,8 @@ namespace cclj
 	typedef data_buffer<class_definition_ptr> class_definition_ptr_buffer;
 	typedef const_data_buffer<class_definition_ptr> class_definition_ptr_const_buffer;
 
+
+
 	class class_definition
 	{
 	protected:
@@ -113,12 +117,21 @@ namespace cclj
 		virtual class_vtable_ptr_const_buffer vtables() const = 0;
 		//You cannot change the data layout of a class after it has been registered.  You can, however,
 		//add vtables to the class.
-		virtual class_vtable_ptr register_vtable( string_table_str name, class_function_ptr_const_buffer functions ) = 0;
+		virtual void register_vtable( string_table_str name, class_function_ptr_const_buffer functions ) = 0;
+		virtual class_vtable_ptr find_vtable( string_table_str name );
+		//find vtable, if not exist on this object find it on parents.
+		virtual class_vtable_ptr find_vtable_recurse( string_table_str name );
 		
 		//Likewise to vtables, instance functions are extensible at runtime.
 		virtual class_function_ptr_const_buffer instance_functions() const = 0;
 		virtual void set_instance_function( class_function_ptr fn ) = 0;
+
+		//default implementation provided use std::find.
+		virtual class_function_ptr find_instance_function( string_table_str name );
+		virtual class_function_ptr find_instance_function_recurse( string_table_str name );
 	};
+
+
 
 	class class_system
 	{
@@ -128,7 +141,8 @@ namespace cclj
 		friend class shared_ptr<class_system>;
 
 		virtual class_definition_ptr_const_buffer definitions() const = 0;
-		//no default because it couldn't be efficient enough.
+
+		//no default because it couldn't be efficient enough with high volume of class definitions.
 		virtual class_definition_ptr find_definition( string_table_ptr str ) const = 0;
 		virtual class_definition_ptr create_definition( string_table_ptr name
 														, class_definition_ptr_const_buffer parents
@@ -136,6 +150,8 @@ namespace cclj
 
 		static shared_ptr<class_system> create();
 	};
+
+
 
 	typedef shared_ptr<class_system> class_system_ptr;
 }

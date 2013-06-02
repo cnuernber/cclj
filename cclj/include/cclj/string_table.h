@@ -17,7 +17,7 @@ namespace cclj
 
 	inline bool is_trivial( const char* data )
 	{
-		return data == NULL || *data == 0;
+		return data == nullptr || *data == 0;
 	}
 
 	inline const char* non_null( const char* data )
@@ -39,7 +39,7 @@ namespace cclj
 
 		operator const char* () const { return data; }
 
-		bool empty() const { return data == NULL || *data == 0; }
+		bool empty() const { return data == nullptr || *data == 0; }
 
 		bool operator==( const string_table_str& other )
 		{

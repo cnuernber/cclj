@@ -40,6 +40,8 @@ namespace cclj
 		//more common than empty
 		bool valid() const { return !empty(); }
 
+		operator bool () const { return valid(); }
+
 		dtype& value() { if( !has_value ) throw runtime_error( "value requested of empty option" ); return _value; }
 		dtype& value() const { if( !has_value ) throw runtime_error( "value requested of empty option" ); return _value; }
 

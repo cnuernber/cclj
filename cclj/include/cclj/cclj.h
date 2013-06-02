@@ -48,6 +48,8 @@ namespace cclj
 	using std::swap;
 	using std::runtime_error;
 	using std::is_pod;
+	using std::find;
+	using std::find_if;
 
 
 	class garbage_collector;
