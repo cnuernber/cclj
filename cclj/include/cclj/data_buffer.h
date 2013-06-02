@@ -34,6 +34,30 @@ namespace cclj
 		TDataType* end() const { return _buffer + size(); }
 		TDataType& operator[]( int idx ) const { assert( idx < size ); return _buffer[idx]; }
 	};
+
+	template<typename TDataType>
+	class const_data_buffer
+	{
+		const TDataType*	_buffer;
+		size_t		_size;
+	public:
+		data_buffer( const TDataType* bufData, size_t size )
+			: _buffer( bufData )
+			, _size( size )
+		{
+		}
+		data_buffer( vector<TDataType>& buf )
+			: _buffer( nullptr )
+			, _size( buf.size() )
+		{
+			if ( buf.size() ) _buffer = &(buf[0]);
+		}
+		data_buffer() : _buffer( nullptr ), _size( 0 ) {}
+		size_t size() const { return _size; }
+		const TDataType* begin() const { return _buffer; }
+		const TDataType* end() const { return _buffer + size(); }
+		const TDataType& operator[]( int idx ) const { assert( idx < size ); return _buffer[idx]; }
+	}
 }
 
 #endif
