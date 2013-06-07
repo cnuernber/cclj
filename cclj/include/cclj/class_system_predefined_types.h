@@ -31,6 +31,11 @@ namespace cclj
 		};
 	};
 
+	//string table strs are of course of fixed size.
+	class strtable_str_t : public objref_t
+	{	
+	};
+
 	typedef float	float32_t;
 	typedef double	float64_t;
 
@@ -48,7 +53,7 @@ namespace cclj
 	HANDLE_CCLJ_CLASS_SYSTEM_PREDEFINED_TYPE( float64_t )				\
 	HANDLE_CCLJ_CLASS_SYSTEM_PREDEFINED_TYPE( objref_t )				\
 	HANDLE_CCLJ_CLASS_SYSTEM_PREDEFINED_TYPE( variable_size_objref_t )	\
-	HANDLE_CCLJ_CLASS_SYSTEM_PREDEFINED_TYPE( string_table_str )	
+	HANDLE_CCLJ_CLASS_SYSTEM_PREDEFINED_TYPE( strtable_str_t )	
 
 }
 

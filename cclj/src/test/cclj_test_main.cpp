@@ -6,8 +6,4 @@
 //	license are located under the top cclj directory
 //==============================================================================
 #include "precompile.h"
-
-
-TEST(RandomStupidTest, OneIsOne) {
-  EXPECT_EQ(1, 2 - 1);
-}
+#include "src/gtest_main.cc"

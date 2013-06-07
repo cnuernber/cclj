@@ -11,6 +11,8 @@
 
 #include "cclj/cclj.h"
 #include "cclj/allocator.h"
+#include "cclj/string_table.h"
+#include "cclj/class_system.h"
 
 namespace cclj
 {
@@ -93,10 +95,13 @@ namespace cclj
 		//do not create these yourself; create them with the garbage collector
 		//member data may or may not follow this object immediately, depends on if the collector
 		//is a copying or noncopying collector.
-		gc_object() : user_flags( 0 ), user_data( 0 ) {}
-		gc_object_flags flags;
-		uint16_t		user_flags;
-		uint32_t		user_data;
+		gc_object() : user_flags( 0 ) {}
+		//Type is used by the gc to allow it to track references automatically without
+		//calling back to via the ref tracker.  If there is no type, then the GC assumes
+		//this is a user-type and will call back to c++.
+		string_table_str	type;
+		gc_object_flags		flags;
+		uint16_t			user_flags;
 	};
 
 	//It should be noted that the collector could be copying.  
@@ -108,6 +113,7 @@ namespace cclj
 
 		friend class shared_ptr<garbage_collector>;
 
+		virtual gc_object& allocate( string_table_str type, const char* file, int line ) = 0;
 		virtual gc_object& allocate( size_t size, const char* file, int line ) = 0;
 		virtual void mark_root( gc_object& object ) = 0;
 		virtual void unmark_root( gc_object& object ) = 0;
@@ -119,8 +125,13 @@ namespace cclj
 
 		virtual allocator_ptr allocator() = 0;
 		virtual reference_tracker_ptr reference_tracker() = 0;
+		virtual string_table_ptr string_table() = 0;
+		virtual class_system_ptr class_system() = 0;
 
-		static shared_ptr<garbage_collector> create_mark_sweep( allocator_ptr alloc, reference_tracker_ptr refTracker );
+		static shared_ptr<garbage_collector> create_mark_sweep( allocator_ptr alloc
+																, reference_tracker_ptr refTracker
+																, string_table_ptr strtable
+																, class_system_ptr cls_system );
 	};
 
 	typedef shared_ptr<garbage_collector> garbage_collector_ptr;
@@ -203,10 +214,6 @@ namespace cclj
 		pair<void*,size_t> data() const { return _data; }
 
 		gc_object* object() const { return _object; }
-		void unsafe_release_type()
-		{
-			release();
-		}
 	};
 
 }

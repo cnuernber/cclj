@@ -50,6 +50,7 @@ namespace cclj
 	using std::is_pod;
 	using std::find;
 	using std::find_if;
+	using std::transform;
 
 
 	class garbage_collector;

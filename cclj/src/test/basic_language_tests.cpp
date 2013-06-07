@@ -12,6 +12,11 @@ using namespace cclj;
 
 TEST(basic_language, add_two_numbers_and_get_a_number) 
 {
+	//The language tests are going to fail for a while because
+	//I haven't got to implementing the entire language yet.
+	ASSERT_TRUE( false );
+
+	/*
 	allocator_ptr alloc = allocator::create_checking_allocator();
 	state_ptr theState = state::create(alloc);
 	gc_obj_ptr obj_ptr = theState->eval( "(+ 1 2)", "test_file.cclj" );
@@ -21,4 +26,5 @@ TEST(basic_language, add_two_numbers_and_get_a_number)
 	theState->gc()->perform_gc();
 	cclj_number test = number_from_gc_object( *obj_ptr );
 	ASSERT_EQ( test, 3.0f );
+	*/
 }

@@ -45,8 +45,8 @@ namespace cclj
 		dtype& value() { if( !has_value ) throw runtime_error( "value requested of empty option" ); return _value; }
 		dtype& value() const { if( !has_value ) throw runtime_error( "value requested of empty option" ); return _value; }
 
-		dtype& operator->() { return value(); }
-		dtype& operator->() const { return value(); }
+		dtype* operator->() { return &value(); }
+		dtype* operator->() const { return &value(); }
 		dtype& operator*() { return value(); }
 		dtype& operator*() const { return value(); }
 	};

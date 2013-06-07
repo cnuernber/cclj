@@ -35,6 +35,7 @@ namespace cclj
 	public:
 		friend class shared_ptr<state>;
 
+		/*
 		virtual gc_obj_ptr eval( const char* script
 								, const char* file
 								, lang_type_ptr<context> script_context = lang_type_ptr<context>() ) = 0;
@@ -46,6 +47,7 @@ namespace cclj
 		//Thus the return value of register_function needs to be combined with a function
 		//with context in order to have something callable.
 		virtual pair<connection_ptr,lang_type_ptr<user_fn> > register_function( const user_function& fn ) = 0;
+		*/
 
 		static shared_ptr<state> create(allocator_ptr alloc);
 	};

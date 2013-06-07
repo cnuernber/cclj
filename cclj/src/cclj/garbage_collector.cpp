@@ -7,6 +7,7 @@
 //==============================================================================
 #include "precompile.h"
 #include "cclj/garbage_collector.h"
+#include <cstring>
 
 using namespace cclj;
 namespace cclj {
@@ -85,13 +86,20 @@ namespace {
 		gc_object_flag_values::val			last_mark;
 
 		obj_ptr_list						mark_buffers[2];
+		string_table_ptr					str_table;
+		class_system_ptr					cls_system;
+		string_table_str					_ref_obj_type;
 		
 			
 
-		gc_mark_sweep_impl( allocator_ptr _alloc, reference_tracker_ptr _reftrack )
+		gc_mark_sweep_impl( allocator_ptr _alloc, reference_tracker_ptr _reftrack
+							, string_table_ptr _str_table, class_system_ptr _cls_system )
 			: alloc( _alloc )
 			, reftrack( _reftrack )
 			, last_mark( gc_object_flag_values::mark_left )
+			, str_table( _str_table )
+			, cls_system( _cls_system )
+			, _ref_obj_type( str_table->register_str( "objref_t" ) )
 		{
 		}
 
@@ -111,6 +119,18 @@ namespace {
 			gc_object* retval = (gc_object*)newmem;
 			all_objects.push_back( retval );
 			return *((gc_object*)newmem);
+		}
+
+		virtual gc_object& allocate( string_table_str type, const char* file, int line )
+		{
+			class_definition_ptr class_def = cls_system->find_definition( type );
+			if ( !class_def ) throw runtime_error( "Failed to find class definition" );
+			//class system objects are completely default initialized to zero.
+			gc_object& retval = allocate( (size_t)class_def->instance_size(), file, line );
+			retval.type = type;
+			pair<void*,size_t> data = get_object_data( retval );
+			memset( data.first, 0, data.second );
+			return retval;
 		}
 
 		void set_root_or_locked( gc_object& object, bool root, bool locked )
@@ -193,17 +213,42 @@ namespace {
 			obj.flags.set( last_mark, false );
 			gc_object* obj_buffer[64];
 			size_t reference_index = 0;
-			for ( size_t reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
-														, reference_index, obj_buffer, 64 );
-					reference_count != 0; 
-					reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
-														, reference_index, obj_buffer, 64 ) )
+			if ( obj.type )
 			{
-				copy_if( obj_buffer + 0
-						, obj_buffer + reference_count
-						, inserter( mark_buffer, mark_buffer.end() )
-						, [=]( gc_object* mark_obj ) { return mark_obj->flags.has_value( current_mark ) == false; } );
-				reference_index += reference_count;
+				for ( size_t reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
+															, reference_index, obj_buffer, 64 );
+						reference_count != 0; 
+						reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
+															, reference_index, obj_buffer, 64 ) )
+				{
+					copy_if( obj_buffer + 0
+							, obj_buffer + reference_count
+							, inserter( mark_buffer, mark_buffer.end() )
+							, [=]( gc_object* mark_obj ) { return mark_obj->flags.has_value( current_mark ) == false; } );
+					reference_index += reference_count;
+				}
+			}
+			else
+			{
+				class_definition_ptr class_def = cls_system->find_definition( obj.type );
+				if ( !class_def ) throw runtime_error( "failed to find type of item" );
+				//find all the objref or objref_ properties
+				uint8_t* obj_buffer = reinterpret_cast<uint8_t*>( get_object_data(obj).first );
+				auto obj_props = class_def->all_properties();
+				for_each( obj_props.begin(), obj_props.end()
+					, [&] ( const property_entry& entry )
+				{
+					if ( entry.definition.type == _ref_obj_type )
+					{
+						gc_object** prop_start_ptr = reinterpret_cast<gc_object**>( obj_buffer + entry.offset );
+						for ( uint32_t idx = 0, end = entry.definition.count; idx < end; ++idx ) 
+						{
+							gc_object* mark_obj = prop_start_ptr[idx];
+							if ( mark_obj && mark_obj->flags.has_value( current_mark ) == false )
+								mark_buffer.insert( mark_buffer.end(), mark_obj );
+						}
+					}
+				} );
 			}
 		}
 
@@ -217,8 +262,12 @@ namespace {
 		{
 			if ( obj.flags.is_root() ||  obj.flags.is_locked() )
 				throw std::runtime_error( "bad object in deallocate_object" );
-			
-			reftrack->object_deallocated( obj, get_object_data(obj) );
+			if ( !obj.type )
+				reftrack->object_deallocated( obj, get_object_data(obj) );
+			else
+			{
+				//find destructor function(s) on the object, call those.
+			}
 			alloc->deallocate( &obj );
 		}
 
@@ -261,10 +310,16 @@ namespace {
 		
 		virtual allocator_ptr allocator() { return alloc; }
 		virtual reference_tracker_ptr reference_tracker() { return reftrack; }
+		virtual string_table_ptr string_table() { return str_table; }
+		virtual class_system_ptr class_system() { return cls_system; }
 	};
 }
 
-shared_ptr<garbage_collector> garbage_collector::create_mark_sweep( allocator_ptr alloc, reference_tracker_ptr refTracker )
+shared_ptr<garbage_collector> garbage_collector::create_mark_sweep( 
+	allocator_ptr alloc
+	, reference_tracker_ptr refTracker
+	, string_table_ptr str_table
+	, class_system_ptr cls_system )
 {
-	return make_shared<gc_mark_sweep_impl>( alloc, refTracker );
+	return make_shared<gc_mark_sweep_impl>( alloc, refTracker, str_table, cls_system );
 }
