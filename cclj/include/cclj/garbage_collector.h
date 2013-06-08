@@ -13,6 +13,8 @@
 #include "cclj/allocator.h"
 #include "cclj/string_table.h"
 #include "cclj/class_system.h"
+#include "cclj/noncopyable.h"
+#include "cclj/class_system_predefined_types.h"
 
 namespace cclj
 {
@@ -71,8 +73,9 @@ namespace cclj
 		};
 	};
 
-	struct gc_object_flags : public flags<gc_object_flag_values::val,uint16_t>
+	class gc_object_flags : public flags<gc_object_flag_values::val,uint16_t>
 	{
+	public:
 		bool is_root() const { return has_value( gc_object_flag_values::root ); }
 		void set_root( bool val ) { set( gc_object_flag_values::root, val ); }
 
@@ -85,6 +88,8 @@ namespace cclj
 		bool is_marked_right() const { return has_value( gc_object_flag_values::mark_right ); }
 		void set_marked_right( bool val ) { set( gc_object_flag_values::mark_right, val ); }
 	};
+
+
 
 	class gc_object
 	{
@@ -102,6 +107,23 @@ namespace cclj
 		string_table_str	type;
 		gc_object_flags		flags;
 		uint16_t			user_flags;
+	};
+
+	//types that the GC *has* to support:
+	//their type name is their type.
+	struct gc_array
+	{
+		string_table_str _type;
+		objref_t		 _data;
+		uint32_t		 _count;
+		uint32_t         _capacity;
+	};
+
+	struct gc_hash_table
+	{
+		string_table_str _key_type;
+		string_table_str _value_type;
+		objref_t		 _data;
 	};
 
 	//It should be noted that the collector could be copying.  
