@@ -89,6 +89,8 @@ namespace {
 		string_table_ptr					str_table;
 		class_system_ptr					cls_system;
 		string_table_str					_ref_obj_type;
+		string_table_str					_array_type;
+		string_table_str					_hash_table_type;
 		
 			
 
@@ -100,6 +102,8 @@ namespace {
 			, str_table( _str_table )
 			, cls_system( _cls_system )
 			, _ref_obj_type( str_table->register_str( "objref_t" ) )
+			, _array_type( _str_table->register_str( "gc_array" ) )
+			, _hash_table_type( _str_table->register_str( "gc_hash_table" ) )
 		{
 		}
 
@@ -307,6 +311,9 @@ namespace {
 
 			swap( all_objects, all_objects_temp );
 		}
+		
+		virtual string_table_str array_type() const { return _array_type; }
+		virtual string_table_str hash_table_type() const { return _hash_table_type; }
 		
 		virtual allocator_ptr allocator() { return alloc; }
 		virtual reference_tracker_ptr reference_tracker() { return reftrack; }

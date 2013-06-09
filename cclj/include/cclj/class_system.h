@@ -149,6 +149,7 @@ namespace cclj
 
 		//Return the size and alignment of the instance.
 		virtual uint32_t instance_size() = 0;
+		//minimum alignment and thus minimum size is 4 bytes.
 		virtual uint32_t instance_alignment() = 0;
 		virtual parent_class_entry_const_buffer parent_classes() const = 0;
 		virtual class_vtable_ptr_const_buffer vtables() const = 0;

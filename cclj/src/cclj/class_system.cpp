@@ -195,7 +195,7 @@ namespace {
 			class_definition_ptr retval = find_definition(name);
 			if ( retval ) return retval;
 			uint32_t current_instance_offset = 0;
-			uint32_t minimum_instance_alignment = 0;
+			uint32_t minimum_instance_alignment = 4;
 			vector<parent_class_entry> parent_entries;
 
 			//calculate where the instance properties can start
@@ -225,6 +225,8 @@ namespace {
 				property_entries.push_back( new_entry );
 			} );
 			current_instance_offset = align_number( current_instance_offset, minimum_instance_alignment );
+			if ( current_instance_offset == 0 )
+				current_instance_offset = minimum_instance_alignment;
 
 			class_definition_ptr cls 
 				= make_shared<class_definition_impl>( name, property_entries, parent_entries
