@@ -8,6 +8,7 @@
 #include "precompile.h"
 #include "cclj/garbage_collector.h"
 #include <cstring>
+#include "cclj/algo_util.h"
 
 using namespace cclj;
 namespace cclj {
@@ -115,26 +116,64 @@ namespace {
 			roots.clear();
 		}
 		
-		virtual gc_object& allocate( size_t size, const char* file, int line )
+		virtual gc_object& allocate( size_t size, uint8_t alignment, const char* file, int line )
 		{
-			size_t alloc_size = sizeof( gc_object ) + size;
-			uint8_t* newmem = (uint8_t*)alloc->allocate( alloc_size, file, line );
+			uint32_t obj_size = align_number( sizeof(gc_object), alignment );
+			size_t alloc_size = obj_size + size;
+			uint8_t* newmem = (uint8_t*)alloc->allocate( alloc_size, alignment, file, line );
 			new (newmem) gc_object();
 			gc_object* retval = (gc_object*)newmem;
+			retval->data_ptr = newmem + obj_size;
+
+			if ( size ) memset( retval->data_ptr, 0, size );
+
 			all_objects.push_back( retval );
-			return *((gc_object*)newmem);
+			return *retval;
 		}
 
-		virtual gc_object& allocate( string_table_str type, const char* file, int line )
+		virtual gc_object& allocate( string_table_str type, size_t new_size_in_bytes, const char* file, int line )
 		{
 			class_definition_ptr class_def = cls_system->find_definition( type );
 			if ( !class_def ) throw runtime_error( "Failed to find class definition" );
+			if ( new_size_in_bytes % class_def->instance_size() ) 
+				throw runtime_error( "incorrect size (not multiple of object size)" );
+
+			new_size_in_bytes = std::max( class_def->instance_size(), new_size_in_bytes );
+
 			//class system objects are completely default initialized to zero.
-			gc_object& retval = allocate( (size_t)class_def->instance_size(), file, line );
+			gc_object& retval = allocate( (size_t)new_size_in_bytes, class_def->instance_alignment(), file, line );
 			retval.type = type;
-			pair<void*,size_t> data = get_object_data( retval );
-			memset( data.first, 0, data.second );
 			return retval;
+		}
+		
+		virtual pair<void*,size_t> reallocate( gc_object& in_object, size_t new_size_in_bytes, const char* file, int line )
+		{
+			if ( !in_object.flags.is_locked() )
+				throw runtime_error( "reallocated called on unlocked object" );
+
+			if ( in_object.type )
+			{
+				auto class_def = cls_system->find_definition( in_object.type );
+				if ( !class_def ) throw runtime_error( "Failed to find class definition" );
+				if ( new_size_in_bytes % class_def->instance_size() ) 
+					throw runtime_error( "incorrect size (not multiple of object size)" );
+			}
+			pair<void*,size_t> existing_size = get_object_data( in_object );
+			if ( existing_size.second == new_size_in_bytes )
+				return;
+
+			pair<void*,size_t> contig_data = get_contiguous_object_data( in_object );
+			//favour contiguous data over non-contiguous data.
+			if ( new_size_in_bytes <= contig_data.second )
+			{
+				if ( !is_object_contiguous( in_object ) )
+				{
+					memcpy( contig_data.first, existing_size.first, new_size_in_bytes );
+					alloc->deallocate( existing_size.first );
+					in_object.data_ptr = contig_data.first;
+				}
+				return contig_data;
+			}
 		}
 
 		void set_root_or_locked( gc_object& object, bool root, bool locked )
@@ -174,12 +213,37 @@ namespace {
 		{
 			//write barrier isn't particularly useful right now.
 		}
+		bool is_object_contiguous( gc_object& obj )
+		{
+			uint8_t* memStart = (uint8_t*)&obj;
+			auto alloc_info = alloc->get_alloc_info( memStart );
+			uint32_t obj_size = align_number( sizeof(gc_object), alloc_info.alignment );
+			return obj.data_ptr == reinterpret_cast<void*>( memStart + obj_size );
+		}
+
+		pair<void*,size_t> get_contiguous_object_data( gc_object& obj )
+		{
+			uint8_t* memStart = (uint8_t*)&obj;
+			auto alloc_info = alloc->get_alloc_info( memStart );
+			uint32_t obj_size = align_number( sizeof(gc_object), alloc_info.alignment );
+			uint32_t data_size = alloc_info.alloc_size - obj_size;
+			if ( data_size )
+				return make_pair( obj.data_ptr, alloc_info.alloc_size - obj_size );
+			return pair<void*,size_t>( nullptr, 0 );
+
+		}
 
 		pair<void*,size_t> get_object_data( gc_object& obj )
 		{
-			uint8_t* memStart = (uint8_t*)&obj;
-			uint8_t* userMem = memStart + sizeof( gc_object );
-			return make_pair( userMem, alloc->get_alloc_size( memStart ) );
+			if ( is_object_contiguous(obj) )
+			{
+				return get_contiguous_object_data( obj );
+			}
+			else
+			{
+				auto alloc_info = alloc->get_alloc_info( obj.data_ptr );
+				return make_pair( obj.data_ptr, alloc_info.alloc_size );
+			}
 		}
 
 		virtual pair<void*,size_t> lock( gc_object& obj )

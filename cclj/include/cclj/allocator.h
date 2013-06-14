@@ -11,6 +11,13 @@
 #include "cclj/cclj.h"
 
 namespace cclj {
+	
+	struct alloc_info
+	{
+		size_t	alloc_size;
+		uint8_t alignment;
+		alloc_info() : alloc_size( 0 ), alignment( 0 ) {}
+	};
 
 	class allocator
 	{
@@ -18,9 +25,12 @@ namespace cclj {
 		virtual ~allocator(){}
 	public:
 		friend class shared_ptr<allocator>;
-		virtual void* allocate( size_t size, const char* file, int line ) = 0;
-		virtual size_t get_alloc_size( void* ptr ) = 0;
+		virtual void* allocate( size_t size, uint8_t alignment, const char* file, int line ) = 0;
+		virtual alloc_info get_alloc_info( void* ptr ) = 0;
 		virtual void deallocate( void* memory ) = 0;
+		//Check if this is a valid ptr.  Returns true if this allocate knows about the pointer
+		//or false otherwise.
+		virtual bool check_ptr( void* ptr ) = 0;
 
 		//Create an allocator that, upon destruction, checks that everything has been
 		//deallocator and asserts if this isn't the case.

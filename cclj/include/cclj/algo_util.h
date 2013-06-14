@@ -8,6 +8,7 @@
 #ifndef CCLJ_ALGO_UTIL_H
 #define CCLJ_ALGO_UTIL_H
 #include "cclj.h"
+#include "cclj/data_buffer.h"
 namespace cclj
 {
 	template<typename tdtype, typename tfindop>
@@ -54,6 +55,15 @@ namespace cclj
 			*iter = item;
 		else
 			container.insert( iter, item );
+	}
+	
+	template<typename number_type>
+	inline number_type align_number( number_type data, uint8_t alignment )
+	{
+		number_type diff = data % static_cast<number_type>( alignment );
+		if ( diff )
+			data = data + alignment - diff;
+		return data;
 	}
 }
 #endif

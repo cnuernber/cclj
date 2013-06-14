@@ -41,6 +41,7 @@ namespace {
 		const uint32_t					_instance_size;
 		const uint8_t					_instance_alignment;
 		vector<property_entry>			_all_properties_list;
+		class_function_ptr				_destructor;
 
 		class_definition_impl& operator=( const class_definition_impl& other );
 
@@ -74,7 +75,7 @@ namespace {
 
 		//Return the size and alignment of the instance.
 		virtual uint32_t instance_size() { return _instance_size; }
-		virtual uint32_t instance_alignment() { return _instance_alignment; }
+		virtual uint8_t  instance_alignment() { return _instance_alignment; }
 
 		virtual parent_class_entry_const_buffer parent_classes() const 
 		{
@@ -136,15 +137,10 @@ namespace {
 
 			return _all_properties_list;
 		}
-	};
 
-	inline uint32_t align_number( uint32_t data, int32_t alignment )
-	{
-		uint32_t diff = data % alignment;
-		if ( diff )
-			data = data + alignment - diff;
-		return data;
-	}
+		virtual void set_destructor( class_function_ptr destructor ) { _destructor = destructor; }
+		virtual class_function_ptr destructor() { return _destructor; }
+	};
 
 	struct class_system_impl : public class_system
 	{
@@ -190,12 +186,13 @@ namespace {
 
 		virtual class_definition_ptr create_definition( string_table_str name
 														, class_definition_ptr_const_buffer parents
-														, property_definition_const_buffer properties )
+														, property_definition_const_buffer properties
+														, uint8_t minimum_alignment )
 		{
 			class_definition_ptr retval = find_definition(name);
 			if ( retval ) return retval;
 			uint32_t current_instance_offset = 0;
-			uint32_t minimum_instance_alignment = 4;
+			uint8_t minimum_instance_alignment = std::max( (uint8_t)4, minimum_alignment );
 			vector<parent_class_entry> parent_entries;
 
 			//calculate where the instance properties can start
@@ -216,8 +213,8 @@ namespace {
 				class_definition_ptr prop_type = find_definition( def.type );
 				if ( !prop_type ) throw runtime_error( "failed to find property type class" );
 				uint32_t num_items = std::max( (uint32_t)1, def.count );
-				uint32_t prop_alignment = prop_type->instance_alignment();
-				uint32_t prop_item_size = std::max( prop_type->instance_size(), prop_alignment );
+				uint8_t prop_alignment = prop_type->instance_alignment();
+				uint32_t prop_item_size = std::max( prop_type->instance_size(), (uint32_t)prop_alignment );
 				uint32_t prop_size = prop_item_size * num_items;
 				minimum_instance_alignment = std::max( minimum_instance_alignment, prop_alignment );
 				current_instance_offset = align_number( current_instance_offset, prop_alignment );

@@ -150,7 +150,7 @@ namespace cclj
 		//Return the size and alignment of the instance.
 		virtual uint32_t instance_size() = 0;
 		//minimum alignment and thus minimum size is 4 bytes.
-		virtual uint32_t instance_alignment() = 0;
+		virtual uint8_t instance_alignment() = 0;
 		virtual parent_class_entry_const_buffer parent_classes() const = 0;
 		virtual class_vtable_ptr_const_buffer vtables() const = 0;
 		//You cannot change the data layout of a class after it has been registered.  You can, however,
@@ -169,6 +169,10 @@ namespace cclj
 		virtual class_function_and_offset find_instance_function_recurse( string_table_str name );
 		//All properties including parents.
 		virtual property_entry_const_buffer all_properties() = 0;
+
+		//the only destructor guarantee is that derived classes will be called before parents.
+		virtual void set_destructor( class_function_ptr destructor ) = 0;
+		virtual class_function_ptr destructor() = 0;
 	};
 
 
@@ -188,7 +192,8 @@ namespace cclj
 		virtual class_definition_ptr find_definition( string_table_str str ) const = 0;
 		virtual class_definition_ptr create_definition( string_table_str name
 														, class_definition_ptr_const_buffer parents
-														, property_definition_const_buffer properties ) = 0;
+														, property_definition_const_buffer properties
+														, uint8_t minium_alignment = 0 ) = 0;
 
 		static shared_ptr<class_system> create(string_table_ptr str_table );
 	};
