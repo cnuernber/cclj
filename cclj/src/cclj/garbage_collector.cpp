@@ -135,13 +135,14 @@ namespace {
 		{
 			class_definition_ptr class_def = cls_system->find_definition( type );
 			if ( !class_def ) throw runtime_error( "Failed to find class definition" );
-			if ( new_size_in_bytes % class_def->instance_size() ) 
+			if ( ( new_size_in_bytes % class_def->instance_size() ) != 0) 
 				throw runtime_error( "incorrect size (not multiple of object size)" );
 
 			new_size_in_bytes = std::max( class_def->instance_size(), new_size_in_bytes );
 
 			//class system objects are completely default initialized to zero.
 			gc_object& retval = allocate( (size_t)new_size_in_bytes, class_def->instance_alignment(), file, line );
+			retval.count = new_size_in_bytes / class_def->instance_size();
 			retval.type = type;
 			return retval;
 		}
@@ -151,9 +152,10 @@ namespace {
 			if ( !in_object.flags.is_locked() )
 				throw runtime_error( "reallocated called on unlocked object" );
 
+			class_definition_ptr class_def;
 			if ( in_object.type )
 			{
-				auto class_def = cls_system->find_definition( in_object.type );
+				class_def = cls_system->find_definition( in_object.type );
 				if ( !class_def ) throw runtime_error( "Failed to find class definition" );
 				if ( new_size_in_bytes % class_def->instance_size() ) 
 					throw runtime_error( "incorrect size (not multiple of object size)" );
@@ -186,6 +188,9 @@ namespace {
 				if ( !was_contiguous )
 					alloc->deallocate( existing_size.first );
 			}
+
+			if ( class_def )
+				in_object.count = new_size_in_bytes / class_def->instance_size();
 
 			return retval;
 		}
@@ -323,21 +328,27 @@ namespace {
 				if ( !class_def ) throw runtime_error( "failed to find type of item" );
 				//find all the objref or objref_ properties
 				uint8_t* obj_buffer = reinterpret_cast<uint8_t*>( get_object_data(obj).first );
-				auto obj_props = class_def->all_properties();
-				for_each( obj_props.begin(), obj_props.end()
-					, [&] ( const property_entry& entry )
+				uint32_t instance_size = class_def->instance_size();
+
+				for ( uint32_t idx = 0, end = obj.count; idx < end; ++idx )
 				{
-					if ( entry.definition.type == _ref_obj_type )
+					uint8_t* local_obj = obj_buffer + idx * instance_size;
+					auto obj_props = class_def->all_properties();
+					for_each( obj_props.begin(), obj_props.end()
+						, [&] ( const property_entry& entry )
 					{
-						gc_object** prop_start_ptr = reinterpret_cast<gc_object**>( obj_buffer + entry.offset );
-						for ( uint32_t idx = 0, end = entry.definition.count; idx < end; ++idx ) 
+						if ( entry.definition.type == _ref_obj_type )
 						{
-							gc_object* mark_obj = prop_start_ptr[idx];
-							if ( mark_obj && mark_obj->flags.has_value( current_mark ) == false )
-								mark_buffer.insert( mark_buffer.end(), mark_obj );
+							gc_object** prop_start_ptr = reinterpret_cast<gc_object**>( local_obj + entry.offset );
+							for ( uint32_t idx = 0, end = entry.definition.count; idx < end; ++idx ) 
+							{
+								gc_object* mark_obj = prop_start_ptr[idx];
+								if ( mark_obj && mark_obj->flags.has_value( current_mark ) == false )
+									mark_buffer.insert( mark_buffer.end(), mark_obj );
+							}
 						}
-					}
-				} );
+					} );
+				}
 			}
 		}
 

@@ -46,6 +46,16 @@ namespace cclj
 		{
 			return data_array_iter_base( _count, _index - val );
 		}
+		
+		data_array_iter_base operator+( data_array_iter_base val )
+		{
+			return data_array_iter_base( _count, _index + val._index );
+		}
+
+		data_array_iter_base operator-( data_array_iter_base val )
+		{
+			return data_array_iter_base( _count, _index - val._index );
+		}
 
 		bool operator==( const data_array_iter_base& other ) const
 		{
@@ -95,8 +105,13 @@ namespace cclj
 			return retval;
 		}
 
+		data_array_iter_base operator+=(int idx ) { _index += idx; return *this; }
+		data_array_iter_base operator-=(int idx ) { _index -= idx; return *this; }
+
 		int32_t index() const { return _index; }
 		uint32_t count() const { return _count; }
+
+		operator int32_t () const { return _index; }
 	};
 
 	struct gc_array_const_item_ref
@@ -175,6 +190,26 @@ namespace cclj
 			int32_t off = index() * (int32_t)_instance_size;
 			return gc_array_const_item_ref( _instance_size, _array_data + off, _definition );
 		}
+		
+		gc_array_const_iter operator+( int val )
+		{
+			return gc_array_const_iter( *this + val, _definition, _instance_size, _array_data );
+		}
+
+		gc_array_const_iter operator-( int val )
+		{
+			return gc_array_const_iter( *this - val, _definition, _instance_size, _array_data );
+		}
+		
+		gc_array_const_iter operator+( gc_array_const_iter val )
+		{
+			return gc_array_const_iter( *this + val, _definition, _instance_size, _array_data );
+		}
+
+		gc_array_const_iter operator-( gc_array_const_iter val )
+		{
+			return gc_array_const_iter( *this - val, _definition, _instance_size, _array_data );
+		}
 	};
 
 	class gc_array_iter : public data_array_iter_base
@@ -225,12 +260,31 @@ namespace cclj
 		{
 			return gc_array_const_iter( *this, _definition, _instance_size, _array_data );
 		}
+		
+		gc_array_iter operator+( int val )
+		{
+			return gc_array_iter( *this + val, _definition, _instance_size, _array_data );
+		}
+
+		gc_array_iter operator-( int val )
+		{
+			return gc_array_iter( *this - val, _definition, _instance_size, _array_data );
+		}
+		
+		gc_array_iter operator+( gc_array_iter val )
+		{
+			return gc_array_iter( *this + val, _definition, _instance_size, _array_data );
+		}
+
+		gc_array_iter operator-( gc_array_iter val )
+		{
+			return gc_array_iter( *this - val, _definition, _instance_size, _array_data );
+		}
 	};
 
 	class gc_array_ptr : public gc_obj_ptr
 	{
 		class_definition_ptr _definition;
-		gc_array*			 _array;
 		uint8_t*			 _array_data;
 		uint32_t			 _capacity;
 
@@ -243,16 +297,12 @@ namespace cclj
 					throw runtime_error( "array ptr constructed with type not an array" );
 				pair<void*,size_t> data_pair = data();
 				uint8_t* data_ptr = reinterpret_cast<uint8_t*>( data_pair.first );
-				_array = reinterpret_cast<gc_array*>( data_ptr );
-				uint32_t data_offset = sizeof( gc_array );
 
-				_definition = gc()->class_system()->find_definition( _array->_type );
+				_definition = gc()->class_system()->find_definition( object()->type );
 				if ( !_definition )
 					throw runtime_error( "Failed to find class definition for array" );
 				
-				data_offset = align_number( data_offset, _definition->instance_alignment() );
-				data_ptr += data_offset;
-				int32_t data_section_length = std::max( (int32_t)0, (int32_t)data_pair.second - (int32_t)data_offset );
+				int32_t data_section_length = std::max( (int32_t)0, (int32_t)data_pair.second );
 				if ( data_section_length )
 					_array_data = data_ptr;
 				else
@@ -263,13 +313,10 @@ namespace cclj
 				uint32_t leftover = (uint32_t)data_section_length % _definition->instance_size();
 				if ( leftover )
 					throw runtime_error( "leftover data area instance size mismatch" );
-				if ( _array->_count > _capacity )
-					throw runtime_error( "array count/capacity wrong" );
 			}
 		}
 		void release()
 		{
-			_array = nullptr;
 			_array_data = nullptr;
 			_capacity = 0;
 			_definition = class_definition_ptr();
@@ -282,7 +329,6 @@ namespace cclj
 
 		gc_array_ptr( const gc_obj_ptr& ptr )
 			: gc_obj_ptr( ptr )
-			, _array( nullptr )
 			, _array_data( nullptr )
 		{
 			acquire();
@@ -290,7 +336,6 @@ namespace cclj
 
 		gc_array_ptr( const gc_array_ptr& obj )
 			: gc_obj_ptr( obj )
-			, _array( nullptr )
 			, _array_data( nullptr )
 		{
 			acquire();
@@ -306,15 +351,11 @@ namespace cclj
 			return *this;
 		}
 
-		operator bool () const { return _array != nullptr; }
-
-		void ensure_array() const { if ( !_array ) throw runtime_error( "invalid pointer access" ); }
-
-		size_t size() const { if ( !_array ) return 0; return _array->_count; }
+		size_t size() const { if ( !(*this) ) return 0; return object()->count; }
 		size_t capacity() const { return _capacity; }
 		pair<uint8_t*, size_t> array_data() { return make_pair( _array_data, size() ); }
-		size_t item_size() const { ensure_array(); return _definition->instance_size(); }
-		bool empty() const { return !_array; }
+		size_t item_size() const { if ( _definition ) return _definition->instance_size(); return 0; }
+		bool empty() const { return !_definition; }
 
 		iterator begin() 
 		{
@@ -356,24 +397,77 @@ namespace cclj
 			return const_cast<gc_array_ptr&>( *this ).operator[]( idx );
 		}
 
-		//The insert/resize/erase functions work a bit differently because they are setup to deal with
-		//arbitrary memory.  Objects in the class system can have destructors, but they cannot have 
-		//constructors.
-
 		void reserve( size_t total )
 		{
 			if ( total <= capacity() ) return;
 			release();
-
+			size_t old_size = size();
+			size_t new_instance_size = total * item_size();
+			reallocate( new_instance_size );
+			object()->count = old_size;
+			acquire();
 		}
 
-		uint8_t* insert( iterator _where, size_t num_items )
+		iterator insert( iterator _where, size_t num_items )
 		{
-			reserve( size() + num_items );
+			uint32_t the_item_size = item_size();
+			size_t new_size = size() + num_items;
+			int32_t where_index = _where.index();
+			if ( new_size > capacity() )
+				reserve( new_size * 2 );
+			_where = begin();
+			_where += where_index;
+			//move the data in the array forward from iter to when end was
+			int32_t move_section_width = (end() - _where).index() * the_item_size;
+			int32_t move_section_len = num_items * the_item_size;
+			if ( move_section_width )
+			{
+				uint8_t* start_ptr = _where.item_ref()._item_data;
+				uint8_t* dest_ptr = start_ptr + move_section_len;
+				memmove( dest_ptr, start_ptr, move_section_width );
+			}
+			object()->count += num_items;
+			if ( move_section_len )
+			{
+				//zero out new memory
+				memset( _where.item_ref()._item_data, 0, move_section_len );
+			}
+			return _where;
 		}
 
+		void erase( iterator start, iterator stop )
+		{
+			//Copy the section after stop to start
+			//then adjust size.
+			if( stop < start )
+				throw runtime_error( "what the hell do you think you are doing? stop is less that start..." );
+			if ( stop == start )
+				return;
 
+			int32_t num_items = stop - start;
+			uint32_t the_item_size = item_size();
+			int32_t move_section_width = (end() - stop).index() * the_item_size;
+			if ( move_section_width )
+			{
+				uint8_t* start_ptr = stop.item_ref()._item_data;
+				uint8_t* dest_ptr = start.item_ref()._item_data;
+				memcpy( dest_ptr, start_ptr, move_section_width );
+			}
+			//No need to memset anything to zero because that will happen on insert.
+			object()->count -= num_items;
+		}
 
+		void resize( size_t new_size )
+		{
+			if ( new_size > size() )
+			{
+				insert( end(), new_size - size() );
+			}
+			else if ( new_size < size() )
+			{
+				erase( begin() + (int)new_size, end() );
+			}
+		}
 	};
 }
 

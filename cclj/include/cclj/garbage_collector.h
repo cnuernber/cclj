@@ -98,23 +98,15 @@ namespace cclj
 		//do not create these yourself; create them with the garbage collector
 		//member data may or may not follow this object immediately, depends on if the collector
 		//is a copying or noncopying collector.
-		gc_object() : user_flags( 0 ), data_ptr( nullptr ) {}
+		gc_object() : data_ptr( nullptr ), user_flags( 0 ), count( 0 ) {}
 		//Type is used by the gc to allow it to track references automatically without
 		//calling back to via the ref tracker.  If there is no type, then the GC assumes
 		//this is a user-type and will call back to c++.
 		string_table_str	type;
+		void*				data_ptr;
 		gc_object_flags		flags; 
 		uint16_t			user_flags; //16 bits for you!
-		void*				data_ptr;
-	};
-
-	//types that the GC *has* to support:
-	//their type name is their type.
-	struct gc_array
-	{
-		string_table_str _type;
-		uint32_t		 _count;
-		void*			 _array_data;
+		uint32_t			count; //How many instances are valid from this object.
 	};
 
 	//uses std::unordered_map which has size operator.
@@ -250,7 +242,8 @@ namespace cclj
 			
 			_data.first = nullptr;
 			_data.second = 0;
-			_gc->reallocate( *_object, new_size, __FILE__, __LINE__ );
+			_data = _gc->reallocate( *_object, new_size, __FILE__, __LINE__ );
+			return _data;
 		}
 	};
 

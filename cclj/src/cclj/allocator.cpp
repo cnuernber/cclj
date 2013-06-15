@@ -40,6 +40,8 @@ namespace {
 		{
 			if (!size ) return nullptr;
 			size_t newsize = size + sizeof(alloc_info);
+			//We are actually relying on the fact that alloc_info has 3 padding bytes
+			//for this to work.  We will use one of them for the back ptr.
 			if ( alignment > 4 )
 				newsize = newsize + alignment - 1;
 
