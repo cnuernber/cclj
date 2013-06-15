@@ -9,8 +9,13 @@
 #include "cclj/string_table.h"
 #include "cclj/garbage_collector.h"
 #include "cclj/allocator.h"
+#include "cclj/typed_properties.h"
 
 using namespace cclj;
+
+typed_property_definition<uint32_t> g_value_def( "value" );
+typed_property_definition<objref_t> g_next_def( "next" );
+
 
 TEST(garbage_collector_tests, basic_collection) {
   
@@ -20,26 +25,22 @@ TEST(garbage_collector_tests, basic_collection) {
 	auto gc = garbage_collector::create_mark_sweep( allocator, reference_tracker_ptr(), str_table, cls_system ); 
 	vector<property_definition> prop_defs;
 	auto test_cls_name = str_table->register_str( "simple" );
-	prop_defs.push_back( property_definition( str_table->register_str( "value" ), str_table->register_str( "uint32_t" ) ) );
-	prop_defs.push_back( property_definition( str_table->register_str( "next" ), str_table->register_str( "variable_size_objref_t" ) ) );
+	prop_defs.push_back( g_value_def.def( str_table ) );
+	prop_defs.push_back( g_next_def.def( str_table ) );
 	auto cls = cls_system->create_definition( 
 		test_cls_name
 		, class_definition_ptr_const_buffer()
 		, prop_defs );
 	gc_obj_ptr root_obj( gc, gc->allocate( test_cls_name, cls->instance_size(), __FILE__, __LINE__ ) );
-	auto value_prop = *cls->find_instance_property( str_table->register_str( "value" ) );
-	auto next_prop = *cls->find_instance_property( str_table->register_str( "next" ) );
-	uint8_t* data = reinterpret_cast<uint8_t*>( root_obj.data().first );
-	uint32_t* value_ptr = reinterpret_cast<uint32_t*>( data + value_prop.offset );
-	gc_object** next_ptr = reinterpret_cast<gc_object**>( data + next_prop.offset );
-	*value_ptr = 5;
+	auto value_prop( g_value_def.to_entry( *cls->find_instance_property( str_table->register_str( "value" ) ) ) );
+	auto next_prop( g_next_def.to_entry( *cls->find_instance_property( str_table->register_str( "next" ) ) ) );
+	value_prop.set( root_obj, 5 );
 	{
 		gc_obj_ptr next_obj( gc, gc->allocate( test_cls_name, cls->instance_size(), __FILE__, __LINE__ ) );
-		*next_ptr = next_obj.object();
-		uint8_t* next_data = reinterpret_cast<uint8_t*>( next_obj.data().first );
-		uint32_t* next_value_ptr = reinterpret_cast< uint32_t*>( next_data + value_prop.offset );
-		*next_value_ptr = 6;
+		next_prop.set( root_obj, next_obj.object() );
+		value_prop.set( next_obj, 6 );
 	}
+
 	gc->perform_gc();
 	auto all_objects = gc->all_live_objects();
 	ASSERT_EQ( all_objects.size(), (size_t)2 );
@@ -49,15 +50,14 @@ TEST(garbage_collector_tests, basic_collection) {
 	ASSERT_EQ( all_objects.size(), (size_t)2 );
 
 
-	*next_ptr = nullptr;
+	next_prop.set( root_obj, nullptr );
 	//Ensure the gc can follow pointers and correctly handles class types.
 	gc->perform_gc();
 	all_objects = gc->all_live_objects();
 	ASSERT_EQ( all_objects.size(), 1 );
 	{
 		gc_obj_ptr test_ptr( gc, *all_objects[0] );
-		data = reinterpret_cast<uint8_t*>( test_ptr.data().first );
-		uint32_t* test_value_ptr = reinterpret_cast<uint32_t*>( data + value_prop.offset );
-		ASSERT_EQ( (uint32_t)5, *test_value_ptr );
+		uint32_t test_value = value_prop.get( test_ptr );
+		ASSERT_EQ( (uint32_t)5, test_value );
 	}
 }

@@ -44,14 +44,17 @@ namespace cclj
 		property_definition definition;
 		uint32_t			offset;
 		uint32_t			length;
+		uint32_t			item_size;
 
-		property_entry( property_definition def = property_definition()
-						, uint32_t of = 0, uint32_t len = 0 )
+		property_entry( property_definition def
+						, uint32_t of, uint32_t len, uint32_t _item_size )
 						: definition( def )
 						, offset( of )
 						, length( len )
+						, item_size( _item_size )
 		{
 		}
+		property_entry() : offset( 0 ), length( 0 ), item_size( 0 ) {}
 	};
 
 	typedef data_buffer<property_entry> property_entry_buffer;

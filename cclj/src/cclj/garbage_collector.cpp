@@ -104,7 +104,7 @@ namespace {
 			, last_mark( gc_object_flag_values::mark_left )
 			, str_table( _str_table )
 			, cls_system( _cls_system )
-			, _ref_obj_type( str_table->register_str( "variable_size_objref_t" ) )
+			, _ref_obj_type( str_table->register_str( "objref_t" ) )
 			, _array_type( _str_table->register_str( "gc_array" ) )
 			, _hash_table_type( _str_table->register_str( "gc_hash_table" ) )
 		{

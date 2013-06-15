@@ -126,7 +126,8 @@ namespace {
 									{
 										return property_entry( prop_entry.definition
 																	, prop_entry.length
-																	, prop_entry.offset + parent_offset );
+																	, prop_entry.offset + parent_offset
+																	, prop_entry.item_size );
 									} );
 				} );
 				auto instance_props = instance_properties();
@@ -218,7 +219,7 @@ namespace {
 				uint32_t prop_size = prop_item_size * num_items;
 				minimum_instance_alignment = std::max( minimum_instance_alignment, prop_alignment );
 				current_instance_offset = align_number( current_instance_offset, prop_alignment );
-				property_entry new_entry( def, current_instance_offset, prop_size );
+				property_entry new_entry( def, current_instance_offset, prop_size, prop_item_size );
 				property_entries.push_back( new_entry );
 				current_instance_offset += prop_size;
 			} );
