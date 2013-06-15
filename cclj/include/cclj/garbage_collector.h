@@ -250,7 +250,7 @@ namespace cclj
 			
 			_data.first = nullptr;
 			_data.second = 0;
-			gc->reallocate( *_object, new_size, __FILE__, __LINE__ );
+			_gc->reallocate( *_object, new_size, __FILE__, __LINE__ );
 		}
 	};
 

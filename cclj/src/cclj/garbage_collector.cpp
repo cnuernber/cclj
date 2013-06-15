@@ -160,20 +160,34 @@ namespace {
 			}
 			pair<void*,size_t> existing_size = get_object_data( in_object );
 			if ( existing_size.second == new_size_in_bytes )
-				return;
+				return existing_size;
 
 			pair<void*,size_t> contig_data = get_contiguous_object_data( in_object );
+			bool was_contiguous = is_object_contiguous( in_object );
 			//favour contiguous data over non-contiguous data.
+			pair<void*,size_t> retval( nullptr, 0 );
 			if ( new_size_in_bytes <= contig_data.second )
 			{
-				if ( !is_object_contiguous( in_object ) )
-				{
-					memcpy( contig_data.first, existing_size.first, new_size_in_bytes );
-					alloc->deallocate( existing_size.first );
-					in_object.data_ptr = contig_data.first;
-				}
-				return contig_data;
+				retval = pair<void*, size_t>( contig_data.first, new_size_in_bytes );
 			}
+			else
+			{
+				//Resize the area to be exactly what is specified if possible.  This allows programs
+				//to release memory when necessary.
+				auto alloc_info = object_alloc_info( in_object );
+				void* newmem = alloc->allocate( new_size_in_bytes, alloc_info.alignment, file, line );
+				retval = pair<void*,size_t>( newmem, new_size_in_bytes );
+			}
+
+			//Here is where copy construction and deletion would happen.
+			if ( retval.first != existing_size.first )
+			{
+				memcpy( retval.first, existing_size.first, std::min( existing_size.second, new_size_in_bytes ) );
+				if ( !was_contiguous )
+					alloc->deallocate( existing_size.first );
+			}
+
+			return retval;
 		}
 
 		void set_root_or_locked( gc_object& object, bool root, bool locked )
@@ -213,11 +227,18 @@ namespace {
 		{
 			//write barrier isn't particularly useful right now.
 		}
-		bool is_object_contiguous( gc_object& obj )
+
+		alloc_info object_alloc_info( gc_object& obj )
 		{
 			uint8_t* memStart = (uint8_t*)&obj;
-			auto alloc_info = alloc->get_alloc_info( memStart );
+			return alloc->get_alloc_info( memStart );
+		}
+
+		bool is_object_contiguous( gc_object& obj )
+		{
+			auto alloc_info = object_alloc_info( obj );
 			uint32_t obj_size = align_number( sizeof(gc_object), alloc_info.alignment );
+			uint8_t* memStart = (uint8_t*)&obj;
 			return obj.data_ptr == reinterpret_cast<void*>( memStart + obj_size );
 		}
 
