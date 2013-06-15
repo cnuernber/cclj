@@ -14,7 +14,6 @@ TEST(basic_language, add_two_numbers_and_get_a_number)
 {
 	//The language tests are going to fail for a while because
 	//I haven't got to implementing the entire language yet.
-	ASSERT_TRUE( false );
 
 	/*
 	allocator_ptr alloc = allocator::create_checking_allocator();

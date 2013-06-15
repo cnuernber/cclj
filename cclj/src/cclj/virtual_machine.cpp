@@ -7,7 +7,6 @@
 //==============================================================================
 #include "precompile.h"
 #include "cclj/virtual_machine.h"
-#include "cclj/gc_array.h"
 
 using namespace cclj;
 

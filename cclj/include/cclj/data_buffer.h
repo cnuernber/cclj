@@ -58,7 +58,7 @@ namespace cclj
 		size_t size() const { return _size; }
 		const_iterator begin() const { return _buffer; }
 		const_iterator end() const { return _buffer + size(); }
-		const TDataType& operator[]( int idx ) const { assert( idx < size ); return _buffer[idx]; }
+		const TDataType& operator[]( int idx ) const { assert( idx >= 0 && idx < (int)size() ); return _buffer[idx]; }
 	};
 }
 

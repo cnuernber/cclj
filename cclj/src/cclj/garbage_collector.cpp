@@ -63,6 +63,8 @@ namespace {
 		obj_ptr_list::iterator begin() { return object_list.begin(); }
 		obj_ptr_list::iterator end() { return object_list.end(); }
 		void clear() { object_list.clear(); object_map.clear(); }
+
+		const_gc_object_raw_ptr_buffer objects() { return const_gc_object_raw_ptr_buffer( object_list ); }
 	};
 	
 	//TODO - 
@@ -102,7 +104,7 @@ namespace {
 			, last_mark( gc_object_flag_values::mark_left )
 			, str_table( _str_table )
 			, cls_system( _cls_system )
-			, _ref_obj_type( str_table->register_str( "objref_t" ) )
+			, _ref_obj_type( str_table->register_str( "variable_size_objref_t" ) )
 			, _array_type( _str_table->register_str( "gc_array" ) )
 			, _hash_table_type( _str_table->register_str( "gc_hash_table" ) )
 		{
@@ -111,7 +113,10 @@ namespace {
 		~gc_mark_sweep_impl()
 		{
 			for_each (all_objects.begin(), all_objects.end()
-						,  [this](gc_object* obj) { reftrack->object_deallocated(*obj, get_object_data(*obj)); alloc->deallocate( obj ); } );
+						,  [this](gc_object* obj) 
+			{ 
+				unchecked_deallocate_object( *obj ); 
+			} );
 			all_objects.clear();
 			roots.clear();
 		}
@@ -309,21 +314,6 @@ namespace {
 			size_t reference_index = 0;
 			if ( obj.type )
 			{
-				for ( size_t reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
-															, reference_index, obj_buffer, 64 );
-						reference_count != 0; 
-						reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
-															, reference_index, obj_buffer, 64 ) )
-				{
-					copy_if( obj_buffer + 0
-							, obj_buffer + reference_count
-							, inserter( mark_buffer, mark_buffer.end() )
-							, [=]( gc_object* mark_obj ) { return mark_obj->flags.has_value( current_mark ) == false; } );
-					reference_index += reference_count;
-				}
-			}
-			else
-			{
 				class_definition_ptr class_def = cls_system->find_definition( obj.type );
 				if ( !class_def ) throw runtime_error( "failed to find type of item" );
 				//find all the objref or objref_ properties
@@ -350,6 +340,21 @@ namespace {
 					} );
 				}
 			}
+			else
+			{
+				for ( size_t reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
+															, reference_index, obj_buffer, 64 );
+						reference_count != 0; 
+						reference_count = reftrack->get_outgoing_references( obj, get_object_data(obj)
+															, reference_index, obj_buffer, 64 ) )
+				{
+					copy_if( obj_buffer + 0
+							, obj_buffer + reference_count
+							, inserter( mark_buffer, mark_buffer.end() )
+							, [=]( gc_object* mark_obj ) { return mark_obj->flags.has_value( current_mark ) == false; } );
+					reference_index += reference_count;
+				}
+			}
 		}
 
 		int increment_mark_buffer_index( int oldIndex ) 
@@ -358,17 +363,26 @@ namespace {
 			return 1;
 		}
 
-		void deallocate_object( gc_object& obj ) 
+		void unchecked_deallocate_object( gc_object& obj )
 		{
-			if ( obj.flags.is_root() ||  obj.flags.is_locked() )
-				throw std::runtime_error( "bad object in deallocate_object" );
 			if ( !obj.type )
 				reftrack->object_deallocated( obj, get_object_data(obj) );
 			else
 			{
 				//find destructor function(s) on the object, call those.
 			}
+			if ( !is_object_contiguous( obj ) )
+			{
+				alloc->deallocate( get_object_data( obj ).first );
+			}
 			alloc->deallocate( &obj );
+		}
+
+		void deallocate_object( gc_object& obj ) 
+		{
+			if ( obj.flags.is_root() ||  obj.flags.is_locked() )
+				throw std::runtime_error( "bad object in deallocate_object" );
+			unchecked_deallocate_object( obj );
 		}
 
 		virtual void perform_gc()
@@ -408,7 +422,10 @@ namespace {
 			swap( all_objects, all_objects_temp );
 		}
 		
-		virtual string_table_str array_type() const { return _array_type; }
+		virtual const_gc_object_raw_ptr_buffer roots_and_locked_objects() { return roots.objects(); }
+		
+		virtual const_gc_object_raw_ptr_buffer all_live_objects() { return all_objects; }
+		
 		virtual string_table_str hash_table_type() const { return _hash_table_type; }
 		
 		virtual allocator_ptr allocator() { return alloc; }

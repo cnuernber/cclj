@@ -220,6 +220,7 @@ namespace {
 				current_instance_offset = align_number( current_instance_offset, prop_alignment );
 				property_entry new_entry( def, current_instance_offset, prop_size );
 				property_entries.push_back( new_entry );
+				current_instance_offset += prop_size;
 			} );
 			current_instance_offset = align_number( current_instance_offset, minimum_instance_alignment );
 			if ( current_instance_offset == 0 )

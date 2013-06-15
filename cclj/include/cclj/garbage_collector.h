@@ -117,6 +117,8 @@ namespace cclj
 		void*			 _table;
 	};
 
+	typedef const_data_buffer<gc_object*>  const_gc_object_raw_ptr_buffer;
+
 	//It should be noted that the collector could be copying.  
 	class garbage_collector
 	{
@@ -138,8 +140,10 @@ namespace cclj
 		virtual pair<void*,size_t> lock( gc_object& obj ) = 0;
 		virtual void unlock( gc_object& obj ) = 0;
 		virtual void perform_gc() = 0;
+		//very transient data, useful for unit testing.
+		virtual const_gc_object_raw_ptr_buffer roots_and_locked_objects() = 0;
+		virtual const_gc_object_raw_ptr_buffer all_live_objects() = 0;
 
-		virtual string_table_str array_type() const = 0;
 		virtual string_table_str hash_table_type() const = 0;
 
 		virtual allocator_ptr allocator() = 0;
