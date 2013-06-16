@@ -33,7 +33,8 @@ namespace {
 
 		~tracking_alloc()
 		{
-			assert( outstanding_allocations.empty() );
+			if ( !outstanding_allocations.empty() )
+				throw runtime_error( "allocator detected memory leaks" );
 		}
 
 		virtual void* allocate( size_t size, uint8_t alignment, const char* file, int line )

@@ -185,6 +185,14 @@ namespace cclj
 	public:
 
 		gc_obj_ptr() : _object( nullptr ), _data( nullptr, 0 ) {}
+		
+
+		gc_obj_ptr(garbage_collector_ptr gc )
+			: _gc( gc )
+			, _object( nullptr )
+			, _data( nullptr, 0 )
+		{
+		}
 
 		gc_obj_ptr(garbage_collector_ptr gc, gc_object& obj )
 			: _gc( gc )
@@ -239,15 +247,22 @@ namespace cclj
 		gc_object* object() const { return _object; }
 
 		//resize the data section associated with this gc object.
-		pair<void*,size_t> reallocate(size_t new_size)
+		pair<void*,size_t> reallocate(size_t new_size, const char* file, int line)
 		{
 			if ( _object == nullptr )
 				return pair<void*,size_t>(nullptr,0);
 			
 			_data.first = nullptr;
 			_data.second = 0;
-			_data = _gc->reallocate( *_object, new_size, __FILE__, __LINE__ );
+			_data = _gc->reallocate( *_object, new_size, file, line );
 			return _data;
+		}
+
+		void create( string_table_str type, size_t size_in_bytes, const char* file, int line )
+		{
+			release();
+			_object = &_gc->allocate( type, size_in_bytes, file, line );
+			acquire();
 		}
 	};
 

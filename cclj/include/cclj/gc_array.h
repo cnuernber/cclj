@@ -59,14 +59,12 @@ namespace cclj
 
 		bool operator==( const data_array_iter_base& other ) const
 		{
-			return _count == other._count
-				&& _index == other._index;
+			return _index == other._index;
 		}
 		
 		bool operator!=( const data_array_iter_base& other ) const
 		{
-			return _count == other._count
-				&& _index == other._index;
+			return _index != other._index;
 		}
 
 		bool operator > ( const data_array_iter_base& other ) const
@@ -263,45 +261,40 @@ namespace cclj
 		
 		gc_array_iter operator+( int val )
 		{
-			return gc_array_iter( *this + val, _definition, _instance_size, _array_data );
+			return gc_array_iter( data_array_iter_base::operator+( val ), _definition, _instance_size, _array_data );
 		}
 
 		gc_array_iter operator-( int val )
 		{
-			return gc_array_iter( *this - val, _definition, _instance_size, _array_data );
+			return gc_array_iter( data_array_iter_base::operator-(val), _definition, _instance_size, _array_data );
 		}
 		
 		gc_array_iter operator+( gc_array_iter val )
 		{
-			return gc_array_iter( *this + val, _definition, _instance_size, _array_data );
+			return gc_array_iter( data_array_iter_base::operator+(val), _definition, _instance_size, _array_data );
 		}
 
 		gc_array_iter operator-( gc_array_iter val )
 		{
-			return gc_array_iter( *this - val, _definition, _instance_size, _array_data );
+			return gc_array_iter( data_array_iter_base::operator-(val), _definition, _instance_size, _array_data );
 		}
+
+		gc_array_item_ref operator*() { return item_ref(); }
 	};
 
-	class gc_array_ptr : public gc_obj_ptr
+	class gc_array : public gc_obj_ptr
 	{
-		class_definition_ptr _definition;
-		uint8_t*			 _array_data;
-		uint32_t			 _capacity;
+		class_definition_ptr	_definition;
+		uint8_t*				_array_data;
+		uint32_t				_capacity;
 
 		void acquire()
 		{
 			release();
-			if ( object() )
+			if ( _definition && data().first )
 			{
-				if ( object()->type != gc()->array_type() )
-					throw runtime_error( "array ptr constructed with type not an array" );
 				pair<void*,size_t> data_pair = data();
 				uint8_t* data_ptr = reinterpret_cast<uint8_t*>( data_pair.first );
-
-				_definition = gc()->class_system()->find_definition( object()->type );
-				if ( !_definition )
-					throw runtime_error( "Failed to find class definition for array" );
-				
 				int32_t data_section_length = std::max( (int32_t)0, (int32_t)data_pair.second );
 				if ( data_section_length )
 					_array_data = data_ptr;
@@ -319,34 +312,60 @@ namespace cclj
 		{
 			_array_data = nullptr;
 			_capacity = 0;
-			_definition = class_definition_ptr();
+		}
+		void acquire_definition( string_table_str name )
+		{
+			_definition = gc()->class_system()->find_definition( name );
+			if ( !_definition )
+				throw runtime_error( "Failed to find class definition for array" );
 		}
 	public:
 		
 		typedef gc_array_iter iterator;
 		typedef gc_array_const_iter const_iterator;
-		gc_array_ptr() { release(); }
+		gc_array() { release(); }
 
-		gc_array_ptr( const gc_obj_ptr& ptr )
+		gc_array( const gc_obj_ptr& ptr )
 			: gc_obj_ptr( ptr )
-			, _array_data( nullptr )
 		{
+			release();
+			acquire_definition( ptr.object()->type );
 			acquire();
 		}
 
-		gc_array_ptr( const gc_array_ptr& obj )
-			: gc_obj_ptr( obj )
-			, _array_data( nullptr )
+		
+		gc_array( garbage_collector_ptr gc, string_table_str type )
+			: gc_obj_ptr( gc )
 		{
-			acquire();
+			release();
+			acquire_definition( type );
 		}
 
-		gc_array_ptr& operator=( const gc_array_ptr& obj )
+		gc_array( const gc_array& obj )
+			: gc_obj_ptr( obj.gc() )
+		{
+			release();
+			operator=(obj);
+		}
+
+		gc_array& operator=( const gc_array& obj )
 		{
 			if ( this != &obj )
 			{
-				gc_obj_ptr::operator=( obj );
-				acquire();
+				release();
+				//release existing data and set us up the bomb.
+				gc_obj_ptr::operator=( gc_obj_ptr( gc() ) );
+				_definition = obj._definition;
+				if ( _definition )
+				{
+					//perform copy operation
+					if ( obj )
+					{
+						reserve( obj.size() );
+						memcpy( data().first, obj.data().first, obj.size() * obj.item_size() );
+						object()->count = obj.size();
+					}
+				}
 			}
 			return *this;
 		}
@@ -376,12 +395,12 @@ namespace cclj
 		
 		const_iterator begin() const
 		{
-			return const_cast<gc_array_ptr&>( *this ).begin();
+			return const_cast<gc_array&>( *this ).begin();
 		}
 
 		const_iterator end() const
 		{
-			return const_cast<gc_array_ptr&>( *this ).end();
+			return const_cast<gc_array&>( *this ).end();
 		}
 
 		gc_array_item_ref operator[]( int32_t idx ) 
@@ -394,7 +413,7 @@ namespace cclj
 		
 		gc_array_const_item_ref operator[]( int32_t idx ) const
 		{
-			return const_cast<gc_array_ptr&>( *this ).operator[]( idx );
+			return const_cast<gc_array&>( *this ).operator[]( idx );
 		}
 
 		void reserve( size_t total )
@@ -403,7 +422,10 @@ namespace cclj
 			release();
 			size_t old_size = size();
 			size_t new_instance_size = total * item_size();
-			reallocate( new_instance_size );
+			if ( (*this) )
+				reallocate( new_instance_size, __FILE__, __LINE__  );
+			else
+				create( _definition->name(), new_instance_size, __FILE__, __LINE__ );
 			object()->count = old_size;
 			acquire();
 		}
@@ -430,9 +452,9 @@ namespace cclj
 			if ( move_section_len )
 			{
 				//zero out new memory
-				memset( _where.item_ref()._item_data, 0, move_section_len );
+				memset( (*this)[where_index]._item_data, 0, move_section_len );
 			}
-			return _where;
+			return begin() + where_index;
 		}
 
 		void erase( iterator start, iterator stop )

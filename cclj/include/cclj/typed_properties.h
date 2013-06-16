@@ -10,6 +10,7 @@
 #include "cclj/class_system_predefined_types.h"
 #include "cclj/class_system.h"
 #include "cclj/garbage_collector.h"
+#include "cclj/gc_array.h"
 
 //template magic to make accessing properties as easy as possible.
 namespace cclj
@@ -50,6 +51,12 @@ namespace cclj
 			return dtype_ptr;
 		}
 
+		data_type* data_ptr( gc_array_item_ref ref, uint32_t index )
+		{
+			data_type* dtype_ptr = reinterpret_cast<data_type*>( ref._item_data + entry.offset + index * entry.item_size );
+			return dtype_ptr;
+		}
+
 		//common case of setting the first value.
 		void set( gc_obj_ptr& obj, const data_type& type, uint32_t index = 0 )
 		{
@@ -59,6 +66,21 @@ namespace cclj
 		data_type& get( gc_obj_ptr& obj, uint32_t index = 0 )
 		{
 			return *(data_ptr(obj, index));
+		}
+
+		void set( gc_array_item_ref obj, const data_type& value, uint32_t index = 0 )
+		{
+			*(data_ptr(obj, index)) = value;
+		}
+
+		data_type& get( gc_array_item_ref obj, uint32_t index = 0 )
+		{
+			return *(data_ptr(obj,index));
+		}
+
+		const data_type& get( gc_array_const_item_ref obj, uint32_t index = 0 )
+		{
+			return *(data_ptr(obj,index));
 		}
 	};
 

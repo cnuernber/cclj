@@ -176,6 +176,7 @@ namespace {
 			if ( new_size_in_bytes <= contig_data.second )
 			{
 				retval = pair<void*, size_t>( contig_data.first, new_size_in_bytes );
+				in_object.data_ptr = contig_data.first;
 			}
 			else
 			{
@@ -184,6 +185,7 @@ namespace {
 				auto alloc_info = object_alloc_info( in_object );
 				void* newmem = alloc->allocate( new_size_in_bytes, alloc_info.alignment, file, line );
 				retval = pair<void*,size_t>( newmem, new_size_in_bytes );
+				in_object.data_ptr = newmem;
 			}
 
 			//Here is where copy construction and deletion would happen.
