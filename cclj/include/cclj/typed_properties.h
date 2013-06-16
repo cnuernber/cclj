@@ -44,41 +44,47 @@ namespace cclj
 		{
 		}
 
-		data_type* data_ptr( gc_obj_ptr& obj, uint32_t index = 0 )
+		data_type* data_ptr( gc_obj_ptr& obj, uint32_t index = 0 ) const
 		{
 			uint8_t* obj_data = reinterpret_cast<uint8_t*>( obj.data().first );
 			data_type* dtype_ptr = reinterpret_cast<data_type*>( obj_data + entry.offset + index * entry.item_size );
 			return dtype_ptr;
 		}
 
-		data_type* data_ptr( gc_array_item_ref ref, uint32_t index )
+		data_type* data_ptr( gc_array_item_ref ref, uint32_t index ) const
 		{
 			data_type* dtype_ptr = reinterpret_cast<data_type*>( ref._item_data + entry.offset + index * entry.item_size );
 			return dtype_ptr;
 		}
+		
+		const data_type* data_ptr( gc_array_const_item_ref ref, uint32_t index ) const
+		{
+			const data_type* dtype_ptr = reinterpret_cast<const data_type*>( ref._item_data + entry.offset + index * entry.item_size );
+			return dtype_ptr;
+		}
 
 		//common case of setting the first value.
-		void set( gc_obj_ptr& obj, const data_type& type, uint32_t index = 0 )
+		void set( gc_obj_ptr& obj, const data_type& type, uint32_t index = 0 ) const
 		{
 			*(data_ptr(obj, index)) = type;
 		}
 
-		data_type& get( gc_obj_ptr& obj, uint32_t index = 0 )
+		data_type& get( gc_obj_ptr& obj, uint32_t index = 0 ) const
 		{
 			return *(data_ptr(obj, index));
 		}
 
-		void set( gc_array_item_ref obj, const data_type& value, uint32_t index = 0 )
+		void set( gc_array_item_ref obj, const data_type& value, uint32_t index = 0 ) const
 		{
 			*(data_ptr(obj, index)) = value;
 		}
 
-		data_type& get( gc_array_item_ref obj, uint32_t index = 0 )
+		data_type& get( gc_array_item_ref obj, uint32_t index = 0 ) const
 		{
 			return *(data_ptr(obj,index));
 		}
 
-		const data_type& get( gc_array_const_item_ref obj, uint32_t index = 0 )
+		const data_type& get( gc_array_const_item_ref obj, uint32_t index = 0 ) const
 		{
 			return *(data_ptr(obj,index));
 		}

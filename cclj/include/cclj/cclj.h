@@ -51,6 +51,7 @@ namespace cclj
 	using std::find;
 	using std::find_if;
 	using std::transform;
+	using std::sort;
 
 
 	class garbage_collector;

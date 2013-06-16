@@ -105,6 +105,8 @@ namespace cclj
 
 		data_array_iter_base operator+=(int idx ) { _index += idx; return *this; }
 		data_array_iter_base operator-=(int idx ) { _index -= idx; return *this; }
+		data_array_iter_base operator/=(int idx ) { _index /= idx; return *this; }
+		data_array_iter_base operator*=(int idx ) { _index *= idx; return *this; }
 
 		int32_t index() const { return _index; }
 		uint32_t count() const { return _count; }
@@ -142,7 +144,30 @@ namespace cclj
 			return gc_array_const_item_ref( _instance_size, _item_data, _definition );
 		}
 	};
-	
+
+}
+
+namespace std
+{
+	void swap( cclj::gc_array_item_ref& lhs, cclj::gc_array_item_ref& rhs )
+	{
+		if ( lhs._definition != rhs._definition
+			|| lhs._instance_size != rhs._instance_size )
+			throw runtime_error( "mismatched objects in swap" );
+		if ( ( lhs._instance_size % 4 ) != 0 )
+			throw runtime_error( "instance sizes must be a multiple 4" );
+		uint32_t num_items = lhs._instance_size / 4;
+		uint32_t* lhs_ptr = reinterpret_cast<uint32_t*>( lhs._item_data );
+		uint32_t* rhs_ptr = reinterpret_cast<uint32_t*>( rhs._item_data );
+		for( uint32_t offset = 0; offset < num_items; ++offset )
+		{
+			std::swap( lhs_ptr[offset], rhs_ptr[offset] );
+		}
+	}
+}
+
+namespace cclj
+{
 
 	class gc_array_const_iter : public data_array_iter_base
 	{
@@ -208,6 +233,8 @@ namespace cclj
 		{
 			return gc_array_const_iter( *this - val, _definition, _instance_size, _array_data );
 		}
+
+		gc_array_const_item_ref operator*() { return item_ref(); }
 	};
 
 	class gc_array_iter : public data_array_iter_base
@@ -281,6 +308,15 @@ namespace cclj
 
 		gc_array_item_ref operator*() { return item_ref(); }
 	};
+}
+
+//You would need to use quicksort or know the exact type and use std::sort to sort the array
+//there aren't facilities to generalized sort an array based off of a generic comparator unless
+//its type is known.  c-quicksort requires a stand-alone function so comparators with state are 
+//impossible and std::sort won't work because fundamentally the item the iterator produces (array_ref) can't
+//be a reference or pointer type.
+
+namespace cclj {
 
 	class gc_array : public gc_obj_ptr
 	{
