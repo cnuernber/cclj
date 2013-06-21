@@ -365,8 +365,12 @@ namespace cclj {
 			: gc_obj_ptr( ptr )
 		{
 			release();
-			acquire_definition( ptr.object()->type );
-			acquire();
+			if ( ptr.object() )
+			{
+				gc_array_object& array_obj = gc_object_traits::cast<gc_array_object>( *ptr.object() );
+				_definition = array_obj.type;
+				acquire();
+			}
 		}
 
 		
@@ -384,6 +388,16 @@ namespace cclj {
 			operator=(obj);
 		}
 
+		gc_array_object* array() const
+		{
+			gc_object_base* obj( object() );
+			if ( obj )
+			{
+				return &gc_object_traits::cast<gc_array_object>( *obj );
+			}
+			return nullptr;
+		}
+
 		gc_array& operator=( const gc_array& obj )
 		{
 			if ( this != &obj )
@@ -399,14 +413,14 @@ namespace cclj {
 					{
 						reserve( obj.size() );
 						memcpy( data().first, obj.data().first, obj.size() * obj.item_size() );
-						object()->count = obj.size();
+						array()->count = obj.size();
 					}
 				}
 			}
 			return *this;
 		}
 
-		size_t size() const { if ( !(*this) ) return 0; return object()->count; }
+		size_t size() const { if ( !(*this) ) return 0; return array()->count; }
 		size_t capacity() const { return _capacity; }
 		pair<uint8_t*, size_t> array_data() { return make_pair( _array_data, size() ); }
 		size_t item_size() const { if ( _definition ) return _definition->instance_size(); return 0; }
@@ -461,8 +475,11 @@ namespace cclj {
 			if ( (*this) )
 				reallocate( new_instance_size, __FILE__, __LINE__  );
 			else
-				create( _definition->name(), new_instance_size, __FILE__, __LINE__ );
-			object()->count = old_size;
+			{
+				gc_obj_ptr::operator=( gc_obj_ptr( gc(), gc()->allocate_array( _definition, total, __FILE__, __LINE__ ) ) );
+				acquire();
+			}
+			array()->count = old_size;
 			acquire();
 		}
 
@@ -484,7 +501,7 @@ namespace cclj {
 				uint8_t* dest_ptr = start_ptr + move_section_len;
 				memmove( dest_ptr, start_ptr, move_section_width );
 			}
-			object()->count += num_items;
+			array()->count += num_items;
 			if ( move_section_len )
 			{
 				//zero out new memory
@@ -512,7 +529,7 @@ namespace cclj {
 				memcpy( dest_ptr, start_ptr, move_section_width );
 			}
 			//No need to memset anything to zero because that will happen on insert.
-			object()->count -= num_items;
+			array()->count -= num_items;
 		}
 
 		void resize( size_t new_size )

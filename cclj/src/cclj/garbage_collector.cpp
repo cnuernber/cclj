@@ -120,7 +120,7 @@ namespace {
 		}
 
 		template<typename tobj_type>
-		pair<tobj_type*, uint8_t*> allocate_t( uint32_t num_bytes, uint32_t alignment, const char* file, int line )
+		pair<tobj_type*, uint8_t*> allocate_t( uint32_t num_bytes, uint8_t alignment, class_definition_ptr type, const char* file, int line )
 		{
 			uint32_t obj_size = align_number( sizeof(tobj_type), alignment );
 			uint32_t instance_size = num_bytes;
@@ -135,18 +135,22 @@ namespace {
 			return pair<tobj_type*, uint8_t*>( retval, obj_mem );
 		}
 		
-		virtual gc_object& allocate_object( class_definition& type, const char* file, int line )
+		virtual gc_object& allocate_object( class_definition_ptr type, const char* file, int line )
 		{
-			pair<gc_object*,uint8_t*> retval = allocate_t<gc_object>( type.instance_size(), type.instance_alignment(), file, line );
+			pair<gc_object*,uint8_t*> retval = allocate_t<gc_object>( type->instance_size()
+																		, type->instance_alignment()
+																		, type, file, line );
 			return *retval.first;
 		}
 
-		virtual gc_array_object& allocate_array( class_definition& type, size_t initial_num_items
+		virtual gc_array_object& allocate_array( class_definition_ptr type, size_t initial_num_items
 																		, const char* file, int line )
 		{
-			pair<gc_array_object*,uint8_t*> retval = allocate_t<gc_array_object>( type.instance_size() * initial_num_items
-																				, type.instance_alignment(), file, line );
+			pair<gc_array_object*,uint8_t*> retval = allocate_t<gc_array_object>( type->instance_size() * initial_num_items
+																				, type->instance_alignment()
+																				, type, file, line );
 			retval.first->count = initial_num_items;
+			retval.first->data_ptr = retval.second;
 			return *retval.first;
 		}
 
@@ -196,7 +200,7 @@ namespace {
 			if ( gc_array_object::is_specific_object( in_object ) )
 			{
 				gc_array_object& new_obj = gc_object_traits::cast<gc_array_object>(in_object );
-				new_obj.count = new_size_in_bytes / new_obj.type.instance_size();
+				new_obj.count = new_size_in_bytes / new_obj.type->instance_size();
 			}
 
 			return retval;
@@ -250,7 +254,7 @@ namespace {
 		{
 			if ( !gc_reallocatable_object::is_specific_object( obj ) )
 				return true;
-			gc_reallocatable_object& realloc( gc_object_traits::cast<gc_reallocatable_object&>( obj ) );
+			gc_reallocatable_object& realloc( gc_object_traits::cast<gc_reallocatable_object>( obj ) );
 			auto alloc_info = object_alloc_info( obj );
 			uint32_t obj_size = align_number( (uint32_t)gc_object_traits::obj_size(obj), alloc_info.alignment );
 			uint8_t* memStart = (uint8_t*)&obj;
@@ -276,7 +280,7 @@ namespace {
 			}
 			else
 			{
-				gc_reallocatable_object& realloc( gc_object_traits::cast<gc_reallocatable_object&>( obj ) );
+				gc_reallocatable_object& realloc( gc_object_traits::cast<gc_reallocatable_object>( obj ) );
 				auto alloc_info = alloc->get_alloc_info( realloc.data_ptr );
 				return make_pair( realloc.data_ptr, alloc_info.alloc_size );
 			}
@@ -308,6 +312,27 @@ namespace {
 			}
 		}
 
+		void mark_object_impl( uint8_t* local_obj, class_definition& class_def
+								, gc_object_flag_values::val current_mark
+								, obj_ptr_list& mark_buffer )
+		{
+			auto obj_props = class_def.all_properties();
+			for_each( obj_props.begin(), obj_props.end()
+				, [&] ( const property_entry& entry )
+			{
+				if ( entry.definition.type == _ref_obj_type )
+				{
+					gc_object_base** prop_start_ptr = reinterpret_cast<gc_object_base**>( local_obj + entry.offset );
+					for ( uint32_t idx = 0, end = entry.definition.count; idx < end; ++idx ) 
+					{
+						gc_object_base* mark_obj = prop_start_ptr[idx];
+						if ( mark_obj && mark_obj->flags.has_value( current_mark ) == false )
+							mark_buffer.insert( mark_buffer.end(), mark_obj );
+					}
+				}
+			} );
+		}
+
 		void mark_object( gc_object_base& obj, gc_object_flag_values::val current_mark, obj_ptr_list& mark_buffer )
 		{
 			if ( obj.flags.has_value( current_mark ) )
@@ -315,35 +340,31 @@ namespace {
 
 			obj.flags.set( current_mark, true );
 			obj.flags.set( last_mark, false );
-			gc_object_base* obj_buffer[64];
-			size_t reference_index = 0;
-			if ( obj.type )
+			switch ( obj.flags.object_type() )
 			{
-				class_definition_ptr class_def = cls_system->find_definition( obj.type );
-				if ( !class_def ) throw runtime_error( "failed to find type of item" );
-				//find all the objref or objref_ properties
-				uint8_t* obj_buffer = reinterpret_cast<uint8_t*>( get_object_data(obj).first );
-				uint32_t instance_size = class_def->instance_size();
-
-				for ( uint32_t idx = 0, end = obj.count; idx < end; ++idx )
+			case gc_object_types::object:
 				{
-					uint8_t* local_obj = obj_buffer + idx * instance_size;
-					auto obj_props = class_def->all_properties();
-					for_each( obj_props.begin(), obj_props.end()
-						, [&] ( const property_entry& entry )
-					{
-						if ( entry.definition.type == _ref_obj_type )
-						{
-							gc_object_base** prop_start_ptr = reinterpret_cast<gc_object_base**>( local_obj + entry.offset );
-							for ( uint32_t idx = 0, end = entry.definition.count; idx < end; ++idx ) 
-							{
-								gc_object_base* mark_obj = prop_start_ptr[idx];
-								if ( mark_obj && mark_obj->flags.has_value( current_mark ) == false )
-									mark_buffer.insert( mark_buffer.end(), mark_obj );
-							}
-						}
-					} );
+					gc_object& specific( gc_object_traits::cast<gc_object>( obj ) );
+					class_definition_ptr class_def = specific.type;
+					mark_object_impl( reinterpret_cast<uint8_t*>( get_object_data( specific ).first )
+									, *class_def, current_mark, mark_buffer );
 				}
+				break;
+			case gc_object_types::array_object:
+				{
+					gc_array_object& specific( gc_object_traits::cast<gc_array_object>( obj ) );
+					class_definition_ptr class_def = specific.type;
+					uint8_t* obj_data = reinterpret_cast<uint8_t*>( get_object_data( specific ).first );
+					uint32_t inst_size = class_def->instance_size();
+					for ( uint32_t idx = 0, end = specific.count; idx < end; ++idx )
+					{
+						mark_object_impl( obj_data + inst_size * idx, *class_def
+										, current_mark, mark_buffer );
+					}
+				}
+				break;
+			default:
+				throw runtime_error( "Failed to discern object type in mark_object" );
 			}
 		}
 

@@ -121,7 +121,7 @@ namespace cclj
 	struct typed_property_definition<objref_t>
 	{
 		typedef objref_t data_type;
-		typedef typed_property_entry<gc_object*> property_type;
+		typedef typed_property_entry<gc_object_base*> property_type;
 
 		const char* name;
 		uint32_t	count;

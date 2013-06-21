@@ -22,7 +22,7 @@ garbage_collector_ptr create_gc()
 	auto str_table = string_table::create();
 	auto cls_system = class_system::create( str_table );
 	auto allocator = allocator::create_checking_allocator();
-	auto gc = garbage_collector::create_mark_sweep( allocator, reference_tracker_ptr(), str_table, cls_system ); 
+	auto gc = garbage_collector::create_mark_sweep( allocator, str_table, cls_system ); 
 	auto test_cls_name = str_table->register_str( "simple" );
 	vector<property_definition> prop_defs;
 	prop_defs.push_back( g_value_def.def( str_table ) );
@@ -41,12 +41,12 @@ TEST(garbage_collector_tests, basic_collection)
 	auto cls_system = gc->class_system();
 	auto test_cls_name = str_table->register_str( "simple" );
 	auto cls = cls_system->find_definition( test_cls_name );
-	gc_obj_ptr root_obj( gc, gc->allocate( test_cls_name, cls->instance_size(), __FILE__, __LINE__ ) );
+	gc_obj_ptr root_obj( gc, gc->allocate_object( cls, __FILE__, __LINE__ ) );
 	auto value_prop( g_value_def.to_entry( *cls->find_instance_property( str_table->register_str( "value" ) ) ) );
 	auto next_prop( g_next_def.to_entry( *cls->find_instance_property( str_table->register_str( "next" ) ) ) );
 	value_prop.set( root_obj, 5 );
 	{
-		gc_obj_ptr next_obj( gc, gc->allocate( test_cls_name, cls->instance_size(), __FILE__, __LINE__ ) );
+		gc_obj_ptr next_obj( gc, gc->allocate_object( cls, __FILE__, __LINE__ ) );
 		next_prop.set( root_obj, next_obj.object() );
 		value_prop.set( next_obj, 6 );
 	}

@@ -47,7 +47,7 @@ namespace cclj
 		template<typename data_type, uint8_t offset, uint32_t mask>
 		data_type bitset() const
 		{
-			uint32_t item = (data >> offset) & mask;
+			uint32_t item = (((uint32_t)data) >> offset) & mask;
 			return static_cast<data_type>( item );
 		}
 		
@@ -82,8 +82,8 @@ namespace cclj
 			locked =			1 << 1,
 			mark_left =			1 << 2,
 			mark_right =		1 << 3,
-			object_type_start = 1 << 4,
-			object_type_stop  = 1 << 6,
+			object_type_start = 4,
+			object_type_stop  = 6,
 		};
 	};
 
@@ -134,8 +134,8 @@ namespace cclj
 	class gc_object : public gc_object_base
 	{
 	public:
-		class_definition& type;
-		gc_object( class_definition& def, gc_object_types::val type = gc_object_types::object )
+		class_definition_ptr type;
+		gc_object( class_definition_ptr def, gc_object_types::val type = gc_object_types::object )
 			: gc_object_base( type )
 			, type( def )
 		{
@@ -168,9 +168,9 @@ namespace cclj
 	class gc_array_object : public gc_reallocatable_object
 	{
 	public:
-		class_definition& type;
-		uint32_t	count;
-		gc_array_object( class_definition& def )
+		class_definition_ptr	type;
+		uint32_t				count;
+		gc_array_object( class_definition_ptr def )
 			: gc_reallocatable_object( gc_object_types::array_object )
 			, type( def )
 			, count( 0 )
@@ -186,9 +186,9 @@ namespace cclj
 	class gc_hash_table_object : public gc_reallocatable_object
 	{
 	public:
-		class_definition&	key_type;
-		class_definition&	value_type;
-		gc_hash_table_object( class_definition& _key_type, class_definition& _value_type )
+		class_definition_ptr	key_type;
+		class_definition_ptr	value_type;
+		gc_hash_table_object( class_definition_ptr _key_type, class_definition_ptr _value_type )
 			: gc_reallocatable_object( gc_object_types::hash_table_object )
 			, key_type( _key_type )
 			, value_type( _value_type )
@@ -205,7 +205,7 @@ namespace cclj
 		template<typename obj_type>
 		static obj_type& cast( gc_object_base& base )
 		{
-			if ( obj_type::is_specific_object( base ) ) return static_cast<obj_type&>( base );
+			if ( typename obj_type::is_specific_object( base ) ) return static_cast<obj_type&>( base );
 			throw runtime_error( "bad object cast" );
 		}
 
@@ -235,8 +235,8 @@ namespace cclj
 		friend class shared_ptr<garbage_collector>;
 		
 		//If new_size_in_bytes isn't a multiple of type-instance_size() error is thrown.
-		virtual gc_object& allocate_object( class_definition& type, const char* file, int line ) = 0;
-		virtual gc_array_object& allocate_array( class_definition& type, size_t initial_num_items
+		virtual gc_object& allocate_object( class_definition_ptr type, const char* file, int line ) = 0;
+		virtual gc_array_object& allocate_array( class_definition_ptr type, size_t initial_num_items
 																		, const char* file, int line ) = 0;
 		/*
 		virtual gc_hash_table_object& allocate_hashtable( class_definition& key_type, class_definition& value_type
