@@ -8,7 +8,6 @@
 #ifndef CCLJ_STATE_H
 #define CCLJ_STATE_H
 #include "cclj/cclj.h"
-#include "cclj/language_types.h"
 #include "cclj/garbage_collector.h"
 
 namespace cclj

@@ -17,8 +17,8 @@ namespace cclj {
 
 namespace {
 
-	typedef vector<gc_object_base*> obj_ptr_list;
-	typedef unordered_map<gc_object_base*,uint32_t> obj_ptr_int_map;
+	typedef vector<gc_object*> obj_ptr_list;
+	typedef unordered_map<gc_object*,uint32_t> obj_ptr_int_map;
 
 	class gc_obj_vector_set
 	{
@@ -26,7 +26,7 @@ namespace {
 		obj_ptr_int_map		object_map;
 	public:
 
-		bool insert( gc_object_base* obj )
+		bool insert( gc_object* obj )
 		{
 			pair<obj_ptr_int_map::iterator,bool> insert_item 
 					= object_map.insert( make_pair( obj, (uint32_t)object_list.size() ) );
@@ -35,7 +35,7 @@ namespace {
 			return insert_item.second;
 		}
 
-		bool erase( gc_object_base* obj )
+		bool erase( gc_object* obj )
 		{
 			obj_ptr_int_map::iterator iter = object_map.find( obj );
 			if ( iter != object_map.end() )
@@ -43,7 +43,7 @@ namespace {
 				uint32_t itemIdx = iter->second;
 				object_map.erase( iter );
 				//perform a replace-with-last operation.
-				gc_object_base* end = object_list.back();
+				gc_object* end = object_list.back();
 				if ( end != obj )
 				{
 					object_map[end] = itemIdx;
@@ -55,7 +55,7 @@ namespace {
 			return false;
 		}
 
-		bool contains( gc_object_base* obj )
+		bool contains( gc_object* obj )
 		{
 			return object_map.find(obj) != object_map.end();
 		}
@@ -64,7 +64,7 @@ namespace {
 		obj_ptr_list::iterator end() { return object_list.end(); }
 		void clear() { object_list.clear(); object_map.clear(); }
 
-		const_gc_object_base_raw_ptr_buffer objects() { return const_gc_object_base_raw_ptr_buffer( object_list ); }
+		const_gc_object_raw_ptr_buffer objects() { return const_gc_object_raw_ptr_buffer( object_list ); }
 	};
 	
 	//TODO - 
@@ -88,30 +88,19 @@ namespace {
 		gc_object_flag_values::val			last_mark;
 
 		obj_ptr_list						mark_buffers[2];
-		string_table_ptr					str_table;
-		class_system_ptr					cls_system;
-		string_table_str					_ref_obj_type;
-		string_table_str					_array_type;
-		string_table_str					_hash_table_type;
 		
 			
 
-		gc_mark_sweep_impl( allocator_ptr _alloc, string_table_ptr _str_table
-				, class_system_ptr _cls_system )
+		gc_mark_sweep_impl( allocator_ptr _alloc )
 			: alloc( _alloc )
 			, last_mark( gc_object_flag_values::mark_left )
-			, str_table( _str_table )
-			, cls_system( _cls_system )
-			, _ref_obj_type( str_table->register_str( "objref_t" ) )
-			, _array_type( _str_table->register_str( "gc_array" ) )
-			, _hash_table_type( _str_table->register_str( "gc_hash_table" ) )
 		{
 		}
 
 		~gc_mark_sweep_impl()
 		{
 			for_each (all_objects.begin(), all_objects.end()
-						,  [this](gc_object_base* obj) 
+						,  [this](gc_object* obj) 
 			{ 
 				unchecked_deallocate_object( *obj ); 
 			} );
@@ -119,94 +108,36 @@ namespace {
 			roots.clear();
 		}
 
-		template<typename tobj_type>
-		pair<tobj_type*, uint8_t*> allocate_t( uint32_t num_bytes, uint8_t alignment, class_definition_ptr type, const char* file, int line )
+		virtual gc_object& allocate_object( size_t len, uint8_t alignment
+													, object_constructor constructor
+													, file_info alloc_info )
 		{
-			uint32_t obj_size = align_number( sizeof(tobj_type), alignment );
-			uint32_t instance_size = num_bytes;
-			uint8_t* newmem = (uint8_t*)alloc->allocate( obj_size + instance_size, alignment, file, line );
-			new (newmem) tobj_type(type);
-			uint8_t* obj_mem = newmem + obj_size;
-			tobj_type* retval = reinterpret_cast<tobj_type*>( newmem );
-
-			if ( instance_size ) memset( obj_mem, 0, instance_size );
-
+			uint8_t* object_data  = alloc->allocate( len, alignment, alloc_info );
+			//exception safety
+			scoped_allocation __alloc_scope( alloc, object_data );
+			gc_object* retval = constructor( object_data, len );
+			if ( !retval ) { throw runtime_error( "constructor failure in allocate_object" ); }
+			__alloc_scope.forget();
 			all_objects.push_back( retval );
-			return pair<tobj_type*, uint8_t*>( retval, obj_mem );
+			return *retval;
+		}
+
+		virtual uint8_t* allocate( size_t len, uint8_t alignment, file_info alloc_info )
+		{
+			return alloc->allocate( len, alignment, alloc_info );
 		}
 		
-		virtual gc_object& allocate_object( class_definition_ptr type, const char* file, int line )
+		virtual void deallocate( void* data )
 		{
-			pair<gc_object*,uint8_t*> retval = allocate_t<gc_object>( type->instance_size()
-																		, type->instance_alignment()
-																		, type, file, line );
-			return *retval.first;
+			alloc->deallocate( data );
 		}
 
-		virtual gc_array_object& allocate_array( class_definition_ptr type, size_t initial_num_items
-																		, const char* file, int line )
+		virtual alloc_info get_alloc_info( void* data )
 		{
-			pair<gc_array_object*,uint8_t*> retval = allocate_t<gc_array_object>( type->instance_size() * initial_num_items
-																				, type->instance_alignment()
-																				, type, file, line );
-			retval.first->count = initial_num_items;
-			retval.first->data_ptr = retval.second;
-			return *retval.first;
+			return alloc->get_alloc_info( data );
 		}
 
-		/*
-		virtual gc_hash_table_object& allocate_hashtable( class_definition& key_type, class_definition& value_type
-																					, const char* file, int line )
-		{
-		}
-		*/
-		
-		virtual pair<void*,size_t> reallocate( gc_reallocatable_object& in_object, size_t new_size_in_bytes, const char* file, int line )
-		{
-			if ( !in_object.flags.is_locked() )
-				throw runtime_error( "reallocated called on unlocked object" );
-
-			pair<void*,size_t> existing_size = get_object_data( in_object );
-			if ( existing_size.second == new_size_in_bytes )
-				return existing_size;
-
-			pair<void*,size_t> contig_data = get_contiguous_object_data( in_object );
-			bool was_contiguous = is_object_contiguous( in_object );
-			//favour contiguous data over non-contiguous data.
-			pair<void*,size_t> retval( nullptr, 0 );
-			if ( new_size_in_bytes <= contig_data.second )
-			{
-				retval = pair<void*, size_t>( contig_data.first, new_size_in_bytes );
-				in_object.data_ptr = contig_data.first;
-			}
-			else
-			{
-				//Resize the area to be exactly what is specified if possible.  This allows programs
-				//to release memory when necessary.
-				auto alloc_info = object_alloc_info( in_object );
-				void* newmem = alloc->allocate( new_size_in_bytes, alloc_info.alignment, file, line );
-				retval = pair<void*,size_t>( newmem, new_size_in_bytes );
-				in_object.data_ptr = newmem;
-			}
-
-			//Here is where copy construction and deletion would happen.
-			if ( retval.first != existing_size.first )
-			{
-				memcpy( retval.first, existing_size.first, std::min( existing_size.second, new_size_in_bytes ) );
-				if ( !was_contiguous )
-					alloc->deallocate( existing_size.first );
-			}
-			
-			if ( gc_array_object::is_specific_object( in_object ) )
-			{
-				gc_array_object& new_obj = gc_object_traits::cast<gc_array_object>(in_object );
-				new_obj.count = new_size_in_bytes / new_obj.type->instance_size();
-			}
-
-			return retval;
-		}
-
-		void set_root_or_locked( gc_object_base& object, bool root, bool locked )
+		void set_root_or_locked( gc_object& object, bool root, bool locked )
 		{
 			auto was_root_or_locked = object.flags.is_root() || object.flags.is_locked();
 			auto is_root_or_locked = root || locked;
@@ -224,77 +155,35 @@ namespace {
 			object.flags.set_locked( locked );
 		}
 		
-		virtual void mark_root( gc_object_base& object )
+		virtual void mark_root( gc_object& object )
 		{
 			set_root_or_locked( object, true, object.flags.is_locked() );
 		}
 
-		virtual void unmark_root( gc_object_base& object )
+		virtual void unmark_root( gc_object& object )
 		{
 			set_root_or_locked( object, false, object.flags.is_locked() );
 		}
 
-		virtual bool is_root( gc_object_base& object )
+		virtual bool is_root( gc_object& object )
 		{
 			return object.flags.is_root();
 		}
 
-		virtual void update_reference( gc_object_base& /*parent*/, gc_object_base* /*child*/ )
-		{
-			//write barrier isn't particularly useful right now.
-		}
-
-		alloc_info object_alloc_info( gc_object_base& obj )
+		alloc_info object_alloc_info( gc_object& obj )
 		{
 			uint8_t* memStart = (uint8_t*)&obj;
 			return alloc->get_alloc_info( memStart );
 		}
 
-		bool is_object_contiguous( gc_object_base& obj )
-		{
-			if ( !gc_reallocatable_object::is_specific_object( obj ) )
-				return true;
-			gc_reallocatable_object& realloc( gc_object_traits::cast<gc_reallocatable_object>( obj ) );
-			auto alloc_info = object_alloc_info( obj );
-			uint32_t obj_size = align_number( (uint32_t)gc_object_traits::obj_size(obj), alloc_info.alignment );
-			uint8_t* memStart = (uint8_t*)&obj;
-			return realloc.data_ptr == reinterpret_cast<void*>( memStart + obj_size );
-		}
-
-		pair<void*,size_t> get_contiguous_object_data( gc_object_base& obj )
-		{
-			uint8_t* memStart = (uint8_t*)&obj;
-			auto alloc_info = alloc->get_alloc_info( memStart );
-			uint32_t obj_size = align_number( (uint32_t)gc_object_traits::obj_size(obj), alloc_info.alignment );
-			uint32_t data_size = alloc_info.alloc_size - obj_size;
-			if ( data_size )
-				return make_pair( memStart + obj_size, alloc_info.alloc_size - obj_size );
-			return pair<void*,size_t>( nullptr, 0 );
-		}
-
-		pair<void*,size_t> get_object_data( gc_object_base& obj )
-		{
-			if ( is_object_contiguous(obj) )
-			{
-				return get_contiguous_object_data( obj );
-			}
-			else
-			{
-				gc_reallocatable_object& realloc( gc_object_traits::cast<gc_reallocatable_object>( obj ) );
-				auto alloc_info = alloc->get_alloc_info( realloc.data_ptr );
-				return make_pair( realloc.data_ptr, alloc_info.alloc_size );
-			}
-		}
-
-		virtual pair<void*,size_t> lock( gc_object_base& obj )
+		virtual void lock( gc_object& obj )
 		{
 			pair<obj_ptr_int_map::iterator,bool> inserter = locked_objects.insert( make_pair( &obj, 0 ) );
 			++inserter.first->second;
 			set_root_or_locked( obj, obj.flags.is_root(), true );
-			return get_object_data( obj );
 		}
 
-		virtual void unlock( gc_object_base& obj )
+		virtual void unlock( gc_object& obj )
 		{
 			if ( obj.flags.is_locked() == false )
 				return;
@@ -312,59 +201,30 @@ namespace {
 			}
 		}
 
-		void mark_object_impl( uint8_t* local_obj, class_definition& class_def
-								, gc_object_flag_values::val current_mark
-								, obj_ptr_list& mark_buffer )
-		{
-			auto obj_props = class_def.all_properties();
-			for_each( obj_props.begin(), obj_props.end()
-				, [&] ( const property_entry& entry )
-			{
-				if ( entry.definition.type == _ref_obj_type )
-				{
-					gc_object_base** prop_start_ptr = reinterpret_cast<gc_object_base**>( local_obj + entry.offset );
-					for ( uint32_t idx = 0, end = entry.definition.count; idx < end; ++idx ) 
-					{
-						gc_object_base* mark_obj = prop_start_ptr[idx];
-						if ( mark_obj && mark_obj->flags.has_value( current_mark ) == false )
-							mark_buffer.insert( mark_buffer.end(), mark_obj );
-					}
-				}
-			} );
-		}
-
-		void mark_object( gc_object_base& obj, gc_object_flag_values::val current_mark, obj_ptr_list& mark_buffer )
+		void mark_object( gc_object& obj, gc_object_flag_values::val current_mark, obj_ptr_list& mark_buffer )
 		{
 			if ( obj.flags.has_value( current_mark ) )
 				return;
 
 			obj.flags.set( current_mark, true );
 			obj.flags.set( last_mark, false );
-			switch ( obj.flags.object_type() )
+			gc_object* obj_buffer[64] = {0};
+			uint32_t obj_index = 0;
+			auto alloc_info = obj.get_gc_refdata_alloc_info();
+
+			uint8_t* ref_data = alloc->allocate( alloc_info.alloc_size, alloc_info.alignment, CCLJ_IMMEDIATE_FILE_INFO() );
+			scoped_allocation _ref_scope( alloc, ref_data );
+			obj.initialize_gc_refdata( ref_data );
+			for ( uint32_t num_objects = obj.get_gc_references( obj_buffer, 64, ref_data );
+				num_objects; num_objects = obj.get_gc_references( obj_buffer, 64, ref_data ) )
 			{
-			case gc_object_types::object:
+				obj_index += num_objects;
+				for_each( obj_buffer, obj_buffer + num_objects
+					, [&](gc_object* mark_obj )
 				{
-					gc_object& specific( gc_object_traits::cast<gc_object>( obj ) );
-					class_definition_ptr class_def = specific.type;
-					mark_object_impl( reinterpret_cast<uint8_t*>( get_object_data( specific ).first )
-									, *class_def, current_mark, mark_buffer );
-				}
-				break;
-			case gc_object_types::array_object:
-				{
-					gc_array_object& specific( gc_object_traits::cast<gc_array_object>( obj ) );
-					class_definition_ptr class_def = specific.type;
-					uint8_t* obj_data = reinterpret_cast<uint8_t*>( get_object_data( specific ).first );
-					uint32_t inst_size = class_def->instance_size();
-					for ( uint32_t idx = 0, end = specific.count; idx < end; ++idx )
-					{
-						mark_object_impl( obj_data + inst_size * idx, *class_def
-										, current_mark, mark_buffer );
-					}
-				}
-				break;
-			default:
-				throw runtime_error( "Failed to discern object type in mark_object" );
+					if ( mark_obj->flags.has_value( current_mark ) == false )
+						mark_buffer.push_back( mark_obj );
+				} );
 			}
 		}
 
@@ -374,16 +234,13 @@ namespace {
 			return 1;
 		}
 
-		void unchecked_deallocate_object( gc_object_base& obj )
+		void unchecked_deallocate_object( gc_object& obj )
 		{
-			if ( !is_object_contiguous( obj ) )
-			{
-				alloc->deallocate( get_object_data( obj ).first );
-			}
+			obj.gc_release();
 			alloc->deallocate( &obj );
 		}
 
-		void deallocate_object( gc_object_base& obj ) 
+		void deallocate_object( gc_object& obj ) 
 		{
 			if ( obj.flags.is_root() ||  obj.flags.is_locked() )
 				throw std::runtime_error( "bad object in deallocate_object" );
@@ -407,7 +264,7 @@ namespace {
 				obj_ptr_list& next_buffer( mark_buffers[mark_buffer_index] );
 				next_buffer.clear();
 				for_each( current_buffer.begin(), current_buffer.end()
-							, [&](gc_object_base* obj) { mark_object( *obj, current_mark, next_buffer ); } );
+							, [&](gc_object* obj) { mark_object( *obj, current_mark, next_buffer ); } );
 			}
 
 			last_mark = current_mark;
@@ -416,7 +273,7 @@ namespace {
 			//is truly hard to resist.
 			all_objects_temp.clear();
 			for_each( all_objects.begin(), all_objects.end()
-					, [=]( gc_object_base* obj ) 
+					, [=]( gc_object* obj ) 
 					{ 
 						if ( obj->flags.has_value( current_mark ) )
 							all_objects_temp.push_back( obj );
@@ -427,22 +284,15 @@ namespace {
 			swap( all_objects, all_objects_temp );
 		}
 		
-		virtual const_gc_object_base_raw_ptr_buffer roots_and_locked_objects() { return roots.objects(); }
+		virtual const_gc_object_raw_ptr_buffer roots_and_locked_objects() { return roots.objects(); }
 		
-		virtual const_gc_object_base_raw_ptr_buffer all_live_objects() { return all_objects; }
-		
-		virtual string_table_str hash_table_type() const { return _hash_table_type; }
+		virtual const_gc_object_raw_ptr_buffer all_live_objects() { return all_objects; }
 		
 		virtual allocator_ptr allocator() { return alloc; }
-		virtual string_table_ptr string_table() { return str_table; }
-		virtual class_system_ptr class_system() { return cls_system; }
 	};
 }
 
-shared_ptr<garbage_collector> garbage_collector::create_mark_sweep( 
-	allocator_ptr alloc
-	, string_table_ptr str_table
-	, class_system_ptr cls_system )
+shared_ptr<garbage_collector> garbage_collector::create_mark_sweep( allocator_ptr alloc )
 {
-	return make_shared<gc_mark_sweep_impl>( alloc, str_table, cls_system );
+	return make_shared<gc_mark_sweep_impl>( alloc );
 }

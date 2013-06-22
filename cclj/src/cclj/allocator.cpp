@@ -13,19 +13,10 @@
 using namespace cclj;
 
 namespace {
-	struct file_line_info
-	{
-		string file;
-		int line;
-		file_line_info( const string& f, int l )
-			: file( f ), line( l )
-		{
-		}
-	};
 
 	const char* non_null( const char* ptr ) { if ( !ptr ) return ""; return ptr; }
 
-	typedef unordered_map<void*, file_line_info> ptr_to_info_map;
+	typedef unordered_map<void*, file_info> ptr_to_info_map;
 
 	struct tracking_alloc : public allocator
 	{
@@ -37,7 +28,7 @@ namespace {
 				throw runtime_error( "allocator detected memory leaks" );
 		}
 
-		virtual void* allocate( size_t size, uint8_t alignment, const char* file, int line )
+		virtual uint8_t* allocate( size_t size, uint8_t alignment, file_info location )
 		{
 			if (!size ) return nullptr;
 			size_t newsize = size + sizeof(alloc_info);
@@ -58,8 +49,8 @@ namespace {
 			uint8_t* backdata_ptr = reinterpret_cast<uint8_t*>( backptr_val );
 			uint8_t offset = static_cast<uint8_t>( ptr_val - original_ptr );
 			backdata_ptr[0] = offset;
-			void* retval = reinterpret_cast<void*>( backdata_ptr + 1 );
-			outstanding_allocations.insert( make_pair( retval, file_line_info( non_null( file ), line ) ) );
+			uint8_t* retval = backdata_ptr + 1;
+			outstanding_allocations.insert( make_pair( retval, location ) );
 			return retval;
 		}
 

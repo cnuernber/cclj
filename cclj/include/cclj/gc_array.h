@@ -8,307 +8,8 @@
 #ifndef CCLJ_GC_ARRAY_H
 #define CCLJ_GC_ARRAY_H
 #pragma once
-#include "garbage_collector.h"
-#include "algo_util.h"
-
-namespace cclj
-{
-	
-	
-	class data_array_iter_base
-	{
-		uint32_t	_count;
-		int32_t		_index;
-	public:
-		data_array_iter_base( uint32_t _c = 0, int32_t idx = 0 )
-			: _count( _c )
-			, _index( idx )
-		{
-		}
-		data_array_iter_base( const data_array_iter_base& other )
-			: _count( other._count )
-			, _index( other._index )
-		{
-		}
-		data_array_iter_base& operator=( const data_array_iter_base& other )
-		{
-			_count = other._count;
-			_index = other._index;
-			return *this;
-		}
-
-		data_array_iter_base operator+( int val )
-		{
-			return data_array_iter_base( _count, _index + val );
-		}
-
-		data_array_iter_base operator-( int val )
-		{
-			return data_array_iter_base( _count, _index - val );
-		}
-		
-		data_array_iter_base operator+( data_array_iter_base val )
-		{
-			return data_array_iter_base( _count, _index + val._index );
-		}
-
-		data_array_iter_base operator-( data_array_iter_base val )
-		{
-			return data_array_iter_base( _count, _index - val._index );
-		}
-
-		bool operator==( const data_array_iter_base& other ) const
-		{
-			return _index == other._index;
-		}
-		
-		bool operator!=( const data_array_iter_base& other ) const
-		{
-			return _index != other._index;
-		}
-
-		bool operator > ( const data_array_iter_base& other ) const
-		{
-			return _index > other._index;
-		}
-		
-		bool operator < ( const data_array_iter_base& other ) const
-		{
-			return _index < other._index;
-		}
-
-		bool operator >= ( const data_array_iter_base& other ) const
-		{
-			return _index >= other._index;
-		}
-		
-		bool operator <= ( const data_array_iter_base& other ) const
-		{
-			return _index <= other._index;
-		}
-
-		data_array_iter_base& operator++() { ++_index; return *this; }
-		data_array_iter_base operator++(int) 
-		{ 
-			data_array_iter_base retval (*this );
-			++_index;
-			return retval;
-		}
-		
-		data_array_iter_base& operator--() { --_index; return *this; }
-		data_array_iter_base operator--(int) 
-		{ 
-			data_array_iter_base retval (*this );
-			--_index;
-			return retval;
-		}
-
-		data_array_iter_base operator+=(int idx ) { _index += idx; return *this; }
-		data_array_iter_base operator-=(int idx ) { _index -= idx; return *this; }
-		data_array_iter_base operator/=(int idx ) { _index /= idx; return *this; }
-		data_array_iter_base operator*=(int idx ) { _index *= idx; return *this; }
-
-		int32_t index() const { return _index; }
-		uint32_t count() const { return _count; }
-
-		operator int32_t () const { return _index; }
-	};
-
-	struct gc_array_const_item_ref
-	{
-		class_definition*		_definition;
-		uint32_t				_instance_size;
-		const uint8_t*			_item_data;
-		gc_array_const_item_ref( uint32_t is = 0, const uint8_t* id = nullptr, class_definition* cls_def = nullptr )
-			: _instance_size( is )
-			, _item_data( id )
-			, _definition( cls_def )
-		{
-		}
-	};
-
-	struct gc_array_item_ref
-	{
-		class_definition*		_definition;
-		uint32_t				_instance_size;
-		uint8_t*				_item_data;
-		gc_array_item_ref( uint32_t is = 0, uint8_t* id = nullptr, class_definition* cls_def = nullptr )
-			: _instance_size( is )
-			, _item_data( id )
-			, _definition( cls_def )
-		{
-		}
-
-		operator gc_array_const_item_ref () const
-		{
-			return gc_array_const_item_ref( _instance_size, _item_data, _definition );
-		}
-	};
-
-}
-
-namespace std
-{
-	void swap( cclj::gc_array_item_ref& lhs, cclj::gc_array_item_ref& rhs )
-	{
-		if ( lhs._definition != rhs._definition
-			|| lhs._instance_size != rhs._instance_size )
-			throw runtime_error( "mismatched objects in swap" );
-		if ( ( lhs._instance_size % 4 ) != 0 )
-			throw runtime_error( "instance sizes must be a multiple 4" );
-		uint32_t num_items = lhs._instance_size / 4;
-		uint32_t* lhs_ptr = reinterpret_cast<uint32_t*>( lhs._item_data );
-		uint32_t* rhs_ptr = reinterpret_cast<uint32_t*>( rhs._item_data );
-		for( uint32_t offset = 0; offset < num_items; ++offset )
-		{
-			std::swap( lhs_ptr[offset], rhs_ptr[offset] );
-		}
-	}
-}
-
-namespace cclj
-{
-
-	class gc_array_const_iter : public data_array_iter_base
-	{
-		class_definition*		_definition;
-		uint32_t				_instance_size;
-		const uint8_t*			_array_data;
-	public:
-
-		gc_array_const_iter() : data_array_iter_base(), _definition( nullptr ), _instance_size( 0 ), _array_data( 0 ) {}
-		gc_array_const_iter( const data_array_iter_base& iter_base, class_definition* def
-								, uint32_t is, const uint8_t* data )
-			: data_array_iter_base( iter_base )
-			, _definition( def )
-			, _instance_size( is )
-			, _array_data( data )
-		{
-		}
-		gc_array_const_iter( const gc_array_const_iter& other )
-			: data_array_iter_base( other )
-			, _definition( other._definition )
-			, _instance_size( other._instance_size )
-			, _array_data( other._array_data )
-		{
-		}
-		
-		gc_array_const_iter& operator=( const gc_array_const_iter& other )
-		{
-			if ( this != &other )
-			{
-				data_array_iter_base::operator=( other );
-				_definition = other._definition;
-				_instance_size = other._instance_size;
-				_array_data = other._array_data;
-			}
-			return *this;
-		}
-
-		gc_array_const_item_ref item_ref()
-		{
-			if ( index() >= (int32_t)count() 
-				|| index() < 0 )
-				throw runtime_error( "out of bounds array access" );
-			int32_t off = index() * (int32_t)_instance_size;
-			return gc_array_const_item_ref( _instance_size, _array_data + off, _definition );
-		}
-		
-		gc_array_const_iter operator+( int val )
-		{
-			return gc_array_const_iter( *this + val, _definition, _instance_size, _array_data );
-		}
-
-		gc_array_const_iter operator-( int val )
-		{
-			return gc_array_const_iter( *this - val, _definition, _instance_size, _array_data );
-		}
-		
-		gc_array_const_iter operator+( gc_array_const_iter val )
-		{
-			return gc_array_const_iter( *this + val, _definition, _instance_size, _array_data );
-		}
-
-		gc_array_const_iter operator-( gc_array_const_iter val )
-		{
-			return gc_array_const_iter( *this - val, _definition, _instance_size, _array_data );
-		}
-
-		gc_array_const_item_ref operator*() { return item_ref(); }
-	};
-
-	class gc_array_iter : public data_array_iter_base
-	{
-		class_definition*		_definition;
-		uint32_t				_instance_size;
-		uint8_t*				_array_data;
-	public:
-
-		gc_array_iter() : data_array_iter_base(), _definition( nullptr ), _instance_size( 0 ), _array_data( 0 ) {}
-		gc_array_iter( const data_array_iter_base& iter_base, class_definition* def, uint32_t is, uint8_t* data )
-			: data_array_iter_base( iter_base )
-			, _definition( def )
-			, _instance_size( is )
-			, _array_data( data )
-		{
-		}
-		gc_array_iter( const gc_array_iter& other )
-			: data_array_iter_base( other )
-			, _definition( other._definition )
-			, _instance_size( other._instance_size )
-			, _array_data( other._array_data )
-		{
-		}
-		
-		gc_array_iter& operator=( const gc_array_iter& other )
-		{
-			if ( this != &other )
-			{
-				data_array_iter_base::operator=( other );
-				_definition = other._definition;
-				_instance_size = other._instance_size;
-				_array_data = other._array_data;
-			}
-			return *this;
-		}
-
-		gc_array_item_ref item_ref()
-		{
-			if ( index() >= (int32_t)count() 
-				|| index() < 0 )
-				throw runtime_error( "out of bounds array access" );
-			int32_t off = index() * (int32_t)_instance_size;
-			return gc_array_item_ref( _instance_size, _array_data + off, _definition );
-		}
-
-		operator gc_array_const_iter () const
-		{
-			return gc_array_const_iter( *this, _definition, _instance_size, _array_data );
-		}
-		
-		gc_array_iter operator+( int val )
-		{
-			return gc_array_iter( data_array_iter_base::operator+( val ), _definition, _instance_size, _array_data );
-		}
-
-		gc_array_iter operator-( int val )
-		{
-			return gc_array_iter( data_array_iter_base::operator-(val), _definition, _instance_size, _array_data );
-		}
-		
-		gc_array_iter operator+( gc_array_iter val )
-		{
-			return gc_array_iter( data_array_iter_base::operator+(val), _definition, _instance_size, _array_data );
-		}
-
-		gc_array_iter operator-( gc_array_iter val )
-		{
-			return gc_array_iter( data_array_iter_base::operator-(val), _definition, _instance_size, _array_data );
-		}
-
-		gc_array_item_ref operator*() { return item_ref(); }
-	};
-}
+#include "cclj/garbage_collector.h"
+#include "cclj/algo_util.h"
 
 //You would need to use quicksort or know the exact type and use std::sort to sort the array
 //there aren't facilities to generalized sort an array based off of a generic comparator unless
@@ -318,129 +19,196 @@ namespace cclj
 
 namespace cclj {
 
-	class gc_array : public gc_obj_ptr
+	template<typename obj_type>
+	class default_object_traits
 	{
-		class_definition_ptr	_definition;
-		uint8_t*				_array_data;
-		uint32_t				_capacity;
-
-		void acquire()
+		static void default_construct( obj_type* start, obj_type* end )
 		{
-			release();
-			if ( _definition && data().first )
+			for_each( start, end, []( obj_type& item ) { new (&item)obj_type(); } );
+		}
+
+		static void copy_construct( obj_type* start, obj_type* end, const obj_type& init )
+		{
+			for_each( start, end, []( obj_type& item ) { new (&item)obj_type(init); } );
+		}
+
+		static void copy_construct( obj_type* dst_start, obj_type* dst_end
+									, const obj_type* src_start )
+		{
+			for ( const obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
 			{
-				pair<void*,size_t> data_pair = data();
-				uint8_t* data_ptr = reinterpret_cast<uint8_t*>( data_pair.first );
-				int32_t data_section_length = std::max( (int32_t)0, (int32_t)data_pair.second );
-				if ( data_section_length )
-					_array_data = data_ptr;
-				else
-					_array_data = nullptr;
-				
-				//check that the array members line up with the data size.
-				_capacity = data_section_length / _definition->instance_size();
-				uint32_t leftover = (uint32_t)data_section_length % _definition->instance_size();
-				if ( leftover )
-					throw runtime_error( "leftover data area instance size mismatch" );
+				new (iter) obj_type( *src_start );
 			}
 		}
-		void release()
+
+		static void destruct( obj_type* start, obj_type* end )
 		{
-			_array_data = nullptr;
-			_capacity = 0;
+			for_each( start, end, 
+				[]( obj_type& item )
+			{
+				item.~obj_type();
+			} );
 		}
-		void acquire_definition( string_table_str name )
+		
+		void assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
 		{
-			_definition = gc()->class_system()->find_definition( name );
-			if ( !_definition )
-				throw runtime_error( "Failed to find class definition for array" );
+			for ( const obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
+			{
+				*iter =  *src_start;
+			}
 		}
+
+		//src_start > dst_start;
+		static void greater_overlap_assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
+		{
+			//Note that src,end dst,dst_end could be overlapping.
+			//Also not that dst is expected to be initialized in this case
+			size_t num_items = dst_end - dst_start;
+			for ( const obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
+			{
+				size_t idx = iter - dst_start;
+				size_t ridx = num_items - idx - 1;
+				//Assign in reverse to keep src from being overwritten.
+				*(dst_start+ridx) = *(src_start + ridx);
+			}
+		}
+	};
+
+	template<typename obj_type>
+	class gc_static_traits
+	{
 	public:
-		
-		typedef gc_array_iter iterator;
-		typedef gc_array_const_iter const_iterator;
-		gc_array() { release(); }
-
-		gc_array( const gc_obj_ptr& ptr )
-			: gc_obj_ptr( ptr )
+		static uint32_t object_reference_count() { return 0; }
+		static gc_object* next_object_reference( obj_type& /*obj_type*/, uint32_t /*idx*/ )
 		{
-			release();
-			if ( ptr.object() )
-			{
-				gc_array_object& array_obj = gc_object_traits::cast<gc_array_object>( *ptr.object() );
-				_definition = array_obj.type;
-				acquire();
-			}
-		}
-
-		
-		gc_array( garbage_collector_ptr gc, string_table_str type )
-			: gc_obj_ptr( gc )
-		{
-			release();
-			acquire_definition( type );
-		}
-
-		gc_array( const gc_array& obj )
-			: gc_obj_ptr( obj.gc() )
-		{
-			release();
-			operator=(obj);
-		}
-
-		gc_array_object* array() const
-		{
-			gc_object_base* obj( object() );
-			if ( obj )
-			{
-				return &gc_object_traits::cast<gc_array_object>( *obj );
-			}
 			return nullptr;
 		}
+	};
 
-		gc_array& operator=( const gc_array& obj )
+	template<typename obj_type>
+	class gc_array_traits : public default_object_traits<obj_type>, public gc_static_traits<obj_type>
+	{
+	public:
+	};
+
+
+	template<typename obj_type, uint8_t alignment = 4>
+	class gc_array : public gc_object
+	{
+	public:
+		
+		typedef obj_type* iterator;
+		typedef const obj_type* const_iterator;
+		typedef gc_array<obj_type> this_type;
+		typedef gc_scoped_lock<this_type> this_ptr_type;
+		typedef gc_array_traits<obj_type> traits_type;
+
+	private:
+		garbage_collector_ptr	_gc;
+		file_info				_file_info;
+		obj_type*				_data;
+		obj_type*				_data_end;
+		obj_type*				_data_capacity;
+
+		void initialize( garbage_collector_ptr gc )
+		{
+			_gc = gc;
+			_data			= nullptr;
+			_data_end		= nullptr;
+			_data_capacity	= nullptr;
+		}
+
+	public:
+		
+		typedef obj_type* iterator;
+		typedef const obj_type* const_iterator;
+		typedef gc_array<obj_type> this_type;
+		typedef gc_scoped_lock<this_type> this_ptr_type;
+		typedef gc_array_traits<obj_type> traits_type;
+
+		static object_constructor create_constructor(garbage_collector_ptr gc, file_info location)
+		{
+			return [=]( uint8_t* mem, size_t len )
+			{
+				this_type* data = new (mem) this_type(gc, location);
+				return *data;
+			}
+		}
+
+		static this_ptr_type create( garbage_collector_ptr gc, file_info location )
+		{
+			return this_ptr_type( gc, gc->allocate_object( sizeof( this_type )
+									, alignment, create_constructor( gc )
+									, location ) );
+		}
+
+
+		gc_array(file_info = CCLJ_IMMEDIATE_FILE_INFO() )
+		: _file_info( file_info )
+		{ initialize(garbage_collector_ptr()); }
+
+		gc_array( garbage_collector_ptr gc, file_info = CCLJ_IMMEDIATE_FILE_INFO() )
+			: _file_info( file_info )
+		{
+			initialize( gc );
+		}
+
+		
+
+		gc_array( const this_type& obj )
+		{
+			initialize( obj._gc );
+			_file_info = obj._file_info;
+			size_t num_items = obj.size();
+			if ( num_items )
+			{
+				reserve( num_items );
+				_data_end = _data_capacity;
+				traits_type::copy_construct( obj._data, obj._data_end, _data );
+			}
+		}
+
+		gc_array& operator=( const this_type& obj )
 		{
 			if ( this != &obj )
 			{
-				release();
-				//release existing data and set us up the bomb.
-				gc_obj_ptr::operator=( gc_obj_ptr( gc() ) );
-				_definition = obj._definition;
-				if ( _definition )
+				if ( _gc != obj._gc )
 				{
-					//perform copy operation
-					if ( obj )
-					{
-						reserve( obj.size() );
-						memcpy( data().first, obj.data().first, obj.size() * obj.item_size() );
-						array()->count = obj.size();
-					}
+					if ( _gc ) throw runtime_error( "failed to handle gc issues" );
+					_gc = obj._gc;
 				}
+
+				size_t num_items = obj.size();
+				resize( obj.size() );
+				if ( num_items )
+					traits_type::assign( obj._data, obj._data_end, _data );
 			}
 			return *this;
 		}
 
-		size_t size() const { if ( !(*this) ) return 0; return array()->count; }
-		size_t capacity() const { return _capacity; }
-		pair<uint8_t*, size_t> array_data() { return make_pair( _array_data, size() ); }
-		size_t item_size() const { if ( _definition ) return _definition->instance_size(); return 0; }
-		bool empty() const { return !_definition; }
+		virtual ~gc_array()
+		{
+			if ( _data )
+				_gc->deallocate( _data );
+			_data = nullptr;
+			_data_end = nullptr;
+			_data_capacity = nullptr;
+			_gc = garbage_collector_ptr();
+		}
+
+		size_t size() const { return _data_end - _data; }
+		size_t capacity() const { return _data_capacity - _data; }
+		bool empty() const { return _data_end == _data; }
+		obj_type* data() { return _data; }
+		const obj_type* data() const { return _data; }
 
 		iterator begin() 
 		{
-			class_definition* def = nullptr;
-			if ( _definition )
-				def = _definition.get();
-
-			return iterator( data_array_iter_base( (uint32_t)size(), 0 ), def, item_size(), _array_data );
+			return _data;
 		}
 		iterator end() 
 		{
-			class_definition* def = nullptr;
-			if ( _definition )
-				def = _definition.get();
-
-			return iterator( data_array_iter_base( (uint32_t)size(), (int32_t)size() ), def, item_size(), _array_data );
+			return _data_end;
 		}
 		
 		const_iterator begin() const
@@ -453,15 +221,14 @@ namespace cclj {
 			return const_cast<gc_array&>( *this ).end();
 		}
 
-		gc_array_item_ref operator[]( int32_t idx ) 
+		obj_type& operator[]( int32_t idx ) 
 		{ 
 			if ( idx >= (int32_t)size() )
 				throw runtime_error( "array access out of bounds" );
-			int32_t off = idx * (int32_t)item_size();
-			return gc_array_item_ref( (uint32_t)item_size(), _array_data + off, _definition.get() );
+			return _data[idx];
 		}
 		
-		gc_array_const_item_ref operator[]( int32_t idx ) const
+		const obj_type& operator[]( int32_t idx ) const
 		{
 			return const_cast<gc_array&>( *this ).operator[]( idx );
 		}
@@ -469,45 +236,73 @@ namespace cclj {
 		void reserve( size_t total )
 		{
 			if ( total <= capacity() ) return;
-			release();
+			
+			size_t item_size = align_number( sizeof( obj_type ), alignment );
+			_data* new_data = _gc->allocate( item_size, alignment, _file_info );
 			size_t old_size = size();
-			size_t new_instance_size = total * item_size();
-			if ( (*this) )
-				reallocate( new_instance_size, __FILE__, __LINE__  );
-			else
+			if ( old_size )
 			{
-				gc_obj_ptr::operator=( gc_obj_ptr( gc(), gc()->allocate_array( _definition, total, __FILE__, __LINE__ ) ) );
-				acquire();
+				traits_type::copy_construct( new_data, new_data + old_size, _data );
+				traits_type::destruct( new_data, new_data + old_size );
 			}
-			array()->count = old_size;
-			acquire();
+
+			if ( _data )
+				_gc->deallocate( _data );
+
+			_data = new_data;
+			_data_end = new_data + old_size;
+			_data_capacity = new_data + total;
 		}
 
-		iterator insert( iterator _where, size_t num_items )
+		iterator insert_uninitialized( iterator _where, size_t num_items )
 		{
-			uint32_t the_item_size = item_size();
-			size_t new_size = size() + num_items;
-			int32_t where_index = _where.index();
-			if ( new_size > capacity() )
-				reserve( new_size * 2 );
-			_where = begin();
-			_where += where_index;
-			//move the data in the array forward from iter to when end was
-			int32_t move_section_width = (end() - _where).index() * the_item_size;
-			int32_t move_section_len = num_items * the_item_size;
-			if ( move_section_width )
+			bool at_end _where === end();
+			if ( num_items == 0 )
+				return;
+			size_t offset = _where - begin();
+			reserve( size() + num_items );
+			_where = begin() + offset;
+			iterator old_end = end();
+			iterator end_insert = _where + num_items;
+
+			_data_end += num_items;
+			//move items to create a hole
+
+			if (!at_end)
 			{
-				uint8_t* start_ptr = _where.item_ref()._item_data;
-				uint8_t* dest_ptr = start_ptr + move_section_len;
-				memmove( dest_ptr, start_ptr, move_section_width );
+				traits_type::greater_overlap_assign( _where, old_end, end_insert );
+				traits_type::destruct( _where, std::min( end_insert, old_end ) );
 			}
-			array()->count += num_items;
-			if ( move_section_len )
-			{
-				//zero out new memory
-				memset( (*this)[where_index]._item_data, 0, move_section_len );
-			}
-			return begin() + where_index;
+
+			return _where;
+		}
+
+		void insert( iterator _where, const_iterator start_item, const_iterator end_item )
+		{
+			size_t num_items = end_item - start_item;
+			_where = insert_uninitialized( _where, num_items );
+			iterator end_insert = _where + num_items;
+			//now fill the hole
+			traits_type::copy_construct( _where, end_insert, start_item );
+		}
+		
+		//insert using default initializer
+		void insert( iterator _where, size_t num_items )
+		{
+			_where = insert_uninitialized( _where, num_items );
+			iterator end_insert = _where + num_items;
+			//now fill the hole
+			traits_type::default_construct( _where, end_insert );
+		}
+
+		
+		//insert using default initializer
+		void insert( iterator _where, size_t num_items, const obj_type& initializer )
+		{
+			_where = insert_uninitialized( _where, num_items );
+			iterator end_insert = _where + num_items;
+			//now fill the hole
+			traits_type::copy_construct( _where, end_insert, initializer );
 		}
 
 		void erase( iterator start, iterator stop )
@@ -520,16 +315,12 @@ namespace cclj {
 				return;
 
 			int32_t num_items = stop - start;
-			uint32_t the_item_size = item_size();
-			int32_t move_section_width = (end() - stop).index() * the_item_size;
-			if ( move_section_width )
+			if ( num_items )
 			{
-				uint8_t* start_ptr = stop.item_ref()._item_data;
-				uint8_t* dest_ptr = start.item_ref()._item_data;
-				memcpy( dest_ptr, start_ptr, move_section_width );
+				traits_type::destruct( start, stop );
+				traits_type::copy_construct( start, stop, stop );
 			}
-			//No need to memset anything to zero because that will happen on insert.
-			array()->count -= num_items;
+			_data_end -= num_items;
 		}
 
 		void resize( size_t new_size )
@@ -541,6 +332,50 @@ namespace cclj {
 			else if ( new_size < size() )
 			{
 				erase( begin() + (int)new_size, end() );
+			}
+		}
+
+		struct gc_array_ref_data_type
+		{
+			typename gc_array<obj_type>::iterator	_ref_iter;
+			int32_t									_ref_index;
+			gc_array_ref_data_type( typename gc_array<obj_type>::iterator iter )
+				: _ref_iter( iter )
+				, _ref_index( 0 )
+			{
+			}
+		};
+
+		typedef gc_array_ref_data_type gc_array_ref_data;
+		
+		virtual size_t get_gc_refdata_size() { return sizeof( gc_array_ref_data ); }
+		virtual void initialize_gc_refdata( uint8_t* data )
+		{
+			new (data) gc_array_ref_data( begin() );
+		}
+
+		//gc integration
+		virtual uint32_t get_gc_references( gc_object** buffer, uint32_t bufsize, uint8_t* refdata )
+		{
+			gc_array_ref_data& ref_data = *reinterpret_cast<gc_array_ref_data*>( refdata );
+
+			iterator end_iter = end();
+
+			uint32_t retval = 0;
+			uint32_t num_refs = traits_type::object_reference_count();
+			gc_object** buffer_end = buffer + bufsize;
+			for ( ; ref_data._ref_iter != end_iter && buffer != buffer_end; ++ref_data._ref_iter )
+			{
+				for( ; ref_data._ref_index != num_refs && buffer != buffer_end; ++ref_data._ref_index )
+				{
+					auto next_ref = traits_type::next_object_reference( *ref_data._ref_iter, ref_data._ref_index );
+					if ( next_ref )
+					{
+						*buffer = next_ref;
+						++buffer;
+					}
+				}
+				ref_data._ref_index = 0;
 			}
 		}
 	};
