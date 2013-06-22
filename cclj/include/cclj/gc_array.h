@@ -366,7 +366,7 @@ namespace cclj {
 			gc_object** buffer_end = buffer + bufsize;
 			for ( ; ref_data._ref_iter != end_iter && buffer != buffer_end; ++ref_data._ref_iter )
 			{
-				for( ; ref_data._ref_index != num_refs && buffer != buffer_end; ++ref_data._ref_index )
+				for( ; ref_data._ref_index < num_refs && buffer != buffer_end; ++ref_data._ref_index )
 				{
 					auto next_ref = traits_type::next_object_reference( *ref_data._ref_iter, ref_data._ref_index );
 					if ( next_ref )
@@ -376,6 +376,9 @@ namespace cclj {
 					}
 				}
 				ref_data._ref_index = 0;
+				//have to break here so we don't increment ref_iter in this case before the boolean check.
+				if ( buffer == buffer_end )
+					break;
 			}
 		}
 	};
