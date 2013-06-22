@@ -6,49 +6,103 @@
 //	license are located under the top cclj directory
 //==============================================================================
 #include "precompile.h"
-#include "cclj/string_table.h"
 #include "cclj/garbage_collector.h"
 #include "cclj/allocator.h"
-#include "cclj/typed_properties.h"
 #include "cclj/gc_array.h"
 
 using namespace cclj;
 
-typed_property_definition<uint32_t> g_value_def( "value" );
-typed_property_definition<objref_t> g_next_def( "next" );
+struct simple_struct
+{
+	float			value;
+	gc_object*		next;
+	simple_struct() : value( 0 ), next( nullptr ) {}
+};
+
+
+namespace cclj
+{
+	template<>
+	class gc_static_traits<simple_struct>
+	{
+	public:
+		
+		static uint32_t object_reference_count() { return 1; }
+		static gc_object* next_object_reference( simple_struct& obj_type, uint32_t /*idx*/ )
+		{
+			return obj_type.next;
+		}
+	};
+
+	template<>
+	class gc_array_traits<simple_struct> 
+		: public default_pod_traits<simple_struct>
+		, public gc_static_traits<simple_struct>
+	{
+	public:
+		enum
+		{
+			alignment = sizeof(void*),
+		};
+	};
+};
+
+
+struct simple_struct_obj : public gc_object
+{
+	float					value;
+	simple_struct_obj*		next;
+	simple_struct_obj() : value( 0 ), next( nullptr ) {}
+	virtual alloc_info get_gc_refdata_alloc_info() { return alloc_info(); }
+	virtual void initialize_gc_refdata( uint8_t* /*data*/ ) {}
+	//Return the objects referenced my this gc object.  May be called several times in succession.
+	//Index will always be linearly incrementing or zero.
+	virtual uint32_t get_gc_references( gc_object** buffer, uint32_t /*bufsize*/, uint32_t obj_index, uint8_t* /*refdata*/ )
+	{
+		if ( obj_index == 0 && next)
+		{
+			buffer[0] = next;
+			return 1;
+		}
+		return 0;
+	}
+	static object_constructor create_constructor()
+	{
+		return []( uint8_t* mem, size_t ) { 
+			simple_struct_obj* retval = new (mem)simple_struct_obj();
+			return retval;
+		};
+	}
+};
+
 
 garbage_collector_ptr create_gc()
 {
-	auto str_table = string_table::create();
-	auto cls_system = class_system::create( str_table );
 	auto allocator = allocator::create_checking_allocator();
-	auto gc = garbage_collector::create_mark_sweep( allocator, str_table, cls_system ); 
-	auto test_cls_name = str_table->register_str( "simple" );
-	vector<property_definition> prop_defs;
-	prop_defs.push_back( g_value_def.def( str_table ) );
-	prop_defs.push_back( g_next_def.def( str_table ) );
-	auto cls = cls_system->create_definition( 
-		test_cls_name
-		, class_definition_ptr_const_buffer()
-		, prop_defs );
+	auto gc = garbage_collector::create_mark_sweep( allocator ); 
 	return gc;
 }
 
 TEST(garbage_collector_tests, basic_collection) 
 {
 	auto gc = create_gc();
-	auto str_table = gc->string_table();
-	auto cls_system = gc->class_system();
-	auto test_cls_name = str_table->register_str( "simple" );
-	auto cls = cls_system->find_definition( test_cls_name );
-	gc_obj_ptr root_obj( gc, gc->allocate_object( cls, __FILE__, __LINE__ ) );
-	auto value_prop( g_value_def.to_entry( *cls->find_instance_property( str_table->register_str( "value" ) ) ) );
-	auto next_prop( g_next_def.to_entry( *cls->find_instance_property( str_table->register_str( "next" ) ) ) );
-	value_prop.set( root_obj, 5 );
+
+	simple_struct_obj& root = static_cast<simple_struct_obj&>( 
+		gc->allocate_object( sizeof( simple_struct_obj )
+		, 8
+		, simple_struct_obj::create_constructor()
+		, CCLJ_IMMEDIATE_FILE_INFO() ) );
+	
+	gc->mark_root( root );
+	root.value = 5.0f;
 	{
-		gc_obj_ptr next_obj( gc, gc->allocate_object( cls, __FILE__, __LINE__ ) );
-		next_prop.set( root_obj, next_obj.object() );
-		value_prop.set( next_obj, 6 );
+		simple_struct_obj& next = static_cast<simple_struct_obj&>( 
+		gc->allocate_object( sizeof( simple_struct_obj )
+		, 8
+		, simple_struct_obj::create_constructor()
+		, CCLJ_IMMEDIATE_FILE_INFO() ) );
+		next.value = 6;
+		root.next = &next;
 	}
 
 	gc->perform_gc();
@@ -59,85 +113,84 @@ TEST(garbage_collector_tests, basic_collection)
 	all_objects = gc->all_live_objects();
 	ASSERT_EQ( all_objects.size(), (size_t)2 );
 
-
-	next_prop.set( root_obj, nullptr );
+	root.next = nullptr;
 	//Ensure the gc can follow pointers and correctly handles class types.
 	gc->perform_gc();
 	all_objects = gc->all_live_objects();
 	ASSERT_EQ( all_objects.size(), 1 );
 	{
-		gc_obj_ptr test_ptr( gc, *all_objects[0] );
-		uint32_t test_value = value_prop.get( test_ptr );
-		ASSERT_EQ( (uint32_t)5, test_value );
+		simple_struct_obj* test_ptr( static_cast<simple_struct_obj*>( all_objects[0] ) );
+		ASSERT_EQ( (uint32_t)5, test_ptr->value );
 	}
 }
+
 
 TEST(garbage_collector_tests, basic_dynamic_array)
 {
 	auto gc = create_gc();
-	auto str_table = gc->string_table();
-	auto cls_system = gc->class_system();
-	auto test_cls_name = str_table->register_str( "simple" );
-	auto cls = cls_system->find_definition( test_cls_name );
-	auto value_prop( g_value_def.to_entry( *cls->find_instance_property( str_table->register_str( "value" ) ) ) );
-	auto next_prop( g_next_def.to_entry( *cls->find_instance_property( str_table->register_str( "next" ) ) ) );
+	typedef gc_array<simple_struct>  simple_struct_array;
+	typedef gc_scoped_lock<simple_struct_array> simple_struct_array_ptr;
 
-	gc_array test_array( gc, test_cls_name );
-	test_array.insert( test_array.end(), 5 );
-	ASSERT_EQ( test_array.size(), 5 );
+	simple_struct_array_ptr test_array( simple_struct_array::create( gc, CCLJ_IMMEDIATE_FILE_INFO() ) );
+	
+
+	test_array->insert( test_array->end(), 5 );
+
+	ASSERT_EQ( test_array->size(), 5 );
 
 	uint32_t index = 0;
-	for ( auto iter = test_array.begin(), end = test_array.end(); iter != end; ++iter, ++index )
+	for ( auto iter = test_array->begin(), end = test_array->end(); iter != end; ++iter, ++index )
 	{
-		ASSERT_EQ( value_prop.get( *iter ), 0 );
-		value_prop.set( *iter, index );
+		ASSERT_EQ( iter->value, 0 );
+		iter->value = (float)index;
 	}
 
 	{
-		gc_array temp_array( test_array );
+		simple_struct_array_ptr temp_array( simple_struct_array::create( gc, CCLJ_IMMEDIATE_FILE_INFO() ) );
+		*temp_array = *test_array;
 		index = 0;
-		for ( auto iter = temp_array.begin()
-			, end = temp_array.end()
-			, second_iter = test_array.begin(); iter != end; ++iter, ++index, ++second_iter )
+		for ( auto iter = temp_array->begin()
+			, end = temp_array->end()
+			, second_iter = test_array->begin(); iter != end; ++iter, ++index, ++second_iter )
 		{
-			ASSERT_EQ( value_prop.get( *iter ), index );
-			value_prop.set( *iter, index * 2 );
-			ASSERT_EQ( value_prop.get( *second_iter ), index );
+			ASSERT_EQ( iter->value, index );
+			iter->value = (float)(index * 2);
+			ASSERT_EQ( second_iter->value, index );
 		}
-		next_prop.set( *(test_array.begin() + 4), temp_array.object() );
+		(test_array->begin() + 4)->next = temp_array.get();
 	}
 	gc->perform_gc();
 	ASSERT_EQ( gc->all_live_objects().size(), 2 );
-	next_prop.set( *(test_array.begin() + 4), nullptr );
+	(test_array->begin() + 4)->next = nullptr;
 	gc->perform_gc();
 	ASSERT_EQ( gc->all_live_objects().size(), 1 );
-	test_array.erase( test_array.begin() + 2, test_array.begin() + 3 );
-	ASSERT_EQ( test_array.size(), 4 );
+	test_array->erase( test_array->begin() + 2, test_array->begin() + 3 );
+	ASSERT_EQ( test_array->size(), 4 );
 	
 	index = 0;
-	for ( auto iter = test_array.begin(), end = test_array.end(); iter != end; ++iter, ++index )
+	for ( auto iter = test_array->begin(), end = test_array->end(); iter != end; ++iter, ++index )
 	{
 		if ( index < 2 )
 		{
-			ASSERT_EQ( value_prop.get( *iter ), index );
+			ASSERT_EQ( iter->value, index );
 		}
 		else
 		{
-			ASSERT_EQ( value_prop.get( *iter ), index + 1 );
+			ASSERT_EQ( iter->value, index + 1 );
 		}
 	}
 
-	test_array.insert( test_array.begin() + 2, 2 );
-	ASSERT_EQ( test_array.size(), 6 );
+	test_array->insert( test_array->begin() + 2, 2 );
+	ASSERT_EQ( test_array->size(), 6 );
 	
-	ASSERT_EQ( value_prop.get( *(test_array.begin() + 2) ), 0 );
+	ASSERT_EQ( (test_array->begin() + 2)->value, 0 );
 
 
 	//force creation of actual new data
-	test_array.insert( test_array.end(), 10 );
-	ASSERT_EQ( test_array.size(), 16 );
-	value_prop.set( *(test_array.begin() + 15), 15 );
-	ASSERT_EQ( value_prop.get( *(test_array.begin() + 15) ), 15 );
+	test_array->insert( test_array->end(), 10 );
+	ASSERT_EQ( test_array->size(), 16 );
+	(test_array->begin() + 15)->value = 15;
+	ASSERT_EQ( (test_array->begin() + 15)->value, 15 );
 	//Now we see if cleanup cleans up the object correctly because it should have 
 	//non-contiguous data.
 }

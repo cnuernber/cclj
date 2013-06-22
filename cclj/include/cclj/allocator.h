@@ -17,6 +17,7 @@ namespace cclj {
 		size_t	alloc_size;
 		uint8_t alignment;
 		alloc_info() : alloc_size( 0 ), alignment( 0 ) {}
+		alloc_info(size_t s, uint8_t a) : alloc_size( s ), alignment( a ) {}
 	};
 
 	class file_info

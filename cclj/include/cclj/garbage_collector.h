@@ -107,7 +107,7 @@ namespace cclj
 		virtual void initialize_gc_refdata( uint8_t* data ) = 0;
 		//Return the objects referenced my this gc object.  May be called several times in succession.
 		//Index will always be linearly incrementing or zero.
-		virtual uint32_t get_gc_references( gc_object** buffer, uint32_t bufsize, uint8_t* refdata ) = 0;
+		virtual uint32_t get_gc_references( gc_object** buffer, uint32_t bufsize, uint32_t index, uint8_t* refdata ) = 0;
 		virtual void gc_release() { this->~gc_object(); }
 	};
 
@@ -207,13 +207,15 @@ namespace cclj
 			return *this;
 		}
 		~gc_scoped_lock() { release(); }
-		ptr_type operator->() const { if ( !_object ) throw runtime_error("invalid ptr dereference"); return _object; }
+		ptr_type get() const { if ( !_object ) throw runtime_error("invalid ptr dereference"); return _object; }
+		garbage_collector_ptr gc() const { return _gc; }
+
+		ptr_type operator->() const { return get(); }
 		reference_type operator*() const { if ( !_object ) throw runtime_error("invalid ptr dereference"); return *_object; }
 
 		operator bool () const { return _object != nullptr; }
 		bool operator == ( const this_type& other ) const { return _object == other._object; }
 		bool operator != ( const this_type& other ) const { return _object != other._object; }
-		garbage_collector_ptr gc() const { return _gc; }
 	};
 }
 

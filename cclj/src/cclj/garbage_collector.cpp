@@ -215,8 +215,8 @@ namespace {
 			uint8_t* ref_data = alloc->allocate( alloc_info.alloc_size, alloc_info.alignment, CCLJ_IMMEDIATE_FILE_INFO() );
 			scoped_allocation _ref_scope( alloc, ref_data );
 			obj.initialize_gc_refdata( ref_data );
-			for ( uint32_t num_objects = obj.get_gc_references( obj_buffer, 64, ref_data );
-				num_objects; num_objects = obj.get_gc_references( obj_buffer, 64, ref_data ) )
+			for ( uint32_t num_objects = obj.get_gc_references( obj_buffer, 64, obj_index, ref_data );
+				num_objects; num_objects = obj.get_gc_references( obj_buffer, 64, obj_index, ref_data ) )
 			{
 				obj_index += num_objects;
 				for_each( obj_buffer, obj_buffer + num_objects

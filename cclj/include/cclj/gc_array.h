@@ -22,6 +22,8 @@ namespace cclj {
 	template<typename obj_type>
 	class default_object_traits
 	{
+	public:
+
 		static void default_construct( obj_type* start, obj_type* end )
 		{
 			for_each( start, end, []( obj_type& item ) { new (&item)obj_type(); } );
@@ -50,7 +52,7 @@ namespace cclj {
 			} );
 		}
 		
-		void assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
+		static void assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
 		{
 			for ( const obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
 			{
@@ -72,6 +74,51 @@ namespace cclj {
 				*(dst_start+ridx) = *(src_start + ridx);
 			}
 		}
+		//src_start < dst_start, happens on vector::erase.
+		static void lesser_overlap_assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
+		{
+			assign( dst_start, dst_end, src_start );
+		}
+	};
+
+	template<typename obj_type>
+	class default_pod_traits
+	{
+	public:
+		static void default_construct( obj_type* start, obj_type* end )
+		{
+			memset( start, 0, (end-start)*sizeof(obj_type) );
+		}
+
+		static void copy_construct( obj_type* start, obj_type* end, const obj_type& init )
+		{
+			for_each( start, end, []( obj_type& item ) { new (&item)obj_type(init); } );
+		}
+
+		static void copy_construct( obj_type* dst_start, obj_type* dst_end
+									, const obj_type* src_start )
+		{
+			memcpy( dst_start, src_start, (dst_end - dst_start) * sizeof( obj_type ) );
+		}
+
+		static void destruct( obj_type*, obj_type* )
+		{
+		}
+		
+		static void assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
+		{
+			memcpy( dst_start, src_start, (dst_end - dst_start) * sizeof( obj_type ) );
+		}
+
+		//src_start > dst_start;
+		static void greater_overlap_assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
+		{
+			memmove( dst_start, src_start, (dst_end - dst_start) * sizeof( obj_type ) );
+		}
+		static void lesser_overlap_assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
+		{
+			memmove( dst_start, src_start, (dst_end - dst_start) * sizeof( obj_type ) );
+		}
 	};
 
 	template<typename obj_type>
@@ -89,10 +136,14 @@ namespace cclj {
 	class gc_array_traits : public default_object_traits<obj_type>, public gc_static_traits<obj_type>
 	{
 	public:
+		enum
+		{
+			alignment = sizeof(void*),
+		};
 	};
 
 
-	template<typename obj_type, uint8_t alignment = 4>
+	template<typename obj_type, uint8_t alignment = gc_array_traits<obj_type>::alignment>
 	class gc_array : public gc_object
 	{
 	public:
@@ -128,18 +179,19 @@ namespace cclj {
 
 		static object_constructor create_constructor(garbage_collector_ptr gc, file_info location)
 		{
-			return [=]( uint8_t* mem, size_t len )
+			return [=]( uint8_t* mem, size_t)
 			{
 				this_type* data = new (mem) this_type(gc, location);
-				return *data;
-			}
+				return data;
+			};
 		}
 
 		static this_ptr_type create( garbage_collector_ptr gc, file_info location )
 		{
-			return this_ptr_type( gc, gc->allocate_object( sizeof( this_type )
-									, alignment, create_constructor( gc )
-									, location ) );
+			gc_object& retval = gc->allocate_object( sizeof( this_type )
+									, alignment, create_constructor( gc, location )
+									, location );
+			return this_ptr_type( gc, reinterpret_cast<this_type&>( retval ) );
 		}
 
 
@@ -147,8 +199,8 @@ namespace cclj {
 		: _file_info( file_info )
 		{ initialize(garbage_collector_ptr()); }
 
-		gc_array( garbage_collector_ptr gc, file_info = CCLJ_IMMEDIATE_FILE_INFO() )
-			: _file_info( file_info )
+		gc_array( garbage_collector_ptr gc, file_info info )
+			: _file_info( info )
 		{
 			initialize( gc );
 		}
@@ -178,10 +230,9 @@ namespace cclj {
 					_gc = obj._gc;
 				}
 
-				size_t num_items = obj.size();
-				resize( obj.size() );
-				if ( num_items )
-					traits_type::assign( obj._data, obj._data_end, _data );
+				resize( 0 );
+				if ( obj.size() )
+					insert( end(), obj.begin(), obj.end() );
 			}
 			return *this;
 		}
@@ -238,7 +289,7 @@ namespace cclj {
 			if ( total <= capacity() ) return;
 			
 			size_t item_size = align_number( sizeof( obj_type ), alignment );
-			_data* new_data = _gc->allocate( item_size, alignment, _file_info );
+			obj_type* new_data = reinterpret_cast<obj_type*>( _gc->allocate( item_size*total, alignment, _file_info ) );
 			size_t old_size = size();
 			if ( old_size )
 			{
@@ -256,11 +307,13 @@ namespace cclj {
 
 		iterator insert_uninitialized( iterator _where, size_t num_items )
 		{
-			bool at_end _where === end();
+			bool at_end = _where == end();
 			if ( num_items == 0 )
-				return;
+				return _where;
 			size_t offset = _where - begin();
-			reserve( size() + num_items );
+			size_t required = num_items;
+			if ( capacity() < required )
+				reserve( (capacity() + num_items)*2 );
 			_where = begin() + offset;
 			iterator old_end = end();
 			iterator end_insert = _where + num_items;
@@ -318,7 +371,9 @@ namespace cclj {
 			if ( num_items )
 			{
 				traits_type::destruct( start, stop );
-				traits_type::copy_construct( start, stop, stop );
+				size_t offset = end() - stop;
+				if ( offset )
+					traits_type::lesser_overlap_assign( start, start + offset, stop );
 			}
 			_data_end -= num_items;
 		}
@@ -338,7 +393,7 @@ namespace cclj {
 		struct gc_array_ref_data_type
 		{
 			typename gc_array<obj_type>::iterator	_ref_iter;
-			int32_t									_ref_index;
+			uint32_t									_ref_index;
 			gc_array_ref_data_type( typename gc_array<obj_type>::iterator iter )
 				: _ref_iter( iter )
 				, _ref_index( 0 )
@@ -348,19 +403,19 @@ namespace cclj {
 
 		typedef gc_array_ref_data_type gc_array_ref_data;
 		
-		virtual size_t get_gc_refdata_size() { return sizeof( gc_array_ref_data ); }
+		virtual alloc_info get_gc_refdata_alloc_info() { return alloc_info( sizeof( gc_array_ref_data ), sizeof(void*) ); }
 		virtual void initialize_gc_refdata( uint8_t* data )
 		{
 			new (data) gc_array_ref_data( begin() );
 		}
 
 		//gc integration
-		virtual uint32_t get_gc_references( gc_object** buffer, uint32_t bufsize, uint8_t* refdata )
+		virtual uint32_t get_gc_references( gc_object** buffer, uint32_t bufsize, uint32_t /*obj_index*/, uint8_t* refdata )
 		{
 			gc_array_ref_data& ref_data = *reinterpret_cast<gc_array_ref_data*>( refdata );
 
 			iterator end_iter = end();
-
+			
 			uint32_t retval = 0;
 			uint32_t num_refs = traits_type::object_reference_count();
 			gc_object** buffer_end = buffer + bufsize;
@@ -372,6 +427,7 @@ namespace cclj {
 					if ( next_ref )
 					{
 						*buffer = next_ref;
+						++retval;			
 						++buffer;
 					}
 				}
@@ -380,6 +436,7 @@ namespace cclj {
 				if ( buffer == buffer_end )
 					break;
 			}
+			return retval;
 		}
 	};
 }
