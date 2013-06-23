@@ -40,10 +40,7 @@ namespace cclj
 		, public gc_static_traits<simple_struct>
 	{
 	public:
-		enum
-		{
-			alignment = sizeof(void*),
-		};
+		static uint8_t alignment() { return sizeof( void* ); }
 	};
 };
 

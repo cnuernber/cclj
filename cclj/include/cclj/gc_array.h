@@ -11,12 +11,6 @@
 #include "cclj/garbage_collector.h"
 #include "cclj/algo_util.h"
 
-//You would need to use quicksort or know the exact type and use std::sort to sort the array
-//there aren't facilities to generalized sort an array based off of a generic comparator unless
-//its type is known.  c-quicksort requires a stand-alone function so comparators with state are 
-//impossible and std::sort won't work because fundamentally the item the iterator produces (array_ref) can't
-//be a reference or pointer type.
-
 namespace cclj {
 
 	template<typename obj_type>
@@ -136,14 +130,11 @@ namespace cclj {
 	class gc_array_traits : public default_object_traits<obj_type>, public gc_static_traits<obj_type>
 	{
 	public:
-		enum
-		{
-			alignment = sizeof(void*),
-		};
+		static uint8_t alignment() { return sizeof( void* ); }
 	};
 
 
-	template<typename obj_type, uint8_t alignment = gc_array_traits<obj_type>::alignment>
+	template<typename obj_type, typename traits_type = gc_array_traits<obj_type> >
 	class gc_array : public gc_object
 	{
 	public:
@@ -152,11 +143,11 @@ namespace cclj {
 		typedef const obj_type* const_iterator;
 		typedef gc_array<obj_type> this_type;
 		typedef gc_scoped_lock<this_type> this_ptr_type;
-		typedef gc_array_traits<obj_type> traits_type;
 
 	private:
 		garbage_collector_ptr	_gc;
 		file_info				_file_info;
+		traits_type				_traits;
 		obj_type*				_data;
 		obj_type*				_data_end;
 		obj_type*				_data_capacity;
@@ -169,6 +160,14 @@ namespace cclj {
 			_data_capacity	= nullptr;
 		}
 
+		
+		gc_array( garbage_collector_ptr gc, file_info info, const traits_type& traits )
+			: _file_info( info )
+			, _traits( traits )
+		{
+			initialize( gc );
+		}
+
 	public:
 		
 		typedef obj_type* iterator;
@@ -177,47 +176,24 @@ namespace cclj {
 		typedef gc_scoped_lock<this_type> this_ptr_type;
 		typedef gc_array_traits<obj_type> traits_type;
 
-		static object_constructor create_constructor(garbage_collector_ptr gc, file_info location)
+		static object_constructor create_constructor(garbage_collector_ptr gc
+														, file_info location
+														, const traits_type& obj_traits )
 		{
 			return [=]( uint8_t* mem, size_t)
 			{
-				this_type* data = new (mem) this_type(gc, location);
+				this_type* data = new (mem) this_type(gc, location, obj_traits);
 				return data;
 			};
 		}
 
-		static this_ptr_type create( garbage_collector_ptr gc, file_info location )
+		static this_ptr_type create( garbage_collector_ptr gc, file_info location
+									, const traits_type& obj_traits = traits_type() )
 		{
 			gc_object& retval = gc->allocate_object( sizeof( this_type )
-									, alignment, create_constructor( gc, location )
+									, sizeof(void*), create_constructor( gc, location, obj_traits )
 									, location );
 			return this_ptr_type( gc, reinterpret_cast<this_type&>( retval ) );
-		}
-
-
-		gc_array(file_info = CCLJ_IMMEDIATE_FILE_INFO() )
-		: _file_info( file_info )
-		{ initialize(garbage_collector_ptr()); }
-
-		gc_array( garbage_collector_ptr gc, file_info info )
-			: _file_info( info )
-		{
-			initialize( gc );
-		}
-
-		
-
-		gc_array( const this_type& obj )
-		{
-			initialize( obj._gc );
-			_file_info = obj._file_info;
-			size_t num_items = obj.size();
-			if ( num_items )
-			{
-				reserve( num_items );
-				_data_end = _data_capacity;
-				traits_type::copy_construct( obj._data, obj._data_end, _data );
-			}
 		}
 
 		gc_array& operator=( const this_type& obj )
@@ -287,14 +263,14 @@ namespace cclj {
 		void reserve( size_t total )
 		{
 			if ( total <= capacity() ) return;
-			
-			size_t item_size = align_number( sizeof( obj_type ), alignment );
-			obj_type* new_data = reinterpret_cast<obj_type*>( _gc->allocate( item_size*total, alignment, _file_info ) );
+			auto item_align = _traits.alignment();
+			size_t item_size = align_number( sizeof( obj_type ), item_align );
+			obj_type* new_data = reinterpret_cast<obj_type*>( _gc->allocate( item_size*total, item_align, _file_info ) );
 			size_t old_size = size();
 			if ( old_size )
 			{
-				traits_type::copy_construct( new_data, new_data + old_size, _data );
-				traits_type::destruct( new_data, new_data + old_size );
+				_traits.copy_construct( new_data, new_data + old_size, _data );
+				_traits.destruct( new_data, new_data + old_size );
 			}
 
 			if ( _data )
@@ -323,8 +299,8 @@ namespace cclj {
 
 			if (!at_end)
 			{
-				traits_type::greater_overlap_assign( _where, old_end, end_insert );
-				traits_type::destruct( _where, std::min( end_insert, old_end ) );
+				_traits.greater_overlap_assign( _where, old_end, end_insert );
+				_traits.destruct( _where, std::min( end_insert, old_end ) );
 			}
 
 			return _where;
@@ -336,7 +312,7 @@ namespace cclj {
 			_where = insert_uninitialized( _where, num_items );
 			iterator end_insert = _where + num_items;
 			//now fill the hole
-			traits_type::copy_construct( _where, end_insert, start_item );
+			_traits.copy_construct( _where, end_insert, start_item );
 		}
 		
 		//insert using default initializer
@@ -345,7 +321,7 @@ namespace cclj {
 			_where = insert_uninitialized( _where, num_items );
 			iterator end_insert = _where + num_items;
 			//now fill the hole
-			traits_type::default_construct( _where, end_insert );
+			_traits.default_construct( _where, end_insert );
 		}
 
 		
@@ -355,7 +331,7 @@ namespace cclj {
 			_where = insert_uninitialized( _where, num_items );
 			iterator end_insert = _where + num_items;
 			//now fill the hole
-			traits_type::copy_construct( _where, end_insert, initializer );
+			_traits.copy_construct( _where, end_insert, initializer );
 		}
 
 		void erase( iterator start, iterator stop )
@@ -373,7 +349,7 @@ namespace cclj {
 				traits_type::destruct( start, stop );
 				size_t offset = end() - stop;
 				if ( offset )
-					traits_type::lesser_overlap_assign( start, start + offset, stop );
+					_traits.lesser_overlap_assign( start, start + offset, stop );
 			}
 			_data_end -= num_items;
 		}
@@ -417,13 +393,13 @@ namespace cclj {
 			iterator end_iter = end();
 			
 			uint32_t retval = 0;
-			uint32_t num_refs = traits_type::object_reference_count();
+			uint32_t num_refs = _traits.object_reference_count();
 			gc_object** buffer_end = buffer + bufsize;
 			for ( ; ref_data._ref_iter != end_iter && buffer != buffer_end; ++ref_data._ref_iter )
 			{
 				for( ; ref_data._ref_index < num_refs && buffer != buffer_end; ++ref_data._ref_index )
 				{
-					auto next_ref = traits_type::next_object_reference( *ref_data._ref_iter, ref_data._ref_index );
+					auto next_ref = _traits.next_object_reference( *ref_data._ref_iter, ref_data._ref_index );
 					if ( next_ref )
 					{
 						*buffer = next_ref;
@@ -431,10 +407,11 @@ namespace cclj {
 						++buffer;
 					}
 				}
-				ref_data._ref_index = 0;
 				//have to break here so we don't increment ref_iter in this case before the boolean check.
 				if ( buffer == buffer_end )
 					break;
+				
+				ref_data._ref_index = 0;
 			}
 			return retval;
 		}
