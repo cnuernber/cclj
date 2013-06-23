@@ -299,7 +299,7 @@ namespace cclj {
 
 			if (!at_end)
 			{
-				_traits.greater_overlap_assign( _where, old_end, end_insert );
+				_traits.greater_overlap_assign( end_insert, old_end, _where );
 				_traits.destruct( _where, std::min( end_insert, old_end ) );
 			}
 
@@ -339,7 +339,7 @@ namespace cclj {
 			//Copy the section after stop to start
 			//then adjust size.
 			if( stop < start )
-				throw runtime_error( "what the hell do you think you are doing? stop is less that start..." );
+				throw runtime_error( "what the hell do you think you are doing? stop is less than start..." );
 			if ( stop == start )
 				return;
 
