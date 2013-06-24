@@ -300,7 +300,7 @@ sub eval_xpj_file {
 $xpj = {};
 
 $xpj->{'platform'} = $^O;
-if ( lc($^O) =~ /win/ ) {
+if ( lc($^O) =~ /win|cygwin/ ) {
 	$xpj->{tool} = "vc12";
 	$xpj->{platform} = "Win32";
 }

@@ -87,9 +87,6 @@
 				cclj
 			</depends>
 			
-			<search type="header">
-				../../cclj/include/test/
-			</search>
 			<files name="cclj_test" root="../../cclj/src/test/">
 				*
 			</files>

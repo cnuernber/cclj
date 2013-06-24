@@ -152,9 +152,6 @@ sub artifact_name
 				pthread
 			  </libraries>
 			</if>
-			<search type="header">
-				../../cclj/include/test/
-			</search>
 			<files name="cclj_test" root="../../cclj/src/test/">
 				*
 			</files>

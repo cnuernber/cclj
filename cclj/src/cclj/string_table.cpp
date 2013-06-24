@@ -7,7 +7,6 @@
 //==============================================================================
 #include "precompile.h"
 #include "cclj/string_table.h"
-#include "cclj/language_types.h"
 
 using namespace cclj;
 
