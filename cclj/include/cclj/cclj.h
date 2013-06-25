@@ -24,6 +24,7 @@
 #include <vector>
 #include <regex>
 #include <cstdlib>
+#include <atomic>
 
 namespace cclj
 {
@@ -52,6 +53,9 @@ namespace cclj
 	using std::find_if;
 	using std::transform;
 	using std::sort;
+	using std::atomic;
+	using std::atomic_fetch_add;
+	using std::atomic_fetch_sub;
 
 
 	class garbage_collector;

@@ -142,7 +142,8 @@ namespace cclj {
 		typedef obj_type* iterator;
 		typedef const obj_type* const_iterator;
 		typedef gc_array<obj_type> this_type;
-		typedef gc_scoped_lock<this_type> this_ptr_type;
+		typedef gc_lock_ptr<this_type> this_ptr_type;
+		typedef gc_array_traits<obj_type> traits_type;
 
 	private:
 		garbage_collector_ptr	_gc;
@@ -169,12 +170,6 @@ namespace cclj {
 		}
 
 	public:
-		
-		typedef obj_type* iterator;
-		typedef const obj_type* const_iterator;
-		typedef gc_array<obj_type> this_type;
-		typedef gc_scoped_lock<this_type> this_ptr_type;
-		typedef gc_array_traits<obj_type> traits_type;
 
 		static object_constructor create_constructor(garbage_collector_ptr gc
 														, file_info location
@@ -287,7 +282,7 @@ namespace cclj {
 			if ( num_items == 0 )
 				return _where;
 			size_t offset = _where - begin();
-			size_t required = num_items;
+			size_t required = num_items + size();
 			if ( capacity() < required )
 				reserve( (capacity() + num_items)*2 );
 			_where = begin() + offset;

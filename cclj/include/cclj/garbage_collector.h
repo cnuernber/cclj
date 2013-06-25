@@ -68,18 +68,17 @@ namespace cclj
 		enum val
 		{
 			no_value =			0,
-			root =				1 << 0,
-			locked =			1 << 1,
-			mark_left =			1 << 2,
-			mark_right =		1 << 3,
+			locked =			1 << 0,
+			mark_left =			1 << 1,
+			mark_right =		1 << 2,
 		};
 	};
 
+	//flags are maintained by the gc.   They are user-readable but do not write
+	//to them.
 	class gc_object_flags : public flags<gc_object_flag_values::val,uint16_t>
 	{
 	public:
-		bool is_root() const { return has_value( gc_object_flag_values::root ); }
-		void set_root( bool val ) { set( gc_object_flag_values::root, val ); }
 
 		bool is_locked() const { return has_value( gc_object_flag_values::locked ); }
 		void set_locked( bool val ) { set( gc_object_flag_values::locked, val ); }
@@ -97,11 +96,23 @@ namespace cclj
 	{
 	protected:
 		virtual ~gc_object(){}
+		//Flags are used by the gc.  Do not mess with.
+		gc_object_flags		_flags; 
+		uint16_t			_user_flags; //16 bits for you!
+		atomic<int32_t>		_refcount;
 	public:
 
-		//Flags are used by the gc.  Do not mess with.
-		gc_object_flags		flags; 
-		uint16_t			user_flags; //16 bits for you!
+		const gc_object_flags& flags() const { return _flags; }
+
+		//Unless you are the gc, do not call this.
+		gc_object_flags& gc_only_writeable_flags() { return _flags; }
+
+		uint16_t user_flags() const { return _user_flags; }
+		void set_user_flags( uint16_t _flags ) { _user_flags = _flags; }
+
+		void add_ref() { atomic_fetch_add( &_refcount, 1 ); }
+		void release() { atomic_fetch_sub( &_refcount, 1 ); }
+		int32_t refcount() { return _refcount; }
 
 		virtual alloc_info get_gc_refdata_alloc_info() = 0;
 		virtual void initialize_gc_refdata( uint8_t* data ) = 0;
@@ -134,15 +145,13 @@ namespace cclj
 		virtual void deallocate( void* data ) = 0;
 		virtual alloc_info get_alloc_info( void* alloc ) = 0;
 
-		virtual void mark_root( gc_object& object ) = 0;
-		virtual void unmark_root( gc_object& object ) = 0;
-		virtual bool is_root( gc_object& object ) = 0;
 		virtual void lock( gc_object& obj ) = 0;
 		virtual void unlock( gc_object& obj ) = 0;
+
 		virtual void perform_gc() = 0;
 		//very transient data, useful for unit testing.
-		virtual const_gc_object_raw_ptr_buffer roots_and_locked_objects() = 0;
-		virtual const_gc_object_raw_ptr_buffer all_live_objects() = 0;
+		virtual const_gc_object_raw_ptr_buffer locked_objects() = 0;
+		virtual const_gc_object_raw_ptr_buffer all_objects() = 0;
 
 		virtual allocator_ptr allocator() = 0;
 
@@ -151,9 +160,11 @@ namespace cclj
 
 	typedef shared_ptr<garbage_collector> garbage_collector_ptr;
 
-
+	//Locking is meant to be external to the object graph.  Refcounting is meant to be internal.
+	//So objects external to the object graph that will not be considered should use locking.
+	//Objects internal should use refcounting.
 	template<typename tobj_type>
-	class gc_scoped_lock
+	class gc_lock_ptr
 	{
 		garbage_collector_ptr	_gc;
 		tobj_type*				_object;
@@ -175,27 +186,27 @@ namespace cclj
 		}
 
 	public:
-		typedef gc_scoped_lock<tobj_type> this_type;
+		typedef gc_lock_ptr<tobj_type> this_type;
 		typedef tobj_type	object_type;
 		typedef tobj_type*	ptr_type;
 		typedef tobj_type&	reference_type;
 
-		gc_scoped_lock(garbage_collector_ptr gc = garbage_collector_ptr()) : _gc( gc ), _object( nullptr ) {}
-		gc_scoped_lock(garbage_collector_ptr gc, reference_type obj ) : _gc( gc ), _object( &obj )
+		gc_lock_ptr(garbage_collector_ptr gc = garbage_collector_ptr()) : _gc( gc ), _object( nullptr ) {}
+		gc_lock_ptr(garbage_collector_ptr gc, reference_type obj ) : _gc( gc ), _object( &obj )
 		{
 			acquire();
 		}
-		gc_scoped_lock(garbage_collector_ptr gc, ptr_type obj ) : _gc( gc ), _object( obj )
+		gc_lock_ptr(garbage_collector_ptr gc, ptr_type obj ) : _gc( gc ), _object( obj )
 		{
 			acquire();
 		}
-		gc_scoped_lock( const this_type& other )
+		gc_lock_ptr( const this_type& other )
 			: _gc( other._gc )
 			, _object( other._object )
 		{
 			acquire();
 		}
-		gc_scoped_lock& operator=( const this_type& other )
+		gc_lock_ptr& operator=( const this_type& other )
 		{
 			if ( this != &other )
 			{
@@ -206,9 +217,71 @@ namespace cclj
 			}
 			return *this;
 		}
-		~gc_scoped_lock() { release(); }
+		~gc_lock_ptr() { release(); }
 		ptr_type get() const { if ( !_object ) throw runtime_error("invalid ptr dereference"); return _object; }
 		garbage_collector_ptr gc() const { return _gc; }
+
+		ptr_type operator->() const { return get(); }
+		reference_type operator*() const { if ( !_object ) throw runtime_error("invalid ptr dereference"); return *_object; }
+
+		operator bool () const { return _object != nullptr; }
+		bool operator == ( const this_type& other ) const { return _object == other._object; }
+		bool operator != ( const this_type& other ) const { return _object != other._object; }
+	};
+
+	//Reference counting is used inside the object graph.
+	template<typename tobj_type>
+	class gc_refcount_ptr
+	{
+		tobj_type*				_object;
+		
+		void acquire()
+		{
+			if ( _object )
+				_object->inc_ref();
+		}
+
+		void release()
+		{
+			if ( _object )
+			{
+				_object->dec_ref();
+				_object = nullptr;
+			}
+		}
+
+	public:
+		typedef gc_refcount_ptr<tobj_type> this_type;
+		typedef tobj_type	object_type;
+		typedef tobj_type*	ptr_type;
+		typedef tobj_type&	reference_type;
+
+		gc_refcount_ptr() : _object( nullptr ) {}
+
+		gc_refcount_ptr(reference_type obj ) : _object( &obj )
+		{
+			acquire();
+		}
+
+		gc_refcount_ptr(ptr_type obj ) : _object( obj ) 
+		{
+			acquire();
+		}
+
+		gc_refcount_ptr& operator=( const this_type& other )
+		{
+			if ( this != &other )
+			{
+				release();
+				_object = other._object;
+				acquire();
+			}
+			return *this;
+		}
+
+		~gc_refcount_ptr() { release(); }
+
+		ptr_type get() const { if ( !_object ) throw runtime_error("invalid ptr dereference"); return _object; }
 
 		ptr_type operator->() const { return get(); }
 		reference_type operator*() const { if ( !_object ) throw runtime_error("invalid ptr dereference"); return *_object; }

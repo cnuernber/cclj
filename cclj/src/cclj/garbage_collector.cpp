@@ -16,43 +16,64 @@ namespace cclj {
 }
 
 namespace {
+	struct object_index_lock
+	{
+		uint32_t	index;
+		int32_t		lock_count;
+		object_index_lock(uint32_t idx)
+			: index( (uint32_t)idx )
+			, lock_count( 0 )
+		{
+		}
+		object_index_lock() : index( 0 ), lock_count( 0 ) {}
+		void inc_lock() { ++lock_count; }
+		void dec_lock() { --lock_count; }
+		bool is_locked() const { return lock_count > 0; }
+	};
+
 
 	typedef vector<gc_object*> obj_ptr_list;
-	typedef unordered_map<gc_object*,uint32_t> obj_ptr_int_map;
+	typedef unordered_map<gc_object*,object_index_lock> obj_ptr_index_lock_map;
 
 	class gc_obj_vector_set
 	{
-		obj_ptr_list		object_list;
-		obj_ptr_int_map		object_map;
+		obj_ptr_list			object_list;
+		obj_ptr_index_lock_map	object_map;
 	public:
 
-		bool insert( gc_object* obj )
+		//returns true if the item was inserted
+		bool inc_lock( gc_object& obj )
 		{
-			pair<obj_ptr_int_map::iterator,bool> insert_item 
-					= object_map.insert( make_pair( obj, (uint32_t)object_list.size() ) );
+			pair<obj_ptr_index_lock_map::iterator,bool> insert_item 
+					= object_map.insert( make_pair( &obj, (uint32_t)object_list.size() ) );
 			if ( insert_item.second )
-				object_list.push_back( obj );
+				object_list.push_back( &obj );
+			insert_item.first->second.inc_lock();
 			return insert_item.second;
 		}
 
-		bool erase( gc_object* obj )
+		//returns true if the item was removed.
+		bool dec_lock( gc_object& obj )
 		{
-			obj_ptr_int_map::iterator iter = object_map.find( obj );
-			if ( iter != object_map.end() )
+			obj_ptr_index_lock_map::iterator iter = object_map.find( &obj );
+			if ( iter == object_map.end() ) throw runtime_error( "implementation error" );
+
+			iter->second.dec_lock();
+			bool erase_obj = iter->second.is_locked() == false;
+			if ( erase_obj )
 			{
-				uint32_t itemIdx = iter->second;
+				uint32_t itemIdx = iter->second.index;
 				object_map.erase( iter );
 				//perform a replace-with-last operation.
 				gc_object* end = object_list.back();
-				if ( end != obj )
+				if ( end != &obj )
 				{
-					object_map[end] = itemIdx;
+					object_map[end].index = itemIdx;
 					object_list[itemIdx] = end;
 				}
 				object_list.pop_back();
-				return true;
 			}
-			return false;
+			return erase_obj;
 		}
 
 		bool contains( gc_object* obj )
@@ -81,10 +102,9 @@ namespace {
 	struct gc_mark_sweep_impl : public garbage_collector
 	{
 		allocator_ptr						alloc;
-		gc_obj_vector_set					roots;
-		obj_ptr_list						all_objects;
+		gc_obj_vector_set					_locked_objects;
+		obj_ptr_list						_all_objects;
 		obj_ptr_list						all_objects_temp;
-		obj_ptr_int_map						locked_objects;
 		gc_object_flag_values::val			last_mark;
 
 		obj_ptr_list						mark_buffers[2];
@@ -99,13 +119,13 @@ namespace {
 
 		~gc_mark_sweep_impl()
 		{
-			for_each (all_objects.begin(), all_objects.end()
+			for_each (_all_objects.begin(), _all_objects.end()
 						,  [this](gc_object* obj) 
 			{ 
 				unchecked_deallocate_object( *obj ); 
 			} );
-			all_objects.clear();
-			roots.clear();
+			_all_objects.clear();
+			_locked_objects.clear();
 		}
 
 		virtual gc_object& allocate_object( size_t len, uint8_t alignment
@@ -118,7 +138,7 @@ namespace {
 			gc_object* retval = constructor( object_data, len );
 			if ( !retval ) { throw runtime_error( "constructor failure in allocate_object" ); }
 			__alloc_scope.forget();
-			all_objects.push_back( retval );
+			_all_objects.push_back( retval );
 			return *retval;
 		}
 
@@ -137,39 +157,6 @@ namespace {
 			return alloc->get_alloc_info( data );
 		}
 
-		void set_root_or_locked( gc_object& object, bool root, bool locked )
-		{
-			auto was_root_or_locked = object.flags.is_root() || object.flags.is_locked();
-			auto is_root_or_locked = root || locked;
-			if ( was_root_or_locked != is_root_or_locked ) {
-				if ( is_root_or_locked ) {
-					assert( !roots.contains( &object ) );
-					roots.insert( &object );
-				}
-				else {
-					assert( roots.contains( &object ) );
-					roots.erase( &object );
-				}
-			}
-			object.flags.set_root( root );
-			object.flags.set_locked( locked );
-		}
-		
-		virtual void mark_root( gc_object& object )
-		{
-			set_root_or_locked( object, true, object.flags.is_locked() );
-		}
-
-		virtual void unmark_root( gc_object& object )
-		{
-			set_root_or_locked( object, false, object.flags.is_locked() );
-		}
-
-		virtual bool is_root( gc_object& object )
-		{
-			return object.flags.is_root();
-		}
-
 		alloc_info object_alloc_info( gc_object& obj )
 		{
 			uint8_t* memStart = (uint8_t*)&obj;
@@ -178,36 +165,28 @@ namespace {
 
 		virtual void lock( gc_object& obj )
 		{
-			pair<obj_ptr_int_map::iterator,bool> inserter = locked_objects.insert( make_pair( &obj, 0 ) );
-			++inserter.first->second;
-			set_root_or_locked( obj, obj.flags.is_root(), true );
+			if ( _locked_objects.inc_lock( obj ) )
+				obj.gc_only_writeable_flags().set_locked(true);
+
+			if ( !obj.flags().is_locked() ) throw runtime_error( "implementation error" );
 		}
 
 		virtual void unlock( gc_object& obj )
 		{
-			if ( obj.flags.is_locked() == false )
+			if ( obj.flags().is_locked() == false )
 				return;
 
-			obj_ptr_int_map::iterator iter = locked_objects.find( &obj );
-			if ( iter != locked_objects.end() )
-			{
-				if ( iter->second )
-					--iter->second;
-				if ( !iter->second )
-				{
-					locked_objects.erase( &obj );
-					set_root_or_locked( obj, obj.flags.is_root(), false );
-				}
-			}
+			if ( _locked_objects.dec_lock( obj ) )
+				obj.gc_only_writeable_flags().set_locked( false );
 		}
 
 		void mark_object( gc_object& obj, gc_object_flag_values::val current_mark, obj_ptr_list& mark_buffer )
 		{
-			if ( obj.flags.has_value( current_mark ) )
+			if ( obj.flags().has_value( current_mark ) )
 				return;
 
-			obj.flags.set( current_mark, true );
-			obj.flags.set( last_mark, false );
+			obj.gc_only_writeable_flags().set( current_mark, true );
+			obj.gc_only_writeable_flags().set( last_mark, false );
 			gc_object* obj_buffer[64] = {0};
 			uint32_t obj_index = 0;
 			auto alloc_info = obj.get_gc_refdata_alloc_info();
@@ -222,7 +201,7 @@ namespace {
 				for_each( obj_buffer, obj_buffer + num_objects
 					, [&](gc_object* mark_obj )
 				{
-					if ( mark_obj->flags.has_value( current_mark ) == false )
+					if ( mark_obj->flags().has_value( current_mark ) == false )
 						mark_buffer.push_back( mark_obj );
 				} );
 			}
@@ -242,7 +221,7 @@ namespace {
 
 		void deallocate_object( gc_object& obj ) 
 		{
-			if ( obj.flags.is_root() ||  obj.flags.is_locked() )
+			if ( obj.flags().is_locked() )
 				throw std::runtime_error( "bad object in deallocate_object" );
 			unchecked_deallocate_object( obj );
 		}
@@ -257,7 +236,7 @@ namespace {
 			//Ensure to remove the mark from last time.
 			int mark_buffer_index = 0;
 
-			mark_buffers[mark_buffer_index].assign( roots.begin(), roots.end() );
+			mark_buffers[mark_buffer_index].assign( _locked_objects.begin(), _locked_objects.end() );
 			while( mark_buffers[mark_buffer_index].empty() == false ) {
 				obj_ptr_list& current_buffer(mark_buffers[mark_buffer_index]);
 				mark_buffer_index = increment_mark_buffer_index( mark_buffer_index );
@@ -272,21 +251,21 @@ namespace {
 			//this step may not be the most efficient way to do this but it is so concise it 
 			//is truly hard to resist.
 			all_objects_temp.clear();
-			for_each( all_objects.begin(), all_objects.end()
+			for_each( _all_objects.begin(), _all_objects.end()
 					, [=]( gc_object* obj ) 
 					{ 
-						if ( obj->flags.has_value( current_mark ) )
+						if ( obj->flags().has_value( current_mark ) )
 							all_objects_temp.push_back( obj );
 						else
 							deallocate_object( *obj );
 					} );
 
-			swap( all_objects, all_objects_temp );
+			swap( _all_objects, all_objects_temp );
 		}
 		
-		virtual const_gc_object_raw_ptr_buffer roots_and_locked_objects() { return roots.objects(); }
+		virtual const_gc_object_raw_ptr_buffer locked_objects() { return _locked_objects.objects(); }
 		
-		virtual const_gc_object_raw_ptr_buffer all_live_objects() { return all_objects; }
+		virtual const_gc_object_raw_ptr_buffer all_objects() { return _all_objects; }
 		
 		virtual allocator_ptr allocator() { return alloc; }
 	};
