@@ -119,10 +119,8 @@ namespace cclj {
 	class gc_static_traits
 	{
 	public:
-		static uint32_t object_reference_count() { return 0; }
-		static gc_object* next_object_reference( obj_type& /*obj_type*/, uint32_t /*idx*/ )
+		static void mark_references( obj_type& /*obj_type*/, mark_buffer& /*buffer*/ )
 		{
-			return nullptr;
 		}
 	};
 
@@ -361,54 +359,14 @@ namespace cclj {
 			}
 		}
 
-		struct gc_array_ref_data_type
-		{
-			typename gc_array<obj_type>::iterator	_ref_iter;
-			uint32_t									_ref_index;
-			gc_array_ref_data_type( typename gc_array<obj_type>::iterator iter )
-				: _ref_iter( iter )
-				, _ref_index( 0 )
-			{
-			}
-		};
-
-		typedef gc_array_ref_data_type gc_array_ref_data;
-		
-		virtual alloc_info get_gc_refdata_alloc_info() { return alloc_info( sizeof( gc_array_ref_data ), sizeof(void*) ); }
-		virtual void initialize_gc_refdata( uint8_t* data )
-		{
-			new (data) gc_array_ref_data( begin() );
-		}
-
 		//gc integration
-		virtual uint32_t get_gc_references( gc_object** buffer, uint32_t bufsize, uint32_t /*obj_index*/, uint8_t* refdata )
+		virtual void mark_references( mark_buffer& buffer )
 		{
-			gc_array_ref_data& ref_data = *reinterpret_cast<gc_array_ref_data*>( refdata );
-
-			iterator end_iter = end();
-			
-			uint32_t retval = 0;
-			uint32_t num_refs = _traits.object_reference_count();
-			gc_object** buffer_end = buffer + bufsize;
-			for ( ; ref_data._ref_iter != end_iter && buffer != buffer_end; ++ref_data._ref_iter )
+			for_each( begin(), end(), 
+				[&]( obj_type& obj )
 			{
-				for( ; ref_data._ref_index < num_refs && buffer != buffer_end; ++ref_data._ref_index )
-				{
-					auto next_ref = _traits.next_object_reference( *ref_data._ref_iter, ref_data._ref_index );
-					if ( next_ref )
-					{
-						*buffer = next_ref;
-						++retval;			
-						++buffer;
-					}
-				}
-				//have to break here so we don't increment ref_iter in this case before the boolean check.
-				if ( buffer == buffer_end )
-					break;
-				
-				ref_data._ref_index = 0;
-			}
-			return retval;
+				_traits.mark_references( obj, buffer );
+			} );
 		}
 	};
 }

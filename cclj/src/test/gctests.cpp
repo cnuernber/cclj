@@ -14,9 +14,9 @@ using namespace cclj;
 
 struct simple_struct
 {
-	float			value;
-	gc_object*		next;
-	simple_struct() : value( 0 ), next( nullptr ) {}
+	float							value;
+	gc_refcount_ptr<gc_object>		next;
+	simple_struct() : value( 0 ) {}
 };
 
 
@@ -28,9 +28,10 @@ namespace cclj
 	public:
 		
 		static uint32_t object_reference_count() { return 1; }
-		static gc_object* next_object_reference( simple_struct& obj_type, uint32_t /*idx*/ )
+		static gc_object* mark_references( simple_struct& obj_type, mark_buffer& buffer )
 		{
-			return obj_type.next;
+			buffer.mark( obj_type.next );
+			return nullptr;
 		}
 	};
 
@@ -47,21 +48,14 @@ namespace cclj
 
 struct simple_struct_obj : public gc_object
 {
-	float					value;
-	simple_struct_obj*		next;
-	simple_struct_obj() : value( 0 ), next( nullptr ) {}
-	virtual alloc_info get_gc_refdata_alloc_info() { return alloc_info(); }
-	virtual void initialize_gc_refdata( uint8_t* /*data*/ ) {}
+	float									value;
+	gc_refcount_ptr<simple_struct_obj>		next;
+	simple_struct_obj() : value( 0 ) {}
 	//Return the objects referenced my this gc object.  May be called several times in succession.
 	//Index will always be linearly incrementing or zero.
-	virtual uint32_t get_gc_references( gc_object** buffer, uint32_t /*bufsize*/, uint32_t obj_index, uint8_t* /*refdata*/ )
+	virtual void mark_references( mark_buffer& buffer )
 	{
-		if ( obj_index == 0 && next)
-		{
-			buffer[0] = next;
-			return 1;
-		}
-		return 0;
+		buffer.mark( next );
 	}
 	static object_constructor create_constructor()
 	{

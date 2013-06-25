@@ -90,6 +90,9 @@ namespace cclj
 		void set_marked_right( bool val ) { set( gc_object_flag_values::mark_right, val ); }
 	};
 
+	class gc_object;
+	typedef vector<gc_object*> obj_ptr_list;
+	class mark_buffer;
 
 
 	class gc_object : noncopyable
@@ -110,15 +113,12 @@ namespace cclj
 		uint16_t user_flags() const { return _user_flags; }
 		void set_user_flags( uint16_t _flags ) { _user_flags = _flags; }
 
-		void add_ref() { atomic_fetch_add( &_refcount, 1 ); }
-		void release() { atomic_fetch_sub( &_refcount, 1 ); }
+		void inc_ref() { atomic_fetch_add( &_refcount, 1 ); }
+		void dec_ref() { atomic_fetch_sub( &_refcount, 1 ); }
 		int32_t refcount() { return _refcount; }
 
-		virtual alloc_info get_gc_refdata_alloc_info() = 0;
-		virtual void initialize_gc_refdata( uint8_t* data ) = 0;
-		//Return the objects referenced my this gc object.  May be called several times in succession.
-		//Index will always be linearly incrementing or zero.
-		virtual uint32_t get_gc_references( gc_object** buffer, uint32_t bufsize, uint32_t index, uint8_t* refdata ) = 0;
+		//Return the objects referenced my this gc object.
+		virtual void mark_references( mark_buffer& buffer ) = 0;
 		virtual void gc_release() { this->~gc_object(); }
 	};
 
@@ -289,6 +289,39 @@ namespace cclj
 		operator bool () const { return _object != nullptr; }
 		bool operator == ( const this_type& other ) const { return _object == other._object; }
 		bool operator != ( const this_type& other ) const { return _object != other._object; }
+	};
+	
+
+	
+	class mark_buffer : noncopyable
+	{
+		obj_ptr_list&				_objs;
+		gc_object_flag_values::val _current_mark;
+
+	public:
+		mark_buffer( obj_ptr_list& o, gc_object_flag_values::val mark )
+			: _objs( o )
+			, _current_mark( mark )
+		{
+		}
+
+		void mark( gc_object& obj )
+		{
+			if ( obj.flags().has_value( _current_mark ) == false )
+				_objs.push_back( &obj );
+		}
+
+		template<typename obj_type>
+		void mark( gc_refcount_ptr<obj_type>& ptr )
+		{
+			if ( ptr ) mark( *ptr );
+		}
+
+		template<typename obj_type>
+		void mark( obj_type* ptr )
+		{
+			if ( ptr ) mark( *ptr );
+		}
 	};
 }
 

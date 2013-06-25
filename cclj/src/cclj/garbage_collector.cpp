@@ -32,7 +32,6 @@ namespace {
 	};
 
 
-	typedef vector<gc_object*> obj_ptr_list;
 	typedef unordered_map<gc_object*,object_index_lock> obj_ptr_index_lock_map;
 
 	class gc_obj_vector_set
@@ -180,31 +179,15 @@ namespace {
 				obj.gc_only_writeable_flags().set_locked( false );
 		}
 
-		void mark_object( gc_object& obj, gc_object_flag_values::val current_mark, obj_ptr_list& mark_buffer )
+		void mark_object( gc_object& obj, gc_object_flag_values::val current_mark, obj_ptr_list& mark_buffer_list )
 		{
 			if ( obj.flags().has_value( current_mark ) )
 				return;
 
 			obj.gc_only_writeable_flags().set( current_mark, true );
 			obj.gc_only_writeable_flags().set( last_mark, false );
-			gc_object* obj_buffer[64] = {0};
-			uint32_t obj_index = 0;
-			auto alloc_info = obj.get_gc_refdata_alloc_info();
-
-			uint8_t* ref_data = alloc->allocate( alloc_info.alloc_size, alloc_info.alignment, CCLJ_IMMEDIATE_FILE_INFO() );
-			scoped_allocation _ref_scope( alloc, ref_data );
-			obj.initialize_gc_refdata( ref_data );
-			for ( uint32_t num_objects = obj.get_gc_references( obj_buffer, 64, obj_index, ref_data );
-				num_objects; num_objects = obj.get_gc_references( obj_buffer, 64, obj_index, ref_data ) )
-			{
-				obj_index += num_objects;
-				for_each( obj_buffer, obj_buffer + num_objects
-					, [&](gc_object* mark_obj )
-				{
-					if ( mark_obj->flags().has_value( current_mark ) == false )
-						mark_buffer.push_back( mark_obj );
-				} );
-			}
+			mark_buffer marker( mark_buffer_list, current_mark );
+			obj.mark_references( marker );
 		}
 
 		int increment_mark_buffer_index( int oldIndex ) 
