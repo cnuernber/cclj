@@ -37,7 +37,7 @@ namespace cclj
 
 	template<>
 	class gc_array_traits<simple_struct> 
-		: public default_pod_traits<simple_struct>
+		: public default_object_traits<simple_struct>
 		, public gc_static_traits<simple_struct>
 	{
 	public:
@@ -182,10 +182,8 @@ TEST(garbage_collector_tests, basic_dynamic_array)
 	test_array->insert( test_array->end(), 10 );
 	ASSERT_EQ( test_array->size(), 16 );
 	
-	/*
 	(test_array->begin() + 15)->value = 15;
 	ASSERT_EQ( (test_array->begin() + 15)->value, 15 );
 	//Now we see if cleanup cleans up the object correctly because it should have 
 	//non-contiguous data.
-	*/
 }

@@ -31,7 +31,7 @@ namespace cclj {
 		static void copy_construct( obj_type* dst_start, obj_type* dst_end
 									, const obj_type* src_start )
 		{
-			for ( const obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
+			for ( obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
 			{
 				new (iter) obj_type( *src_start );
 			}
@@ -48,7 +48,7 @@ namespace cclj {
 		
 		static void assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
 		{
-			for ( const obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
+			for ( obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
 			{
 				*iter =  *src_start;
 			}
@@ -263,7 +263,7 @@ namespace cclj {
 			if ( old_size )
 			{
 				_traits.copy_construct( new_data, new_data + old_size, _data );
-				_traits.destruct( new_data, new_data + old_size );
+				_traits.destruct( _data, _data + old_size );
 			}
 
 			if ( _data )
@@ -274,6 +274,7 @@ namespace cclj {
 			_data_capacity = new_data + total;
 		}
 
+		//post-condition - where points to uninitialized memory
 		iterator insert_uninitialized( iterator _where, size_t num_items )
 		{
 			bool at_end = _where == end();
@@ -292,8 +293,11 @@ namespace cclj {
 
 			if (!at_end)
 			{
+				_traits.copy_construct( old_end, _data_end, old_end - num_items );
+				//Move items to create a hole
 				_traits.greater_overlap_assign( end_insert, old_end, _where );
-				_traits.destruct( _where, std::min( end_insert, old_end ) );
+				//destruct hole. 
+				_traits.destruct( _where, end_insert );
 			}
 
 			return _where;
