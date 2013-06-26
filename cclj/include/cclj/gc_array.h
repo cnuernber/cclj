@@ -10,125 +10,14 @@
 #pragma once
 #include "cclj/garbage_collector.h"
 #include "cclj/algo_util.h"
+#include "cclj/object_traits.h"
 
 namespace cclj {
-
-	template<typename obj_type>
-	class default_object_traits
-	{
-	public:
-
-		static void default_construct( obj_type* start, obj_type* end )
-		{
-			for_each( start, end, []( obj_type& item ) { new (&item)obj_type(); } );
-		}
-
-		static void copy_construct( obj_type* start, obj_type* end, const obj_type& init )
-		{
-			for_each( start, end, []( obj_type& item ) { new (&item)obj_type(init); } );
-		}
-
-		static void copy_construct( obj_type* dst_start, obj_type* dst_end
-									, const obj_type* src_start )
-		{
-			for ( obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
-			{
-				new (iter) obj_type( *src_start );
-			}
-		}
-
-		static void destruct( obj_type* start, obj_type* end )
-		{
-			for_each( start, end, 
-				[]( obj_type& item )
-			{
-				item.~obj_type();
-			} );
-		}
-		
-		static void assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
-		{
-			for ( obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
-			{
-				*iter =  *src_start;
-			}
-		}
-
-		//src_start > dst_start;
-		static void greater_overlap_assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
-		{
-			//Note that src,end dst,dst_end could be overlapping.
-			//Also not that dst is expected to be initialized in this case
-			size_t num_items = dst_end - dst_start;
-			for ( const obj_type* iter = dst_start; iter != dst_end; ++iter, ++src_start )
-			{
-				size_t idx = iter - dst_start;
-				size_t ridx = num_items - idx - 1;
-				//Assign in reverse to keep src from being overwritten.
-				*(dst_start+ridx) = *(src_start + ridx);
-			}
-		}
-		//src_start < dst_start, happens on vector::erase.
-		static void lesser_overlap_assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
-		{
-			assign( dst_start, dst_end, src_start );
-		}
-	};
-
-	template<typename obj_type>
-	class default_pod_traits
-	{
-	public:
-		static void default_construct( obj_type* start, obj_type* end )
-		{
-			memset( start, 0, (end-start)*sizeof(obj_type) );
-		}
-
-		static void copy_construct( obj_type* start, obj_type* end, const obj_type& init )
-		{
-			for_each( start, end, []( obj_type& item ) { new (&item)obj_type(init); } );
-		}
-
-		static void copy_construct( obj_type* dst_start, obj_type* dst_end
-									, const obj_type* src_start )
-		{
-			memcpy( dst_start, src_start, (dst_end - dst_start) * sizeof( obj_type ) );
-		}
-
-		static void destruct( obj_type*, obj_type* )
-		{
-		}
-		
-		static void assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
-		{
-			memcpy( dst_start, src_start, (dst_end - dst_start) * sizeof( obj_type ) );
-		}
-
-		//src_start > dst_start;
-		static void greater_overlap_assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
-		{
-			memmove( dst_start, src_start, (dst_end - dst_start) * sizeof( obj_type ) );
-		}
-		static void lesser_overlap_assign( obj_type* dst_start, obj_type* dst_end, const obj_type* src_start )
-		{
-			memmove( dst_start, src_start, (dst_end - dst_start) * sizeof( obj_type ) );
-		}
-	};
-
-	template<typename obj_type>
-	class gc_static_traits
-	{
-	public:
-		static void mark_references( obj_type& /*obj_type*/, mark_buffer& /*buffer*/ )
-		{
-		}
-	};
 
 	template<typename obj_type>
 	class gc_array_traits : public default_object_traits<obj_type>, public gc_static_traits<obj_type>
 	{
 	public:
-		static uint8_t alignment() { return sizeof( void* ); }
 	};
 
 
@@ -139,9 +28,8 @@ namespace cclj {
 		
 		typedef obj_type* iterator;
 		typedef const obj_type* const_iterator;
-		typedef gc_array<obj_type> this_type;
+		typedef gc_array<obj_type, traits_type> this_type;
 		typedef gc_lock_ptr<this_type> this_ptr_type;
-		typedef gc_array_traits<obj_type> traits_type;
 
 	private:
 		garbage_collector_ptr	_gc;
@@ -209,7 +97,7 @@ namespace cclj {
 		virtual ~gc_array()
 		{
 			if ( _data )
-				_gc->deallocate( _data );
+				_gc->allocator()->deallocate( _data );
 			_data = nullptr;
 			_data_end = nullptr;
 			_data_capacity = nullptr;
@@ -258,7 +146,10 @@ namespace cclj {
 			if ( total <= capacity() ) return;
 			auto item_align = _traits.alignment();
 			size_t item_size = align_number( sizeof( obj_type ), item_align );
-			obj_type* new_data = reinterpret_cast<obj_type*>( _gc->allocate( item_size*total, item_align, _file_info ) );
+
+			obj_type* new_data = reinterpret_cast<obj_type*>( 
+									_gc->allocator()->allocate( item_size*total, item_align, _file_info ) );
+
 			size_t old_size = size();
 			if ( old_size )
 			{
@@ -267,7 +158,7 @@ namespace cclj {
 			}
 
 			if ( _data )
-				_gc->deallocate( _data );
+				_gc->allocator()->deallocate( _data );
 
 			_data = new_data;
 			_data_end = new_data + old_size;
@@ -343,10 +234,11 @@ namespace cclj {
 			int32_t num_items = stop - start;
 			if ( num_items )
 			{
-				traits_type::destruct( start, stop );
 				size_t offset = end() - stop;
 				if ( offset )
 					_traits.lesser_overlap_assign( start, start + offset, stop );
+				
+				traits_type::destruct( end() - num_items, end() );
 			}
 			_data_end -= num_items;
 		}

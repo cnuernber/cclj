@@ -9,6 +9,8 @@
 #include "cclj/garbage_collector.h"
 #include "cclj/allocator.h"
 #include "cclj/gc_array.h"
+#include "cclj/pool.h"
+#include "cclj/gc_hashtable.h"
 
 using namespace cclj;
 

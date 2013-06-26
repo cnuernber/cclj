@@ -141,10 +141,6 @@ namespace cclj
 													, object_constructor constructor
 													, file_info alloc_info ) = 0;
 
-		virtual uint8_t* allocate( size_t len, uint8_t alignment, file_info alloc_info ) = 0;
-		virtual void deallocate( void* data ) = 0;
-		virtual alloc_info get_alloc_info( void* alloc ) = 0;
-
 		virtual void lock( gc_object& obj ) = 0;
 		virtual void unlock( gc_object& obj ) = 0;
 
