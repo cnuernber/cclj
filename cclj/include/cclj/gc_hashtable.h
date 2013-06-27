@@ -33,24 +33,24 @@ namespace cclj
 	{
 	public:
 		typedef gc_hashtable<key_type, value_type, key_traits_type, value_traits_type> this_type;
-		typedef gc_lock_ptr<this_type>		this_ptr_type;
-		typedef pair<key_type,value_type>	entry_type;
-		typedef entry_type&					entry_ref_type;
-		typedef entry_type*					entry_ptr_type;
-		typedef vector<uint32_t>			uint32_list;
+		typedef gc_lock_ptr<this_type>				this_ptr_type;
+		typedef pair<const key_type,value_type>		entry_type;
+		typedef entry_type&							entry_ref_type;
+		typedef entry_type*							entry_ptr_type;
+		typedef vector<uint32_t>					uint32_list;
 		class entry_node : public noncopyable
 		{
 		public:
 			entry_type		_entry;
 			entry_node*		_next_node;
-			entry_node(const key_type& key, const value_type& value ) 
-				: _entry( key, value )
+			entry_node(const entry_type& entry ) 
+				: _entry( entry )
 				, _next_node( nullptr )
 			{
 			}
 		};
 
-		typedef pool<sizeof(entry_node)>		entry_pool_type;
+		typedef pool<sizeof(entry_node), 100*sizeof(entry_node)> entry_pool_type;
 		struct entry_node_next_op
 		{
 			entry_node* get( entry_node& node ) { return node._next_node; }
@@ -72,6 +72,12 @@ namespace cclj
 				if ( _iter != _end )
 					_list_iter = _iter->begin();
 			}
+			iterator( typename hash_vector_type::iterator iter, typename entry_node_list::iterator pos, typename hash_vector_type::iterator end )
+				: _iter( iter )
+				, _list_iter( pos )
+				, _end( end )
+			{
+			}
 			iterator( const iterator& other )
 				: _iter( other._iter )
 				, _list_iter( other._list_iter )
@@ -83,6 +89,10 @@ namespace cclj
 				_list_iter = other._list_iter;
 				return *this;
 			}
+
+			typename hash_vector_type::iterator hash_iterator() const { return _iter; }
+			typename entry_node_list::iterator list_iterator() const { return _list_iter; }
+
 			entry_type& operator*() { return _list_iter->_entry; }
 			entry_type* operator->() { return &_list_iter->_entry; }
 			template<typename vec_iter, typename list_iter>
@@ -145,6 +155,14 @@ namespace cclj
 				if ( _iter != _end )
 					_list_iter = _iter->begin();
 			}
+			iterator( typename hash_vector_type::const_iterator iter
+					, typename entry_node_list::const_iterator pos
+					, typename hash_vector_type::const_iterator end )
+				: _iter( iter )
+				, _list_iter( pos )
+				, _end( end )
+			{
+			}
 			const_iterator( const const_iterator& other )
 				: _iter( other._iter )
 				, _list_iter( other._list_iter )
@@ -191,6 +209,7 @@ namespace cclj
 		value_traits_type		_value_traits;
 		file_info				_file_info;
 		size_t					_size;
+		float					_load_factor;
 
 		
 		gc_hashtable( garbage_collector_ptr gc, file_info info
@@ -202,6 +221,7 @@ namespace cclj
 			, _value_traits( vt )
 			, _file_info( info )
 			, _size( 0 )
+			, _load_factor( .7f )
 		{
 			initialize( gc );
 		}
@@ -229,7 +249,196 @@ namespace cclj
 									, location );
 			return this_ptr_type( gc, reinterpret_cast<this_type&>( retval ) );
 		}
+
+		void set_load_factor( float lf ) { _load_factor = lf; }
+
+		void reserve( size_t num_items )
+		{
+			size_t new_bucket_count = num_items / _load_factor;
+			if ( new_bucket_count > bucket_count() )
+			{
+				auto old_size = _hash_table.size();
+				_hash_table.resize( new_bucket_count );
+				//Run through and rehash all the objects.
+				for ( size_t idx = 0, end = old_size; idx < end; ++idx )
+				{
+					entry_node* last_node = nullptr;
+					entry_node* cur_node = _hash_table[idx]._head;
+					while( cur_node )
+					{
+						size_t node_hash = _key_traits.hash( cur_node->_entry.first );
+						size_t node_new_idx = node_hash % new_bucket_count;
+						//If the node should be moved.
+						if ( node_new_idx != idx )
+						{
+							entry_node* remove_node = cur_node;
+							//remove from this list.
+							if ( last_node != nullptr )
+							{
+								last_node->_next_node = cur_node->_next_node;
+							}
+							else
+							{
+								_hash_table[idx]._head = cur_node->_next_node;
+							}
+							cur_node = cur_node->_next_node;
+							//This cannot overwrite the current pos because we check that node_new_idx != idx;
+							_hash_table[node_new_idx].push_front( *remove_node );
+						}
+						else
+						{
+							last_node = cur_node;
+							cur_node = cur_node->_next_node;
+						}
+					}
+				}
+			}
+		}
+
 		
+		pair<typename hash_vector_type::const_iterator, typename entry_node_list::const_iterator> internal_find_const( const key_type& entry, size_t key_hash ) const
+		{
+			typedef pair<typename hash_vector_type::const_iterator, typename entry_node_list::const_iterator> return_type;
+			if ( _hash_table.empty() )
+				return return_type( _hash_table.end(), typename entry_node_list::const_iterator() );
+
+			size_t entry_idx = key_hash % _hash_table.size();
+			entry_node_list& entry_list = _hash_table[entry_idx];
+			if ( entry_list.empty() )
+				return return_type( _hash_table.end(), typename entry_node_list::const_iterator() );
+
+
+			for ( auto iter = entry_list.begin(), end = entry_list.end(); iter != end; ++iter )
+			{
+				if ( _key_traits.equal( iter->m_entry.first, entry ) )
+					return return_type( _hash_table.begin() + entry_idx, iter );
+			}
+
+			return return_type( _hash_table.end(), typename entry_node_list::const_iterator() );
+		}
+
+		pair<typename hash_vector_type::iterator, typename entry_node_list::iterator> internal_find( const key_type& entry, size_t key_hash )
+		{
+			typedef pair<typename hash_vector_type::iterator, typename entry_node_list::iterator> return_type;
+			auto internal_const_result = internal_find_const( entry, key_hash );
+			if ( internal_const_result.first != _hash_table.end() )
+				return return_type( internal_const_result.first - _hash_table.begin(), const_cast<entry_node*>( &(*internal_const_result.second ) ) );
+
+			return return_type( _hash_table.end(), typename entry_node_list::iterator() );
+		}
+
+		pair<iterator,bool> insert( const pair<key_type, value_type>& entry )
+		{
+			size_t key_hash = _key_traits.hash( entry.first );
+			auto finder = internal_find( entry.first, key_hash );
+			bool exists = finder.first != _hash_table.end() 
+				&& finder.second != finder.first->end();
+
+			if ( exists )
+				return pair<iterator,bool>( iterator( finder.first, finder.second, _hash_table.end() ), false );
+
+			float new_load_factor = 1;
+			++_size;
+			if ( bucket_count() )
+				new_load_factory = (float)size() / (float)bucket_count();
+
+			if ( new_load_factor > _load_factor )
+			{
+				reserve( std::max( 16, bucket_count() * 2 ) );
+			}
+			size_t entry_idx = key_hash % _hash_table.size();
+			entry_node* new_node = _pool.construct<entry_node>( entry_type( entry ) );
+			_hash_table[entry_idx].push_front( new_node );
+			return pair<iterator,bool>( iterator( _hash_table.begin() + entry_idx, new_node, _hash_table.end() ), true );
+		}
+
+		void remove_node( typename hash_vector_type::iterator item, entry_node& entry_node )
+		{
+			item->remove( &entry_node );
+			--size;
+			_pool.destruct( &entry_node );
+		}
+
+		bool erase( const key_type& entry )
+		{
+			auto finder = internal_find( entry.first, key_hash );
+			if ( finder.first != _hash_table.end() )
+			{
+				remove_node( finder.first, &(*finder.second) );
+				return true;
+			}
+			return false;
+		}
+
+		bool erase( iterator entry )
+		{
+			auto hash_iter = entry.hash_iterator();
+			auto list_iter = entry.list_iterator();
+			if ( hash_iter != _hash_table.end() )
+			{
+				remove_node( hash_iter, *list_iter );
+				return true;
+			}
+			return false;
+		}
+
+		bool contains( const key_type& k ) const
+		{ 
+			auto finder = internal_find_const( k, key_traits.hash( key ) );
+			return finder.first != _hash_table.end()
+				&& finder.second != finder.first->end();
+		}
+
+		iterator find( const key_type& k )
+		{
+			auto finder = internal_find( k, key_traits.hash( key ) );
+			if ( finder.first != _hash_table.end()
+				&& finder.second != finder.first->end() )
+				return iterator( finder.first, finder.second, _hash_table.end() );
+		}
+		
+		const_iterator find( const key_type& k ) const
+		{
+			auto finder = internal_find_const( k, key_traits.hash( key ) );
+			if ( finder.first != _hash_table.end()
+				&& finder.second != finder.first->end() )
+				return const_iterator( finder.first, finder.second, _hash_table.end() );
+		}
+
+		const_iterator begin() const
+		{
+			if ( size() == 0 ) return end();
+			for ( size_t idx = 0, end = _hash_table.size(); idx < end; ++idx )
+			{
+				if ( !_hash_table[idx].empty() )
+					return const_iterator( _hash_table.begin() + idx, _hash_table[idx].begin(), _hash_table.end() );
+			}
+			return end();
+		}
+
+		iterator begin()
+		{
+			if ( size() == 0 ) return end();
+			for ( size_t idx = 0, end = _hash_table.size(); idx < end; ++idx )
+			{
+				if ( !_hash_table[idx].empty() )
+					return iterator( _hash_table.begin() + idx, _hash_table[idx].begin(), _hash_table.end() );
+			}
+			return end();
+		}
+
+		iterator end()
+		{
+			return iterator( _hash_table.end(), nullptr, _hash_table.end() );
+		}
+
+		const_iterator end() const
+		{
+			return const_iterator( _hash_table.end(), nullptr, _hash_table.end() );
+		}
+
+		size_t size() const { return _size; }
+		size_t bucket_count() const { return _hash_table.size(); }
 
 	};
 }

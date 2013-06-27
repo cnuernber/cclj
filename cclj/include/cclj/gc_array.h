@@ -255,6 +255,11 @@ namespace cclj {
 			}
 		}
 
+		void clear()
+		{
+			resize( 0 );
+		}
+
 		//gc integration
 		virtual void mark_references( mark_buffer& buffer )
 		{
