@@ -65,6 +65,12 @@ namespace cclj
 			typename entry_node_list::iterator	_list_iter;
 			typename hash_vector_type::iterator	_end;
 		public:
+			typedef std::forward_iterator_tag iterator_category;
+			typedef entry_type value_type;
+			typedef int32_t difference_type;
+			typedef entry_type& reference;
+			typedef entry_type* pointer;
+
 			iterator( typename hash_vector_type::iterator iter, typename hash_vector_type::iterator end )
 				: _iter( iter )
 				, _end( end )
@@ -147,6 +153,12 @@ namespace cclj
 			typename entry_node_list::const_iterator	_list_iter;
 			typename hash_vector_type::const_iterator	_end;
 		public:
+			typedef std::forward_iterator_tag iterator_category;
+			typedef entry_type value_type;
+			typedef int32_t difference_type;
+			typedef const entry_type& reference;
+			typedef const entry_type* pointer;
+
 			const_iterator( typename hash_vector_type::const_iterator iter
 							, typename hash_vector_type::const_iterator end )
 				: _iter( iter )
@@ -155,7 +167,7 @@ namespace cclj
 				if ( _iter != _end )
 					_list_iter = _iter->begin();
 			}
-			iterator( typename hash_vector_type::const_iterator iter
+			const_iterator( typename hash_vector_type::const_iterator iter
 					, typename entry_node_list::const_iterator pos
 					, typename hash_vector_type::const_iterator end )
 				: _iter( iter )
@@ -223,7 +235,6 @@ namespace cclj
 			, _size( 0 )
 			, _load_factor( .7f )
 		{
-			initialize( gc );
 		}
 		
 	public:
@@ -254,7 +265,7 @@ namespace cclj
 
 		void reserve( size_t num_items )
 		{
-			size_t new_bucket_count = num_items / _load_factor;
+			size_t new_bucket_count = static_cast<size_t>( num_items / _load_factor + .5f);
 			if ( new_bucket_count > bucket_count() )
 			{
 				auto old_size = _hash_table.size();
@@ -303,14 +314,14 @@ namespace cclj
 				return return_type( _hash_table.end(), typename entry_node_list::const_iterator() );
 
 			size_t entry_idx = key_hash % _hash_table.size();
-			entry_node_list& entry_list = _hash_table[entry_idx];
+			const entry_node_list& entry_list = _hash_table[entry_idx];
 			if ( entry_list.empty() )
 				return return_type( _hash_table.end(), typename entry_node_list::const_iterator() );
 
 
 			for ( auto iter = entry_list.begin(), end = entry_list.end(); iter != end; ++iter )
 			{
-				if ( _key_traits.equal( iter->m_entry.first, entry ) )
+				if ( _key_traits.equals( iter->_entry.first, entry ) )
 					return return_type( _hash_table.begin() + entry_idx, iter );
 			}
 
@@ -322,7 +333,7 @@ namespace cclj
 			typedef pair<typename hash_vector_type::iterator, typename entry_node_list::iterator> return_type;
 			auto internal_const_result = internal_find_const( entry, key_hash );
 			if ( internal_const_result.first != _hash_table.end() )
-				return return_type( internal_const_result.first - _hash_table.begin(), const_cast<entry_node*>( &(*internal_const_result.second ) ) );
+				return return_type( _hash_table.begin() + (internal_const_result.first - _hash_table.begin()), const_cast<entry_node*>( &(*internal_const_result.second ) ) );
 
 			return return_type( _hash_table.end(), typename entry_node_list::iterator() );
 		}
@@ -340,15 +351,16 @@ namespace cclj
 			float new_load_factor = 1;
 			++_size;
 			if ( bucket_count() )
-				new_load_factory = (float)size() / (float)bucket_count();
+				new_load_factor = (float)size() / (float)bucket_count();
 
 			if ( new_load_factor > _load_factor )
 			{
-				reserve( std::max( 16, bucket_count() * 2 ) );
+				auto new_hash_size = std::max( (size_t)16, bucket_count() * 2 );
+				reserve( new_hash_size );
 			}
 			size_t entry_idx = key_hash % _hash_table.size();
-			entry_node* new_node = _pool.construct<entry_node>( entry_type( entry ) );
-			_hash_table[entry_idx].push_front( new_node );
+			entry_node* new_node = _entry_pool.construct<entry_node>( entry_type( entry ) );
+			_hash_table[entry_idx].push_front( *new_node );
 			return pair<iterator,bool>( iterator( _hash_table.begin() + entry_idx, new_node, _hash_table.end() ), true );
 		}
 
@@ -384,17 +396,18 @@ namespace cclj
 
 		bool contains( const key_type& k ) const
 		{ 
-			auto finder = internal_find_const( k, key_traits.hash( key ) );
+			auto finder = internal_find_const( k, _key_traits.hash( k ) );
 			return finder.first != _hash_table.end()
 				&& finder.second != finder.first->end();
 		}
 
 		iterator find( const key_type& k )
 		{
-			auto finder = internal_find( k, key_traits.hash( key ) );
+			auto finder = internal_find( k, _key_traits.hash( k ) );
 			if ( finder.first != _hash_table.end()
 				&& finder.second != finder.first->end() )
 				return iterator( finder.first, finder.second, _hash_table.end() );
+			return end();
 		}
 		
 		const_iterator find( const key_type& k ) const
@@ -403,6 +416,7 @@ namespace cclj
 			if ( finder.first != _hash_table.end()
 				&& finder.second != finder.first->end() )
 				return const_iterator( finder.first, finder.second, _hash_table.end() );
+			return end();
 		}
 
 		const_iterator begin() const
@@ -419,11 +433,13 @@ namespace cclj
 		iterator begin()
 		{
 			if ( size() == 0 ) return end();
-			for ( size_t idx = 0, end = _hash_table.size(); idx < end; ++idx )
+
+			for ( size_t idx = 0, endIdx = _hash_table.size(); idx < endIdx; ++idx )
 			{
 				if ( !_hash_table[idx].empty() )
 					return iterator( _hash_table.begin() + idx, _hash_table[idx].begin(), _hash_table.end() );
 			}
+
 			return end();
 		}
 
@@ -439,6 +455,17 @@ namespace cclj
 
 		size_t size() const { return _size; }
 		size_t bucket_count() const { return _hash_table.size(); }
+
+		
+		virtual void mark_references( mark_buffer& buffer )
+		{
+			for_each( begin(), end(), 
+				[&]( entry_type& entry )
+			{
+				_key_traits.mark_references( entry.first, buffer );
+				_value_traits.mark_references( entry.second, buffer );
+			} );
+		}
 
 	};
 }

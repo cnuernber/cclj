@@ -74,13 +74,13 @@ namespace cclj
 		}
 		uint8_t* allocate()
 		{
-			if ( !_free_entry )
+			if ( !_free_list )
 				allocate_slab();
 
-			if ( _free_entry )
+			if ( _free_list )
 			{
-				uint8_t* retval = reinterpret_cast<uint8_t*>( _free_entry );
-				_free_entry = _free_entry->_next;
+				uint8_t* retval = reinterpret_cast<uint8_t*>( _free_list );
+				_free_list = _free_list->_next;
 				return retval;
 			}
 			return nullptr;
@@ -106,7 +106,7 @@ namespace cclj
 		template<typename item_type, typename a0>
 		item_type* construct(const a0& arg)
 		{
-			static_asset(sizeof(item_type) < item_size);
+			static_assert(sizeof(item_type) <= item_size, "invalid pool construction");
 			item_type* retval = reinterpret_cast<item_type*>( allocate() );
 			return new (retval) item_type(arg);
 		}
@@ -114,7 +114,7 @@ namespace cclj
 		template<typename item_type, typename a0, typename a1>
 		item_type* construct(const a0& arg0, const a1& arg1)
 		{
-			static_asset(sizeof(item_type) < item_size);
+			static_assert(sizeof(item_type) <= item_size, "invalid pool construction");
 			item_type* retval = reinterpret_cast<item_type*>( allocate() );
 			return new (retval) item_type(arg0, arg1);
 		}
@@ -122,7 +122,7 @@ namespace cclj
 		template<typename item_type, typename a0, typename a1, typename a2>
 		item_type* construct(const a0& arg0, const a1& arg1, const a2& arg2)
 		{
-			static_asset(sizeof(item_type) < item_size);
+			static_assert(sizeof(item_type) <= item_size, "invalid pool construction");
 			item_type* retval = reinterpret_cast<item_type*>( allocate() );
 			return new (retval) item_type(arg0, arg1, arg2);
 		}
@@ -130,7 +130,7 @@ namespace cclj
 		template<typename item_type, typename a0, typename a1, typename a2, typename a3>
 		item_type* construct(const a0& arg0, const a1& arg1, const a2& arg2, const a3& arg3)
 		{
-			static_asset(sizeof(item_type) < item_size);
+			static_assert(sizeof(item_type) <= item_size, "invalid pool construction");
 			item_type* retval = reinterpret_cast<item_type*>( allocate() );
 			return new (retval) item_type(arg0, arg1, arg2, arg3);
 		}
@@ -138,7 +138,7 @@ namespace cclj
 		template<typename item_type>
 		void destruct( item_type* item )
 		{
-			static_asset(sizeof(item_type) < item_size);
+			static_assert(sizeof(item_type) <= item_size, "invalid pool construction");
 			if ( item == nullptr ) return;
 			item->~item_type();
 			deallocate( item );

@@ -123,7 +123,7 @@ namespace cclj
 	class gc_static_traits
 	{
 	public:
-		static void mark_references( obj_type& /*obj_type*/, mark_buffer& /*buffer*/ )
+		static void mark_references( const obj_type& /*obj_type*/, mark_buffer& /*buffer*/ )
 		{
 		}
 	};

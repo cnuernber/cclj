@@ -45,6 +45,15 @@ namespace cclj
 	public:
 		static uint8_t alignment() { return sizeof( void* ); }
 	};
+
+	template<>
+	class gc_hashtable_traits<uint32_t> : public default_pod_traits<uint32_t>
+										, public gc_static_traits<uint32_t>
+	{
+	public:
+		static size_t hash(const uint32_t& obj) { return std::hash<uint32_t>()( obj ); }
+		static bool equals(const uint32_t& lhs, const uint32_t& rhs ) { return lhs == rhs; }
+	};
 };
 
 
@@ -188,4 +197,44 @@ TEST(garbage_collector_tests, basic_dynamic_array)
 	ASSERT_EQ( (test_array->begin() + 15)->value, 15 );
 	//Now we see if cleanup cleans up the object correctly because it should have 
 	//non-contiguous data.
+}
+
+
+
+TEST(garbage_collector_tests, basic_hashtable)
+{
+	auto gc = create_gc();
+	typedef gc_hashtable<uint32_t,simple_struct> hash_type;
+	hash_type::this_ptr_type hashtable = hash_type::create( gc, CCLJ_IMMEDIATE_FILE_INFO() );
+
+	
+	simple_struct_obj& root = static_cast<simple_struct_obj&>( 
+		gc->allocate_object( sizeof( simple_struct_obj )
+		, 8
+		, simple_struct_obj::create_constructor()
+		, CCLJ_IMMEDIATE_FILE_INFO() ) );
+
+	auto iter1 = hashtable->insert( make_pair( 1, simple_struct() ) ).first;
+	iter1->second.next = &root;
+	iter1->second.value = 5;
+
+	hashtable->insert( make_pair(2, simple_struct() ) );
+	hashtable->insert( make_pair(3, simple_struct() ) );
+	hashtable->insert( make_pair(4, simple_struct() ) );
+	hashtable->insert( make_pair(5, simple_struct() ) );
+
+	ASSERT_EQ( hashtable->size(), 5 );
+
+	ASSERT_EQ( true, hashtable->contains( 1 ) );
+	ASSERT_EQ( true, hashtable->contains( 2 ) );
+	ASSERT_EQ( true, hashtable->contains( 3 ) );
+	ASSERT_EQ( true, hashtable->contains( 4 ) );
+	ASSERT_EQ( true, hashtable->contains( 5 ) );
+
+	ASSERT_EQ( 2, gc->all_objects().size() );
+	gc->perform_gc();
+	ASSERT_EQ( 2, gc->all_objects().size() );
+	hashtable->find( 1 )->second.next = nullptr;
+	gc->perform_gc();
+	ASSERT_EQ( 1, gc->all_objects().size() );
 }

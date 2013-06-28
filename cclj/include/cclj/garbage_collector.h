@@ -95,7 +95,7 @@ namespace cclj
 	class mark_buffer;
 
 
-	class gc_object : noncopyable
+	class gc_object : public noncopyable
 	{
 	protected:
 		virtual ~gc_object(){}
