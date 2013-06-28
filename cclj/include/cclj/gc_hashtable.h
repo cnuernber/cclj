@@ -87,12 +87,14 @@ namespace cclj
 			iterator( const iterator& other )
 				: _iter( other._iter )
 				, _list_iter( other._list_iter )
+				, _end( other._end )
 			{
 			}
 			iterator& operator=( const iterator& other )
 			{
 				_iter = other._iter;
 				_list_iter = other._list_iter;
+				_end = other._end;
 				return *this;
 			}
 
@@ -112,6 +114,7 @@ namespace cclj
 						return true;
 				}
 				++_iter;
+				_list_iter = list_iter( nullptr );
 				for ( ; _iter != _end; ++_iter )
 				{
 					if ( _iter->empty() == false )
@@ -143,7 +146,7 @@ namespace cclj
 			bool operator!=( const iterator& other ) const
 			{
 				return _list_iter != other._list_iter
-					|| _iter == other._iter;
+					|| _iter != other._iter;
 			}
 		};
 		
@@ -178,12 +181,14 @@ namespace cclj
 			const_iterator( const const_iterator& other )
 				: _iter( other._iter )
 				, _list_iter( other._list_iter )
+				: _end( other._end )
 			{
 			}
 			const_iterator& operator=( const const_iterator& other )
 			{
 				_iter = other._iter;
 				_list_iter = other._list_iter;
+				_end = other._end;
 				return *this;
 			}
 			const entry_type& operator*() { return _list_iter->_entry; }
@@ -209,7 +214,7 @@ namespace cclj
 			bool operator!=( const const_iterator& other ) const
 			{
 				return _list_iter != other._list_iter
-					|| _iter == other._iter;
+					|| _iter != other._iter;
 			}
 		};
 	private:
