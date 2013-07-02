@@ -66,13 +66,23 @@ Some possible examples:
 		  (fread (scoped_var.this)))
 		  
 		  
+Does lack of typing information make the language dynamic using objectsD
+or does it mean the function is generic?  Probably dynamic as that would
+make it match traditional LISP far closer.
+
+It would also be awesome if, instead of having a completely declarative way
+of defining functions akin to c++ templates, there was a way to compute the function
+at compile time using computations performed on the types themselves.  This allows
+a more natural path to template specialization and partial specialization.  But the
+syntax is confusing to think about.
+
+Generically, you are saying something like:
+
+given a symbol with one or more type specializations, what further definitions
+are defined?
+
+    (param-dec abba [| compile time variable list, types or compile time constants |] )
 	
-		  
-		  
-	; does lack of typing information make the language dynamic using objects
-	; or does it mean the function is generic?  Probably dynamic as that would
-	; make it match traditional LISP far closer.
-		
-		
-		  
-	
+    (param-def abba
+	  ((compile time expression to match)
+	   (runtime expression abba evaluates to)))
