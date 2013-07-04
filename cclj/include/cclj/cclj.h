@@ -56,6 +56,9 @@ namespace cclj
 	using std::atomic;
 	using std::atomic_fetch_add;
 	using std::atomic_fetch_sub;
+	using std::regex;
+	using std::smatch;
+	using std::regex_search;
 
 
 	class garbage_collector;

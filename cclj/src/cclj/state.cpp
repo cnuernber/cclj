@@ -5,14 +5,24 @@
 //  This code is licensed under the BSD license.  Terms of the
 //	license are located under the top cclj directory
 //==============================================================================
-#ifndef CCLJ_TEST_PRECOMPILE_H
-#define CCLJ_TEST_PRECOMPILE_H
+#include "precompile.h"
+#include "cclj/state.h"
 
-#include "gtest/gtest.h"
-#include "cclj/cclj.h"
-#include <filesystem>
-#include <fstream>
 
-using std::ifstream;
-using namespace std::tr2::sys;
-#endif
+using namespace cclj;
+
+
+namespace
+{
+	struct state_impl : public state
+	{
+		virtual float execute( const string& /*data*/ )
+		{
+			throw runtime_error( "unimplemented" );
+		}
+	};
+}
+
+state_ptr state::create_state() { return make_shared<state_impl>(); }
+
+

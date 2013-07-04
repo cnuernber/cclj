@@ -97,7 +97,7 @@ namespace cclj
 		template<typename item_type>
 		item_type* construct()
 		{
-			static_asset(sizeof(item_type) < item_size);
+			static_assert(sizeof(item_type) <= item_size, "invalid pool construction");
 			item_type* retval = reinterpret_cast<item_type*>( allocate() );
 			return new (retval) item_type();
 		}
