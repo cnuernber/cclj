@@ -1,0 +1,4 @@
+(defn add|f32 [a|f32 b|f32] ;works on floating point numbers only, compile or runtime error if miscalled
+		(+ a b))
+		
+(add 1 2)
