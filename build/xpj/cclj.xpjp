@@ -108,6 +108,47 @@ sub artifact_name
 		</search>
 	</template>
 	
+	<template name="cclj_link">
+	  <configuration name="Release">
+		<search type="linker">
+			../../../llvmbuild/lib/Release
+		</search>
+	  </configuration>
+	  <configuration name="Debug">
+		<search type="linker">
+			../../../llvmbuild/lib/Debug
+		</search>
+	  </configuration>
+	  <libraries>
+		LLVMJIT.lib
+		LLVMInterpreter.lib
+		LLVMX86CodeGen.lib
+		LLVMX86AsmParser.lib
+		LLVMX86Disassembler.lib
+		LLVMRuntimeDyld.lib
+		LLVMExecutionEngine.lib
+		LLVMAsmPrinter.lib
+		LLVMSelectionDAG.lib
+		LLVMX86Desc.lib
+		LLVMMCParser.lib
+		LLVMCodeGen.lib
+		LLVMX86AsmPrinter.lib
+		LLVMX86Info.lib
+		LLVMObjCARCOpts.lib
+		LLVMScalarOpts.lib
+		LLVMX86Utils.lib
+		LLVMInstCombine.lib
+		LLVMTransformUtils.lib
+		LLVMipa.lib
+		LLVMAnalysis.lib
+		LLVMTarget.lib
+		LLVMCore.lib
+		LLVMMC.lib
+		LLVMObject.lib
+		LLVMSupport.lib
+	  </libraries>
+	</template>
+	
 	<project name="cclj">
 		<projdir>../{{["$xpj->{platform}"]}}</projdir>
 
@@ -131,6 +172,13 @@ sub artifact_name
 		<target name="cclj">
 			<apply-template name="static_lib_t"/>
 			<apply-template name="cclj_headers"/>
+			<search type="header">
+				../../../llvm-3.3.src/include/
+				../../../llvmbuild/include/
+			</search>
+			<preprocessor>
+				_SCL_SECURE_NO_WARNINGS
+			</preprocessor>
 			<files name="include" root="../../cclj/include/cclj/">
 				*
 			</files>
@@ -143,6 +191,7 @@ sub artifact_name
 			<apply-template name="console_t"/>
 			<apply-template name="gtest_headers"/>
 			<apply-template name="cclj_headers"/>
+			<apply-template name="cclj_link"/>
 			<depends>
 				gtest
 				cclj

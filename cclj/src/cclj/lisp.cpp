@@ -85,7 +85,10 @@ namespace
 			return is_white( data )
 				|| data == '|'
 				|| data == '['
-				|| data == '(';
+				|| data == '('
+				|| data == ']'
+				|| data == ')'
+				|| data == ';';
 		}
 		char current_char()
 		{
@@ -95,7 +98,13 @@ namespace
 		}
 		void eatwhite()
 		{
-			for ( ; cur_ptr != end_ptr && is_white( current_char() ); ++cur_ptr ) {}
+			while( cur_ptr != end_ptr && ( is_white( current_char() ) || current_char() == ';' ) )
+			{
+				if ( current_char() == ';' )
+					for ( ; cur_ptr != end_ptr && current_char() != '\n'; ++cur_ptr ) {}
+				else
+					 for ( ; cur_ptr != end_ptr && is_white( current_char() ); ++cur_ptr ) {}
+			}
 		}
 
 		void find_delimiter()
@@ -257,6 +266,7 @@ namespace
 			bool keep_going = true;
 			do
 			{
+				eatwhite();
 				//cur_ptr points to valid data.
 				if ( atend() ) throw runtime_error( "mismatched parenthesis" );
 
@@ -302,6 +312,7 @@ namespace
 			cur_ptr = 0;
 			end_ptr = str.size();
 			_top_objects.clear();
+			this->str = &str;
 			while( atend() == false )
 			{
 				eatwhite();
@@ -322,4 +333,9 @@ namespace
 factory_ptr factory::create_factory( allocator_ptr allocator, const cons_cell& empty_cell )
 {
 	return make_shared<factory_impl>( allocator, empty_cell );
+}
+
+reader_ptr reader::create_reader( factory_ptr factory, string_table_ptr str_table )
+{
+	return make_shared<reader_impl>( factory, str_table );
 }

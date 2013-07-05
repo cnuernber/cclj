@@ -147,10 +147,12 @@ namespace cclj
 			
 			friend class shared_ptr<reader>;
 			//Probably need some erro reporting in there somewhere.
-			virtual object_ptr_buffer parse( const string& str );
+			virtual object_ptr_buffer parse( const string& str ) = 0;
 
 			static shared_ptr<reader> create_reader( factory_ptr factory, string_table_ptr str_table );
 		};
+
+		typedef shared_ptr<reader> reader_ptr;
 
 	}
 }

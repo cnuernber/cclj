@@ -60,7 +60,9 @@ string corpus_file_text( const char* fname )
 	do
 	{
 		input.read( temp_buf, 2056 );
-		retval.append( temp_buf );
+		auto read_amount = input.gcount();
+		if ( read_amount )
+			retval.append( temp_buf, read_amount );
 
 	} while (input.eof() == false );
 

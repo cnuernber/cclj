@@ -52,6 +52,13 @@
 			<search type="header">
 			../../cclj/include
 		</search>
+			<search type="header">
+				../../../llvm-3.3.src/include/
+				../../../llvmbuild/include/
+			</search>
+			<preprocessor>
+				_SCL_SECURE_NO_WARNINGS
+			</preprocessor>
 			<files name="include" root="../../cclj/include/cclj/">
 				*
 			</files>
@@ -82,6 +89,42 @@
 			<search type="header">
 			../../cclj/include
 		</search>
+			<configuration name="Release">
+		<search type="linker">
+			../../../llvmbuild/lib/Release
+		</search>
+	  </configuration><configuration name="Debug">
+		<search type="linker">
+			../../../llvmbuild/lib/Debug
+		</search>
+	  </configuration><libraries>
+		LLVMJIT.lib
+		LLVMInterpreter.lib
+		LLVMX86CodeGen.lib
+		LLVMX86AsmParser.lib
+		LLVMX86Disassembler.lib
+		LLVMRuntimeDyld.lib
+		LLVMExecutionEngine.lib
+		LLVMAsmPrinter.lib
+		LLVMSelectionDAG.lib
+		LLVMX86Desc.lib
+		LLVMMCParser.lib
+		LLVMCodeGen.lib
+		LLVMX86AsmPrinter.lib
+		LLVMX86Info.lib
+		LLVMObjCARCOpts.lib
+		LLVMScalarOpts.lib
+		LLVMX86Utils.lib
+		LLVMInstCombine.lib
+		LLVMTransformUtils.lib
+		LLVMipa.lib
+		LLVMAnalysis.lib
+		LLVMTarget.lib
+		LLVMCore.lib
+		LLVMMC.lib
+		LLVMObject.lib
+		LLVMSupport.lib
+	  </libraries>
 			<depends>
 				gtest
 				cclj
