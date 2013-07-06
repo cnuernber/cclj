@@ -9,7 +9,6 @@
 #include "cclj/state.h"
 #include "cclj/allocator.h"
 #include "cclj/lisp.h"
-#include "cclj/ast.h"
 #ifdef _WIN32
 #pragma warning(push,2)
 #endif
@@ -32,17 +31,254 @@
 
 using namespace cclj;
 using namespace cclj::lisp;
-using namespace cclj::ast;
 using namespace llvm;
 
 
 namespace
 {
+	
+	struct function_def
+	{
+		symbol*				_name;
+		object_ptr_buffer	_arguments;
+		cons_cell*			_body;
+		Function*			_compiled_code;
+
+		function_def() : _name( nullptr ), _compiled_code( nullptr ) {}
+	};
+
+	typedef unordered_map<string_table_str, function_def> function_map;
+	typedef unordered_map<string_table_str, AllocaInst*> variable_map;
+
+	struct code_generator : public noncopyable
+	{
+		string_table_ptr				_str_table;
+		IRBuilder<>						_builder;
+		Module&							_module;
+		shared_ptr<ExecutionEngine>		_exec_engine;
+		shared_ptr<FunctionPassManager>	_fpm;
+		string_table_str				_defn;
+		string_table_str				_f32;
+		string_table_str				_binplus;
+		function_map					_context;
+		variable_map					_fn_context;
+		
+		code_generator( string_table_ptr str_table, Module& m )
+			: _str_table( str_table )
+			, _builder( getGlobalContext() )
+			, _module( m )
+			, _defn( str_table->register_str( "defn" ) )
+			, _f32( str_table->register_str( "f32" ) )
+			, _binplus( str_table->register_str( "+" ) )
+		{
+			// Create the JIT.  This takes ownership of the module.
+			string ErrStr;
+			_exec_engine = shared_ptr<ExecutionEngine> ( EngineBuilder(&m).setErrorStr(&ErrStr).create() );
+			if (!_exec_engine) {
+				throw runtime_error( "Could not create ExecutionEngine\n" );
+			}
+			_fpm = make_shared<FunctionPassManager>(&m);
+
+			// Set up the optimizer pipeline.  Start with registering info about how the
+			// target lays out data structures.
+			_fpm->add(new DataLayout(*_exec_engine->getDataLayout()));
+			// Provide basic AliasAnalysis support for GVN.
+			_fpm->add(createBasicAliasAnalysisPass());
+			// Promote allocas to registers.
+			_fpm->add(createPromoteMemoryToRegisterPass());
+			// Do simple "peephole" optimizations and bit-twiddling optzns.
+			_fpm->add(createInstructionCombiningPass());
+			// Reassociate expressions.
+			_fpm->add(createReassociatePass());
+			// Eliminate Common SubExpressions.
+			_fpm->add(createGVNPass());
+			// Simplify the control flow graph (deleting unreachable blocks, etc).
+			_fpm->add(createCFGSimplificationPass());
+			_fpm->doInitialization();
+		}
+
+		Type* symbol_type( object_ptr obj )
+		{
+			symbol& sym = object_traits::cast<symbol>( *obj );
+			if ( sym._type && sym._type->_name == _f32 )
+				return Type::getFloatTy( getGlobalContext() );
+			throw runtime_error( "Unrecoginzed symbol type" );
+		}
+
+		string_table_str symbol_name( object_ptr obj )
+		{
+			symbol& sym = object_traits::cast<symbol>( *obj );
+			return sym._name;
+		}
+
+		Value* codegen_apply( cons_cell& cell )
+		{
+			symbol& fn_name = object_traits::cast<symbol>( *cell._value );
+			vector<Value*> fn_args;
+			for ( cons_cell * arg_cell = object_traits::cast<cons_cell>( cell._next )
+				; arg_cell; arg_cell = object_traits::cast<cons_cell>( arg_cell->_next ) )
+			{
+				Value* val = codegen_expr( arg_cell->_value );
+				if( val == nullptr ) throw runtime_error( "statement eval failed" );
+				fn_args.push_back( val );
+			}
+
+			if ( fn_name._name == _binplus )
+			{
+				if ( fn_args.size() != 2 )
+					throw runtime_error( "Unexpected num args" );
+				return _builder.CreateFAdd( fn_args[0], fn_args[1], "addtmp" );
+			}
+			function_map::iterator iter = _context.find( fn_name._name );
+
+			if ( iter == _context.end() ) throw runtime_error( "Failed to find function" );
+			if ( iter->second._compiled_code == nullptr ) throw runtime_error( "null function" );
+			if ( iter->second._compiled_code->arg_size() != fn_args.size() ) 
+				throw runtime_error( "function arity mismatch" );
+
+			return _builder.CreateCall( iter->second._compiled_code, fn_args, "calltmp" );
+		}
+		Value* codegen_var( symbol& symbol )
+		{
+			variable_map::iterator iter = _fn_context.find( symbol._name );
+			if ( iter == _fn_context.end() ) throw runtime_error( "failed to lookup variable" );
+			return _builder.CreateLoad( iter->second, symbol._name.c_str() );
+		}
+		Value* codegen_constant( constant& data )
+		{
+			return ConstantFP::get(getGlobalContext(), APFloat(data.value) );
+		}
+
+		Value* codegen_expr( object_ptr expr )
+		{
+			switch( expr->type() )
+			{
+			case types::cons_cell:
+				return codegen_apply( object_traits::cast<cons_cell>( *expr ) );
+			case types::symbol:
+				return codegen_var( object_traits::cast<symbol>( *expr ) );
+			case types::constant:
+				return codegen_constant( object_traits::cast<constant>( *expr ) );
+			default:
+				throw runtime_error( "unrecognized top level type" );
+			}
+		}
+
+		void codegen_function_body( Function* fn, cons_cell& fn_body )
+		{
+			//codegen the body of the function
+			for ( cons_cell* progn_cell = &fn_body; progn_cell
+						; progn_cell = object_traits::cast<cons_cell>( progn_cell->_next ) )
+			{
+				bool is_last = progn_cell->_next == nullptr;
+				Value* last_statement_return = codegen_expr( progn_cell->_value );
+				if ( is_last )
+				{
+					if ( last_statement_return )
+					{
+						_builder.CreateRet( last_statement_return );
+						verifyFunction(*fn );
+						_fpm->run( *fn );
+					}
+					else
+						throw runtime_error( "function definition failed" );
+				}
+			}
+		}
+		
+		Function* codegen_function_def( cons_cell& defn_cell )
+		{
+			//use dereference cast because we want an exception if it isn't a cons cell.
+			cons_cell* item = &object_traits::cast<cons_cell>( *defn_cell._next );
+			symbol& fn_def = object_traits::cast<symbol>( *item->_value );
+			item = &object_traits::cast<cons_cell>( *item->_next );
+			array& fn_args = object_traits::cast<array>( *item->_value );
+			item = &object_traits::cast<cons_cell>( *item->_next );
+			cons_cell& fn_body = *item;
+			if ( item->_next != nullptr )
+				throw runtime_error( "failed to handle function nullptr" );
+
+			function_def* fn_entry = nullptr;
+			if ( fn_def._name.empty() == false )
+			{
+				pair<function_map::iterator, bool> inserter = _context.insert( make_pair( fn_def._name, function_def() ) );
+				fn_entry = &inserter.first->second;
+				//erase first function so we can make new function
+				if ( inserter.second == false && fn_entry->_compiled_code )
+				{
+					fn_entry->_compiled_code->eraseFromParent();
+					fn_entry->_compiled_code = nullptr;
+				}
+
+				fn_entry->_name = &fn_def;
+				fn_entry->_arguments = fn_args._data;
+				fn_entry->_body = &fn_body;
+			}
+
+
+			vector<Type*> arg_types;
+			for_each( fn_args._data.begin(), fn_args._data.end(), [&]
+			(object_ptr arg)
+			{
+				symbol& sym = object_traits::cast<symbol>(*arg);
+				if ( sym._type == nullptr ) throw runtime_error( "failed to handle symbol with no type" );
+				if ( sym._type->_name != _f32 ) throw runtime_error( "unrecogized data type" );
+				arg_types.push_back( Type::getFloatTy(getGlobalContext()));
+			} );
+
+			if ( fn_def._type == nullptr ) throw runtime_error( "unrecoginzed function return type" );
+			if ( fn_def._type->_name != _f32 ) throw runtime_error( "unrecoginzed function return type" );
+
+			Type* rettype = Type::getFloatTy( getGlobalContext() );
+			FunctionType* fn_type = FunctionType::get(rettype, arg_types, false);
+
+			Function* fn = Function::Create( fn_type, Function::ExternalLinkage, fn_def._name.c_str(), &_module );
+			
+			if ( fn_entry )
+				fn_entry->_compiled_code = fn;
+
+			size_t arg_idx = 0;
+			for (Function::arg_iterator AI = fn->arg_begin(); arg_idx != arg_types.size();
+				++AI, ++arg_idx)
+			{
+				symbol& fn_arg = object_traits::cast<symbol>( *fn_args._data[arg_idx] );
+				AI->setName(fn_arg._name.c_str());
+			}
+			
+			// Create a new basic block to start insertion into.
+			BasicBlock *function_entry_block = BasicBlock::Create(getGlobalContext(), "entry", fn);
+			_builder.SetInsertPoint(function_entry_block);
+
+			IRBuilder<> entry_block_builder( &fn->getEntryBlock(), fn->getEntryBlock().begin() );
+			
+			Function::arg_iterator AI = fn->arg_begin();
+			for (unsigned Idx = 0, e = fn_args._data.size(); Idx != e; ++Idx, ++AI) {
+				// Create an alloca for this variable.
+				AllocaInst *Alloca = entry_block_builder.CreateAlloca(symbol_type( fn_args._data[Idx] ), 0,
+						symbol_name(fn_args._data[Idx]).c_str());
+
+				// Store the initial value into the alloca.
+				_builder.CreateStore(AI, Alloca);
+				
+				bool inserted = _fn_context.insert(make_pair( symbol_name(fn_args._data[Idx]), Alloca ) ).second;
+				if ( !inserted )
+					throw runtime_error( "duplicate function argument name" );
+			}
+			codegen_function_body( fn, fn_body );
+			_fn_context.clear();
+			return fn;
+		}
+	};
+
+	typedef float (*anon_fn_type)();
+
 	struct state_impl : public state
 	{
 		allocator_ptr		_alloc;
 		string_table_ptr	_str_table;
 		cons_cell			_empty_cell;
+
+		shared_ptr<code_generator>				_code_gen;
 
 
 		state_impl() : _alloc( allocator::create_checking_allocator() )
@@ -54,40 +290,52 @@ namespace
 			factory_ptr factory = factory::create_factory( _alloc, _empty_cell );
 			reader_ptr reader = reader::create_reader( factory, _str_table );
 			object_ptr_buffer parse_result = reader->parse( data );
-			context_map global_context;
 			//run through, code-gen the function defs and call the functions.
 			InitializeNativeTarget();
 			LLVMContext &Context = getGlobalContext();
-			shared_ptr<Module> TheModule( new Module("my cool jit", Context) );
+			Module* module( new Module("my cool jit", Context) );
+			_code_gen = make_shared<code_generator>( _str_table, *module );
 
-			// Create the JIT.  This takes ownership of the module.
-			std::string ErrStr;
-			shared_ptr<ExecutionEngine> llvm_exe_engine( EngineBuilder(TheModule.get()).setErrorStr(&ErrStr).create() );
-			if (!llvm_exe_engine) {
-				throw runtime_error( "Could not create ExecutionEngine\n" );
+			float retval = 0.0f;
+			for( object_ptr* obj_iter = parse_result.begin(), *end = parse_result.end();
+				obj_iter != end; ++obj_iter )
+			{
+				object_ptr obj = *obj_iter;
+				cons_cell* cell = object_traits::cast<cons_cell>( obj );
+				if ( cell )
+				{
+					symbol* item_name = object_traits::cast<symbol>(cell->_value);
+					if ( item_name )
+					{
+						if ( item_name->_name == _code_gen->_defn )
+						{
+							//run codegen for function.
+							_code_gen->codegen_function_def( *cell );
+						}
+						else
+						{
+							Type* rettype = Type::getFloatTy( getGlobalContext() );
+							FunctionType* fn_type = FunctionType::get(rettype, vector<Type*>(), false);
+							Function* fn = Function::Create( fn_type
+																, Function::ExternalLinkage
+																, "", &_code_gen->_module );
+							
+							BasicBlock *function_entry_block = BasicBlock::Create(getGlobalContext(), "entry", fn);
+							_code_gen->_builder.SetInsertPoint(function_entry_block);
+							cons_cell* progn_cell = factory->create_cell();
+							progn_cell->_value = cell;
+							_code_gen->codegen_function_body( fn, *progn_cell );
+							
+							void *fn_ptr= _code_gen->_exec_engine->getPointerToFunction(fn);
+							if ( !fn_ptr ) throw runtime_error( "function definition failed" );
+							anon_fn_type anon_fn = reinterpret_cast<anon_fn_type>( fn_ptr );
+							retval = anon_fn();
+						}
+					}
+				}
 			}
 
-			FunctionPassManager OurFPM(TheModule.get());
-
-			// Set up the optimizer pipeline.  Start with registering info about how the
-			// target lays out data structures.
-			OurFPM.add(new DataLayout(*llvm_exe_engine->getDataLayout()));
-			// Provide basic AliasAnalysis support for GVN.
-			OurFPM.add(createBasicAliasAnalysisPass());
-			// Promote allocas to registers.
-			OurFPM.add(createPromoteMemoryToRegisterPass());
-			// Do simple "peephole" optimizations and bit-twiddling optzns.
-			OurFPM.add(createInstructionCombiningPass());
-			// Reassociate expressions.
-			OurFPM.add(createReassociatePass());
-			// Eliminate Common SubExpressions.
-			OurFPM.add(createGVNPass());
-			// Simplify the control flow graph (deleting unreachable blocks, etc).
-			OurFPM.add(createCFGSimplificationPass());
-
-			OurFPM.doInitialization();
-
-			return 0.0f;
+			return retval;
 		}
 	};
 }

@@ -33,7 +33,7 @@ namespace cclj
 		size_t size() const { return _size; }
 		iterator begin() const { return _buffer; }
 		iterator end() const { return _buffer + size(); }
-		TDataType& operator[]( int idx ) const { assert( idx < size ); return _buffer[idx]; }
+		TDataType& operator[]( int idx ) const { if( idx < (int)size() ) return _buffer[idx]; throw runtime_error( "failed index" ); }
 	};
 
 	template<typename TDataType>

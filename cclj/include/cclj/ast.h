@@ -45,19 +45,7 @@ namespace cclj { namespace ast {
 		void*				_compiled_code;
 	};
 
-	class function_call : public ast_node
-	{
-	public:
-		enum { ast_type = ast_node_types::function_call };
-		virtual ast_node_types::_enum type() { return ast_node_types::function_call; }
-
-		symbol*				_name;
-		object_ptr_buffer	_arguments;
-		function_def*		_function;
-	};
-
 	typedef unordered_map<string_table_str, shared_ptr<ast_node> > context_map;
-	typedef vector<shared_ptr<ast_node> > ast_node_ptr_list;
 }}
 
 #endif

@@ -38,6 +38,7 @@ namespace cclj
 		}
 
 		operator const char* () const { return data; }
+		const char* c_str() const { return data; }
 
 		bool empty() const { return data == nullptr || *data == 0; }
 
