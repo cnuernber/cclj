@@ -1,0 +1,11 @@
+(defmacro combine [a b]
+	`(+ ~a ~b))
+
+(defn add|f32 [a|f32 b|f32]
+		(combine (+ a b) 5))
+
+;should eval to:
+;(defn add [a b]
+;	(+ (+ a b) 5))
+	
+(add 1 2)
