@@ -68,15 +68,6 @@ namespace
 		string_table_str				_binplus;
 		function_map					_context;
 		variable_map					_fn_context;
-		Function*						_quote_fn;
-		Function*						_unquote_fn;
-		Function*						_value_fn;
-		Function*						_next_fn;
-		Function*						_set_value_fn;
-		Function*						_set_next_fn;
-		Function*						_create_cell_fn;
-		FunctionType*					_compiler_fn_type;
-		compiler_map					_compiler_functions;
 
 		
 		code_generator( factory_ptr f, string_table_ptr str_table, Module& m )
@@ -88,7 +79,6 @@ namespace
 			, _defmacro( str_table->register_str( "defmacro" ) )
 			, _f32( str_table->register_str( "f32" ) )
 			, _binplus( str_table->register_str( "+" ) )
-			, _compiler_fn_type( nullptr )
 		{
 			// Create the JIT.  This takes ownership of the module.
 			string ErrStr;
@@ -114,99 +104,7 @@ namespace
 			// Simplify the control flow graph (deleting unreachable blocks, etc).
 			_fpm->add(createCFGSimplificationPass());
 			_fpm->doInitialization();
-			
-			vector<Type*> arg_types;
-			//runtime
-			arg_types.push_back( Type::getInt32PtrTy( getGlobalContext() ) );
-			//arg list.
-			arg_types.push_back( Type::getInt32PtrTy( getGlobalContext() ) );
-			Type* rettype = Type::getInt32PtrTy( getGlobalContext() );
-			_compiler_fn_type = FunctionType::get(rettype, arg_types, false );
-			_quote_fn = register_compiler_fn( quote, "quote" );
-			_unquote_fn = register_compiler_fn( unquote, "unquote" );
-			_value_fn = register_compiler_fn( value, "value" );
-			_next_fn = register_compiler_fn( next, "next" );
-			_set_value_fn = register_compiler_fn( set_value, "set-value" );
-			_set_next_fn = register_compiler_fn( set_next, "set-next" );
-			_create_cell_fn = register_compiler_fn( create_cell, "create-cell" );
 		}
-
-		static object_ptr quote( code_generator* /*rt*/, object_ptr /*arg_list*/ )
-		{
-			puts( "called!!" );
-			return nullptr;
-		};
-
-		static object_ptr unquote( code_generator* /*rt*/, object_ptr /*arg_list*/ )
-		{
-			puts( "called!!" );
-			return nullptr;
-
-		}
-
-		static object_ptr value( code_generator* /*rt*/, object_ptr item )
-		{
-			cons_cell* item_ptr = object_traits::cast<cons_cell>( item );
-			if ( item_ptr )
-			{
-				cons_cell* value_ptr = object_traits::cast<cons_cell>( item_ptr->_value );
-				if ( value_ptr )
-					return value_ptr->_value;
-			}
-			return nullptr;
-		}
-
-		static object_ptr next( code_generator* /*rt*/, object_ptr item )
-		{
-			cons_cell* item_ptr = object_traits::cast<cons_cell>( item );
-			if ( item_ptr )
-			{
-				cons_cell* value_ptr = object_traits::cast<cons_cell>( item_ptr->_value );
-				if ( value_ptr )
-					return value_ptr->_next;
-			}
-			return nullptr;
-		}
-
-		static object_ptr set_next( code_generator* /*rt*/, object_ptr item )
-		{
-			cons_cell* item_ptr = object_traits::cast<cons_cell>( item );
-			if ( item_ptr )
-			{
-				cons_cell* value_ptr = object_traits::cast<cons_cell>( item_ptr->_value );
-				item_ptr = object_traits::cast<cons_cell>( item_ptr->_next );
-				if ( value_ptr && item_ptr )
-					value_ptr->_next = item_ptr->_value;
-			}
-
-			return nullptr;
-		}
-		static object_ptr set_value( code_generator* /*rt*/, object_ptr item )
-		{
-			cons_cell* item_ptr = object_traits::cast<cons_cell>( item );
-			if ( item_ptr )
-			{
-				cons_cell* value_ptr = object_traits::cast<cons_cell>( item_ptr->_value );
-				item_ptr = object_traits::cast<cons_cell>( item_ptr->_next );
-				if ( value_ptr && item_ptr )
-					value_ptr->_value = item_ptr->_value;
-			}
-			return nullptr;
-		}
-
-		static object_ptr create_cell( code_generator* rt, object_ptr /*item*/ )
-		{
-			return rt->_factory->create_cell();
-		}
-
-		Function* register_compiler_fn( compiler_function fn, const char* name )
-		{
-			Function* retval = Function::Create( _compiler_fn_type, Function::ExternalLinkage, "", &_module );
-			_exec_engine->addGlobalMapping( retval, reinterpret_cast<void*>( fn ) );
-			_compiler_functions.insert( make_pair( _str_table->register_str( name ), retval ) );
-			return retval;
-		}
-
 
 		Type* symbol_type( object_ptr obj )
 		{

@@ -56,6 +56,33 @@ namespace
 		}
 	};
 
+	typedef unordered_map<string_table_str, object_ptr> macro_arg_map;
+	typedef function<object_ptr (cons_cell* first_arg)> macro_function;
+	struct macro_def
+	{
+		string_table_str					_name;
+		object_ptr_buffer					_args;
+		cons_cell*							_body;
+		function<object_ptr (cons_cell*)>	_native_function;
+
+		macro_def(string_table_str& s, object_ptr_buffer a, cons_cell& b )
+			: _name( s )
+			, _args( a )
+			, _body( &b )
+		{
+		}
+
+		macro_def(string_table_str& s, function<object_ptr (cons_cell*)> a )
+			: _name( s )
+			, _body( nullptr )
+			, _native_function( a )
+		{}
+
+		macro_def() : _body( nullptr ) {}
+	};
+
+	typedef unordered_map<string_table_str, macro_def> macro_map;
+
 	class reader_impl : public reader
 	{
 		factory_ptr _factory;
@@ -65,13 +92,18 @@ namespace
 		size_t end_ptr;
 		vector<object_ptr> _top_objects;
 		regex number_regex;
+		macro_map _macros;
+		string_table_str _defmacro;
 
 		string temp_str;
 	public:
 		reader_impl( factory_ptr f, string_table_ptr st ) 
 			: _factory( f )
 			, _str_table( st )
-			, number_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*" ) {}
+			, number_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*" ) 
+			, _defmacro( st->register_str( "defmacro" ) )
+		{
+		}
 
 		static bool is_white(char data)
 		{
@@ -281,7 +313,163 @@ namespace
 			++cur_ptr;
 			return retval;
 		}
+
+		object_ptr quote_section( cons_cell& item, macro_arg_map& arg_map )
+		{
+			//Quote takes one argument and returns that argument un-evaluated
+			//unless there are unquotes in there.
+			for ( cons_cell* top_item = &item; top_item; 
+				top_item = object_traits::cast<cons_cell>( top_item->_next ) )
+			{
+				cons_cell* val = object_traits::cast<cons_cell>( top_item->_value );
+				if( val )
+				{
+					symbol* val_name = object_traits::cast<symbol>( val->_value );
+					if ( val_name && val_name->_name == _str_table->register_str( "unquote" ) )
+					{
+						cons_cell* next_cell = object_traits::cast<cons_cell>( val->_next );
+						if ( next_cell == nullptr ) throw runtime_error( "bad unquote" );
+						symbol* arg_name = object_traits::cast<symbol>( next_cell->_value );
+						if ( arg_name == nullptr ) throw runtime_error( "bad unquote" );
+						macro_arg_map::iterator iter = arg_map.find( arg_name->_name );
+						if( iter == arg_map.end() ) throw runtime_error( "bad unquote" );
+						top_item->_value = iter->second;
+					}
+					else
+					{
+						//nested things still get quoted
+						quote_section( *val, arg_map );
+					}
+				}
+			}
+
+			return item._value;
+		}
+
+		object_ptr apply_macro_fn( cons_cell& fn_call, macro_arg_map& arg_map )
+		{
+			symbol* fn_name = object_traits::cast<symbol>( fn_call._value );
+			if ( fn_name == nullptr ) throw runtime_error( "invalid macro" );
+
+			
+			if ( fn_name->_name == _str_table->register_str( "quote" ) )
+			{
+				//Quote takes one argument and returns that argument un-evaluated
+				//unless there are unquotes in there.
+				cons_cell* fn_data = object_traits::cast<cons_cell>( fn_call._next );
+				if ( fn_data )
+					return quote_section( *fn_data, arg_map );
+				return _factory->create_cell();
+			}
+			else
+			{
+				macro_map::iterator iter = _macros.find( fn_name->_name );
+				if ( iter == _macros.end() ) throw runtime_error( "invalid macro" );
+				//eval the arguments here.
+				cons_cell* arg_list = nullptr;
+				cons_cell* fn_arg = object_traits::cast<cons_cell>( fn_call._next );
+				if ( fn_arg )
+				{
+					arg_list = _factory->create_cell();
+					cons_cell* list_item = nullptr;
+					while( fn_arg )
+					{
+						if ( list_item == nullptr )
+							list_item = arg_list;
+						else
+						{
+							cons_cell* tmp = _factory->create_cell();
+							list_item->_next = tmp;
+							list_item = tmp;
+						}
+							
+						object_ptr arg_value = eval_macro_arg( fn_arg->_value, arg_map );
+						list_item->_value = arg_value;
+					}
+				}
+				return apply_macro( iter->second, arg_list );
+			}
+		}
+
+		object_ptr eval_macro_arg( object_ptr fn_arg, macro_arg_map& arg_map )
+		{
+			cons_cell* subcell = object_traits::cast<cons_cell>( fn_arg );
+			if ( subcell )
+			{
+				return apply_macro_fn( *subcell, arg_map );
+			}
+			symbol* arg_name = object_traits::cast<symbol>( fn_arg );
+			if ( arg_name )
+			{
+				macro_arg_map::iterator iter = arg_map.find( arg_name->_name );
+				if ( iter != arg_map.end() )
+				{
+					return iter->second;
+				}
+			}
+			return nullptr;
+		}
+		//Eventually we want to also pass in more context information so the macro
+		//can be intelligent as to the types of data it is working with.
+		object_ptr apply_macro( macro_def& macro, cons_cell* first_arg )
+		{
+			
+			object_ptr retval = nullptr;
+			if ( macro._body )
+			{
+				macro_arg_map arg_map;
+				cons_cell* current_arg = first_arg;
+				for_each( macro._args.begin(), macro._args.end(), [&]
+				( object_ptr argname )
+				{
+					symbol& arg_name_symbol = object_traits::cast<symbol>( *argname );
+					if ( current_arg )
+					{
+						arg_map[arg_name_symbol._name] = current_arg->_value;
+						current_arg = object_traits::cast<cons_cell>( current_arg->_next );
+					}
+				} );
+				for ( cons_cell* body_cell = macro._body; body_cell; 
+					body_cell = object_traits::cast<cons_cell>( body_cell->_next ) )
+				{
+					if ( body_cell->_value == nullptr ) throw runtime_error( "invalid macro" );
+					cons_cell& fn_call = object_traits::cast<cons_cell>( *body_cell->_value );
+					retval = apply_macro_fn( fn_call, arg_map );
+				}
+			}
+			else
+			{
+				retval = macro._native_function( first_arg );
+			}
+			return retval;
+		}
 		
+		void preprocess( cons_cell& cell )
+		{
+			for ( cons_cell* next_cell = object_traits::cast<cons_cell>( cell._next ); 
+				next_cell; next_cell = object_traits::cast<cons_cell>( next_cell->_next ) )
+			{
+				cons_cell* embedded_list = object_traits::cast<cons_cell>( next_cell->_value );
+				if ( embedded_list )
+				{
+					//Check for macro call.
+					symbol* symbol_value = object_traits::cast<symbol>( embedded_list->_value );
+					if ( symbol_value )
+					{
+						macro_map::iterator iter = _macros.find( symbol_value->_name );
+						cons_cell* first_macro_arg = object_traits::cast<cons_cell>( embedded_list->_next );
+						if ( iter != _macros.end() )
+						{
+							next_cell->_value = apply_macro( iter->second, first_macro_arg );
+						}
+					}
+				}
+				//re-check to recursively run macros until finished.
+				embedded_list = object_traits::cast<cons_cell>( next_cell->_value );
+				if ( embedded_list )
+					preprocess( *embedded_list );
+			}
+		}
 		
 		virtual object_ptr_buffer parse( const string& str )
 		{
@@ -299,6 +487,33 @@ namespace
 						_top_objects.push_back( parse_list() );
 					else if ( current_char() == '[' )
 						_top_objects.push_back( parse_array() );
+				}
+			}
+			//expand macros.  This mean the lisp reader has a partial interpreter in it.
+			for ( size_t idx = 0, end = _top_objects.size(); idx < end; ++idx )
+			{
+				cons_cell* item_cell = object_traits::cast<cons_cell>( _top_objects[idx] );
+				if ( item_cell )
+				{
+					symbol* sym = object_traits::cast<symbol>( item_cell->_value );
+					if ( sym && sym->_name == _defmacro )
+					{
+						cons_cell& name_cell = object_traits::cast<cons_cell>( *item_cell->_next );
+						symbol& name_sym = object_traits::cast<symbol>( *name_cell._value );
+						cons_cell& arg_cell = object_traits::cast<cons_cell>( *name_cell._next );
+						array& arg_array = object_traits::cast<array>( *arg_cell._value );
+						cons_cell& body_cell = object_traits::cast<cons_cell>( *arg_cell._next );
+						_macros[name_sym._name] = macro_def( name_sym._name, arg_array._data, body_cell );
+						//strip the macro definitions out so the next stage does not need to know
+						//about macros.
+						_top_objects.erase( _top_objects.begin() + idx );
+						--idx;
+						--end;
+					}
+					else //normal function definition or function call.  Simply traverse ignorantly 
+					{
+						preprocess( *item_cell );
+					}
 				}
 			}
 			return _top_objects;

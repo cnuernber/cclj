@@ -1,5 +1,5 @@
 (defmacro combine [a b]
-	(quote + (unquote a) (unquote b)))
+	(quote(+ (unquote a) (unquote b))))
 
 (defn add|f32 [a|f32 b|f32]
 		(combine (+ a b) 5))
