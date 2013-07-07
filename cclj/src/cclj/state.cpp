@@ -43,33 +43,53 @@ namespace
 		object_ptr_buffer	_arguments;
 		cons_cell*			_body;
 		Function*			_compiled_code;
+		bool				_macro;
 
-		function_def() : _name( nullptr ), _compiled_code( nullptr ) {}
+		function_def() : _name( nullptr ), _compiled_code( nullptr ), _macro( false ) {}
 	};
 
 	typedef unordered_map<string_table_str, function_def> function_map;
 	typedef unordered_map<string_table_str, AllocaInst*> variable_map;
+	typedef unordered_map<string_table_str, Function*> compiler_map;
+
+	struct code_generator;
+	typedef object_ptr (*compiler_function)( code_generator*, object_ptr );
 
 	struct code_generator : public noncopyable
 	{
+		factory_ptr						_factory;
 		string_table_ptr				_str_table;
 		IRBuilder<>						_builder;
 		Module&							_module;
 		shared_ptr<ExecutionEngine>		_exec_engine;
 		shared_ptr<FunctionPassManager>	_fpm;
 		string_table_str				_defn;
+		string_table_str				_defmacro;
 		string_table_str				_f32;
 		string_table_str				_binplus;
 		function_map					_context;
 		variable_map					_fn_context;
+		Function*						_quote_fn;
+		Function*						_unquote_fn;
+		Function*						_value_fn;
+		Function*						_next_fn;
+		Function*						_set_value_fn;
+		Function*						_set_next_fn;
+		Function*						_create_cell_fn;
+		FunctionType*					_compiler_fn_type;
+		compiler_map					_compiler_functions;
+
 		
-		code_generator( string_table_ptr str_table, Module& m )
-			: _str_table( str_table )
+		code_generator( factory_ptr f, string_table_ptr str_table, Module& m )
+			: _factory( f )
+			, _str_table( str_table )
 			, _builder( getGlobalContext() )
 			, _module( m )
 			, _defn( str_table->register_str( "defn" ) )
+			, _defmacro( str_table->register_str( "defmacro" ) )
 			, _f32( str_table->register_str( "f32" ) )
 			, _binplus( str_table->register_str( "+" ) )
+			, _compiler_fn_type( nullptr )
 		{
 			// Create the JIT.  This takes ownership of the module.
 			string ErrStr;
@@ -95,7 +115,99 @@ namespace
 			// Simplify the control flow graph (deleting unreachable blocks, etc).
 			_fpm->add(createCFGSimplificationPass());
 			_fpm->doInitialization();
+			
+			vector<Type*> arg_types;
+			//runtime
+			arg_types.push_back( Type::getInt32PtrTy( getGlobalContext() ) );
+			//arg list.
+			arg_types.push_back( Type::getInt32PtrTy( getGlobalContext() ) );
+			Type* rettype = Type::getInt32PtrTy( getGlobalContext() );
+			_compiler_fn_type = FunctionType::get(rettype, arg_types, false );
+			_quote_fn = register_compiler_fn( quote, "quote" );
+			_unquote_fn = register_compiler_fn( unquote, "unquote" );
+			_value_fn = register_compiler_fn( value, "value" );
+			_next_fn = register_compiler_fn( next, "next" );
+			_set_value_fn = register_compiler_fn( set_value, "set-value" );
+			_set_next_fn = register_compiler_fn( set_next, "set-next" );
+			_create_cell_fn = register_compiler_fn( create_cell, "create-cell" );
 		}
+
+		static object_ptr quote( code_generator* /*rt*/, object_ptr /*arg_list*/ )
+		{
+			puts( "called!!" );
+			return nullptr;
+		};
+
+		static object_ptr unquote( code_generator* /*rt*/, object_ptr /*arg_list*/ )
+		{
+			puts( "called!!" );
+			return nullptr;
+
+		}
+
+		static object_ptr value( code_generator* /*rt*/, object_ptr item )
+		{
+			cons_cell* item_ptr = object_traits::cast<cons_cell>( item );
+			if ( item_ptr )
+			{
+				cons_cell* value_ptr = object_traits::cast<cons_cell>( item_ptr->_value );
+				if ( value_ptr )
+					return value_ptr->_value;
+			}
+			return nullptr;
+		}
+
+		static object_ptr next( code_generator* /*rt*/, object_ptr item )
+		{
+			cons_cell* item_ptr = object_traits::cast<cons_cell>( item );
+			if ( item_ptr )
+			{
+				cons_cell* value_ptr = object_traits::cast<cons_cell>( item_ptr->_value );
+				if ( value_ptr )
+					return value_ptr->_next;
+			}
+			return nullptr;
+		}
+
+		static object_ptr set_next( code_generator* /*rt*/, object_ptr item )
+		{
+			cons_cell* item_ptr = object_traits::cast<cons_cell>( item );
+			if ( item_ptr )
+			{
+				cons_cell* value_ptr = object_traits::cast<cons_cell>( item_ptr->_value );
+				item_ptr = object_traits::cast<cons_cell>( item_ptr->_next );
+				if ( value_ptr && item_ptr )
+					value_ptr->_next = item_ptr->_value;
+			}
+
+			return nullptr;
+		}
+		static object_ptr set_value( code_generator* /*rt*/, object_ptr item )
+		{
+			cons_cell* item_ptr = object_traits::cast<cons_cell>( item );
+			if ( item_ptr )
+			{
+				cons_cell* value_ptr = object_traits::cast<cons_cell>( item_ptr->_value );
+				item_ptr = object_traits::cast<cons_cell>( item_ptr->_next );
+				if ( value_ptr && item_ptr )
+					value_ptr->_value = item_ptr->_value;
+			}
+			return nullptr;
+		}
+
+		static object_ptr create_cell( code_generator* rt, object_ptr /*item*/ )
+		{
+			return rt->_factory->create_cell();
+		}
+
+		Function* register_compiler_fn( compiler_function fn, const char* name )
+		{
+			Function* retval = Function::Create( _compiler_fn_type, Function::ExternalLinkage, "", &_module );
+			_exec_engine->addGlobalMapping( retval, reinterpret_cast<void*>( fn ) );
+			_compiler_functions.insert( make_pair( _str_table->register_str( name ), retval ) );
+			return retval;
+		}
+
 
 		Type* symbol_type( object_ptr obj )
 		{
@@ -111,32 +223,57 @@ namespace
 			return sym._name;
 		}
 
-		Value* codegen_apply( cons_cell& cell )
+		Value* codegen_apply( cons_cell& cell, Function* fn )
 		{
+			IRBuilder<> entry_block_builder( &fn->getEntryBlock(), fn->getEntryBlock().begin() );
 			symbol& fn_name = object_traits::cast<symbol>( *cell._value );
-			vector<Value*> fn_args;
-			for ( cons_cell * arg_cell = object_traits::cast<cons_cell>( cell._next )
-				; arg_cell; arg_cell = object_traits::cast<cons_cell>( arg_cell->_next ) )
+
+			compiler_map::iterator iter = _compiler_functions.find( fn_name._name );
+			if( iter != _compiler_functions.end() )
 			{
-				Value* val = codegen_expr( arg_cell->_value );
-				if( val == nullptr ) throw runtime_error( "statement eval failed" );
-				fn_args.push_back( val );
+				vector<Value*> fn_args;
+				fn_args.push_back( _fn_context.find( _str_table->register_str( "__rt" ) )->second );
+				AllocaInst* fn_arg_builder = entry_block_builder.CreateAlloca( 
+								Type::getInt32PtrTy( getGlobalContext() ), 0
+								, "tmp_arg_builder" );
+				fn_args.push_back( fn_arg_builder );
+				_builder.CreateStore( fn_arg_builder, ConstantPointerNull::get( Type::getInt32PtrTy( getGlobalContext() ) ) );
+				Value* first_arg_cell = _builder.CreateCall( _create_cell_fn, fn_args );
+				_builder.CreateStore( fn_arg_builder, first_arg_cell );
+				for ( cons_cell * arg_cell = object_traits::cast<cons_cell>( cell._next )
+					; arg_cell; arg_cell = object_traits::cast<cons_cell>( arg_cell->_next ) )
+				{
+					Value* val = codegen_expr( arg_cell->_value, fn );
+					if( val == nullptr ) throw runtime_error( "statement eval failed" );
+					fn_args.push_back( val );
+				}
 			}
-
-			if ( fn_name._name == _binplus )
+			else
 			{
-				if ( fn_args.size() != 2 )
-					throw runtime_error( "Unexpected num args" );
-				return _builder.CreateFAdd( fn_args[0], fn_args[1], "addtmp" );
+				vector<Value*> fn_args;
+				for ( cons_cell * arg_cell = object_traits::cast<cons_cell>( cell._next )
+					; arg_cell; arg_cell = object_traits::cast<cons_cell>( arg_cell->_next ) )
+				{
+					Value* val = codegen_expr( arg_cell->_value, fn );
+					if( val == nullptr ) throw runtime_error( "statement eval failed" );
+					fn_args.push_back( val );
+				}
+
+				if ( fn_name._name == _binplus )
+				{
+					if ( fn_args.size() != 2 )
+						throw runtime_error( "Unexpected num args" );
+					return _builder.CreateFAdd( fn_args[0], fn_args[1], "addtmp" );
+				}
+				function_map::iterator iter = _context.find( fn_name._name );
+
+				if ( iter == _context.end() ) throw runtime_error( "Failed to find function" );
+				if ( iter->second._compiled_code == nullptr ) throw runtime_error( "null function" );
+				if ( iter->second._compiled_code->arg_size() != fn_args.size() ) 
+					throw runtime_error( "function arity mismatch" );
+
+				return _builder.CreateCall( iter->second._compiled_code, fn_args, "calltmp" );
 			}
-			function_map::iterator iter = _context.find( fn_name._name );
-
-			if ( iter == _context.end() ) throw runtime_error( "Failed to find function" );
-			if ( iter->second._compiled_code == nullptr ) throw runtime_error( "null function" );
-			if ( iter->second._compiled_code->arg_size() != fn_args.size() ) 
-				throw runtime_error( "function arity mismatch" );
-
-			return _builder.CreateCall( iter->second._compiled_code, fn_args, "calltmp" );
 		}
 		Value* codegen_var( symbol& symbol )
 		{
@@ -149,12 +286,12 @@ namespace
 			return ConstantFP::get(getGlobalContext(), APFloat(data.value) );
 		}
 
-		Value* codegen_expr( object_ptr expr )
+		Value* codegen_expr( object_ptr expr, Function* fn )
 		{
 			switch( expr->type() )
 			{
 			case types::cons_cell:
-				return codegen_apply( object_traits::cast<cons_cell>( *expr ) );
+				return codegen_apply( object_traits::cast<cons_cell>( *expr ), fn );
 			case types::symbol:
 				return codegen_var( object_traits::cast<symbol>( *expr ) );
 			case types::constant:
@@ -185,37 +322,76 @@ namespace
 				}
 			}
 		}
-		
-		Function* codegen_function_def( cons_cell& defn_cell )
+
+		Function* do_codegen_macro(symbol& fn_def, array& fn_args, cons_cell& fn_body, function_def* fn_entry)
 		{
-			//use dereference cast because we want an exception if it isn't a cons cell.
-			cons_cell* item = &object_traits::cast<cons_cell>( *defn_cell._next );
-			symbol& fn_def = object_traits::cast<symbol>( *item->_value );
-			item = &object_traits::cast<cons_cell>( *item->_next );
-			array& fn_args = object_traits::cast<array>( *item->_value );
-			item = &object_traits::cast<cons_cell>( *item->_next );
-			cons_cell& fn_body = *item;
-			if ( item->_next != nullptr )
-				throw runtime_error( "failed to handle function nullptr" );
+			FunctionType* fn_type = nullptr;
+			//macros have much simpler function types.  basically they take a object_ptr (cons_cell pointing
+			//to first argument and return an object_ptr.  We then manually do the unpacking and setup the variables
+			//in the beginning of the function.
+			fn_type = _compiler_fn_type;
 
-			function_def* fn_entry = nullptr;
-			if ( fn_def._name.empty() == false )
+			Function* fn = Function::Create( fn_type, Function::ExternalLinkage, fn_def._name.c_str(), &_module );
+			
+			if ( fn_entry )
+				fn_entry->_compiled_code = fn;
+
+			Function::arg_iterator AI = fn->arg_begin();
+			AI->setName("rt");
+			++AI;
+			AI->setName("args");
+			
+			// Create a new basic block to start insertion into.
+			BasicBlock *function_entry_block = BasicBlock::Create(getGlobalContext(), "entry", fn);
+			_builder.SetInsertPoint(function_entry_block);
+
+			IRBuilder<> entry_block_builder( &fn->getEntryBlock(), fn->getEntryBlock().begin() );
+			
+			//store the two function arguments.
+			Function::arg_iterator AI = fn->arg_begin();
+			AllocaInst *rt = entry_block_builder.CreateAlloca(Type::getInt32PtrTy( getGlobalContext() ), 0,
+					"__rt");
+			_builder.CreateStore( AI, rt );
+			_fn_context.insert( make_pair( _str_table->register_str( "__rt" ), rt ) );
+			++AI;
+
+			AllocaInst* args = entry_block_builder.CreateAlloca(Type::getInt32PtrTy( getGlobalContext() ), 0,
+					"__args");
+			_builder.CreateStore( AI, args );
+
+			_fn_context.insert( make_pair( _str_table->register_str( "__args" ), args ) );
+				
+			vector<Value*> fn_call_args;
+			fn_call_args.push_back( rt );
+
+			for ( size_t idx = 0, end = fn_args._data.size(); idx < end; ++idx )
 			{
-				pair<function_map::iterator, bool> inserter = _context.insert( make_pair( fn_def._name, function_def() ) );
-				fn_entry = &inserter.first->second;
-				//erase first function so we can make new function
-				if ( inserter.second == false && fn_entry->_compiled_code )
-				{
-					fn_entry->_compiled_code->eraseFromParent();
-					fn_entry->_compiled_code = nullptr;
-				}
+				
+				AllocaInst* item = entry_block_builder.CreateAlloca( 
+								Type::getInt32PtrTy( getGlobalContext() ), 0
+								, symbol_name( fn_args._data[idx] ).c_str() );
+				AllocaInst* fn_arg_builder = entry_block_builder.CreateAlloca( 
+								Type::getInt32PtrTy( getGlobalContext() ), 0
+								, "tmp_arg_builder" );
 
-				fn_entry->_name = &fn_def;
-				fn_entry->_arguments = fn_args._data;
-				fn_entry->_body = &fn_body;
+				//Upack the known args
+				Value* item_val = _builder.CreateCall( _value_fn, fn_call_args );
+				_builder.CreateStore( item, item_val );
+				//set _args to be the next item.
+				Value* args_val = _builder.CreateCall( _next_fn, fn_call_args );
+				_builder.CreateStore( args, args_val );
+				_fn_context.insert( make_pair( symbol_name( fn_args._data[idx] ), item ) );
 			}
+				
+			codegen_function_body( fn, fn_body );
+			_fn_context.clear();
+			return fn;
 
+		}
 
+		Function* do_codegen_fn(symbol& fn_def, array& fn_args, cons_cell& fn_body, function_def* fn_entry)
+		{
+			FunctionType* fn_type = nullptr;
 			vector<Type*> arg_types;
 			for_each( fn_args._data.begin(), fn_args._data.end(), [&]
 			(object_ptr arg)
@@ -230,15 +406,14 @@ namespace
 			if ( fn_def._type->_name != _f32 ) throw runtime_error( "unrecoginzed function return type" );
 
 			Type* rettype = Type::getFloatTy( getGlobalContext() );
-			FunctionType* fn_type = FunctionType::get(rettype, arg_types, false);
-
+			fn_type = FunctionType::get(rettype, arg_types, false);
 			Function* fn = Function::Create( fn_type, Function::ExternalLinkage, fn_def._name.c_str(), &_module );
 			
 			if ( fn_entry )
 				fn_entry->_compiled_code = fn;
 
 			size_t arg_idx = 0;
-			for (Function::arg_iterator AI = fn->arg_begin(); arg_idx != arg_types.size();
+			for (Function::arg_iterator AI = fn->arg_begin(); arg_idx != fn_args._data.size();
 				++AI, ++arg_idx)
 			{
 				symbol& fn_arg = object_traits::cast<symbol>( *fn_args._data[arg_idx] );
@@ -268,6 +443,46 @@ namespace
 			_fn_context.clear();
 			return fn;
 		}
+		
+		Function* codegen_function_def( cons_cell& defn_cell, bool is_macro )
+		{
+			//use dereference cast because we want an exception if it isn't a cons cell.
+			cons_cell* item = &object_traits::cast<cons_cell>( *defn_cell._next );
+			symbol& fn_def = object_traits::cast<symbol>( *item->_value );
+			item = &object_traits::cast<cons_cell>( *item->_next );
+			array& fn_args = object_traits::cast<array>( *item->_value );
+			item = &object_traits::cast<cons_cell>( *item->_next );
+			cons_cell& fn_body = *item;
+			if ( item->_next != nullptr )
+				throw runtime_error( "failed to handle function nullptr" );
+
+			function_def* fn_entry = nullptr;
+			if ( fn_def._name.empty() == false )
+			{
+				pair<function_map::iterator, bool> inserter = _context.insert( make_pair( fn_def._name, function_def() ) );
+				fn_entry = &inserter.first->second;
+				//erase first function so we can make new function
+				if ( inserter.second == false && fn_entry->_compiled_code )
+				{
+					fn_entry->_compiled_code->eraseFromParent();
+					fn_entry->_compiled_code = nullptr;
+				}
+
+				fn_entry->_name = &fn_def;
+				fn_entry->_arguments = fn_args._data;
+				fn_entry->_body = &fn_body;
+				fn_entry->_macro = is_macro;
+			}
+			if ( is_macro )
+			{
+				return do_codegen_macro( fn_def, fn_args, fn_body, fn_entry );
+			}
+			else
+			{
+				return do_codegen_fn( fn_def, fn_args, fn_body, fn_entry );
+			}
+			
+		}
 	};
 
 	typedef float (*anon_fn_type)();
@@ -294,7 +509,7 @@ namespace
 			InitializeNativeTarget();
 			LLVMContext &Context = getGlobalContext();
 			Module* module( new Module("my cool jit", Context) );
-			_code_gen = make_shared<code_generator>( _str_table, *module );
+			_code_gen = make_shared<code_generator>( factory, _str_table, *module );
 
 			float retval = 0.0f;
 			for( object_ptr* obj_iter = parse_result.begin(), *end = parse_result.end();
@@ -310,7 +525,11 @@ namespace
 						if ( item_name->_name == _code_gen->_defn )
 						{
 							//run codegen for function.
-							_code_gen->codegen_function_def( *cell );
+							_code_gen->codegen_function_def( *cell, false );
+						}
+						else if ( item_name->_name == _code_gen->_defmacro )
+						{
+							_code_gen->codegen_function_def( *cell, true );
 						}
 						else
 						{

@@ -81,6 +81,15 @@ TEST(corpus_tests, basic1)
 }
 
 
+TEST(corpus_tests, basic2) 
+{
+	auto test_data = corpus_file_text( "basic2.cclj" );
+	auto state_ptr = state::create_state();
+	float test_result = state_ptr->execute( test_data );
+	ASSERT_EQ( 8.0, test_result );
+}
+
+
 TEST(regex_tests, symbol_regex)
 {
 	regex symbol_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*" );

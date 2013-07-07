@@ -186,6 +186,22 @@ namespace
 
 		}
 
+		object_ptr parse_next_item()
+		{
+			eatwhite();
+			size_t token_start = cur_ptr;
+			size_t token_char = current_char();
+			switch( token_char )
+			{
+			case '(': return parse_list();
+			case '[': return parse_array();
+				break;
+			default:
+				find_delimiter();
+				return parse_number_or_symbol( token_start, cur_ptr );
+			}
+		}
+
 		object_ptr parse_array() 
 		{ 
 			array* retval = _factory->create_array();
@@ -199,22 +215,7 @@ namespace
 
 			while( current_char() != ']' )
 			{
-				size_t token_start = cur_ptr;
-				size_t token_char = current_char();
-				if ( atend() ) throw runtime_error( "fail" );
-				if ( token_char == '(' )
-				{
-					array_contents.push_back( parse_list() );
-				}
-				else if ( token_char == '[' )
-				{
-					array_contents.push_back( parse_array() );
-				}
-				else
-				{
-					find_delimiter();
-					array_contents.push_back( parse_number_or_symbol(token_start, cur_ptr) );
-				}
+				array_contents.push_back( parse_next_item() );
 				eatwhite();
 			}
 			++cur_ptr;
@@ -263,46 +264,21 @@ namespace
 			
 			cons_cell* retval = _factory->create_cell();
 			cons_cell* next_cell = nullptr;
-			bool keep_going = true;
-			do
+			while( current_char() != ')' )
 			{
-				eatwhite();
-				//cur_ptr points to valid data.
-				if ( atend() ) throw runtime_error( "mismatched parenthesis" );
-
-			
-				size_t token_start = cur_ptr;
-				char token_start_char = (*str)[token_start];
-				if ( token_start_char == ')' )
-				{
-					cur_ptr = token_start + 1;
-					return retval;
-				}
+				if ( next_cell == nullptr )
+					next_cell = retval;
 				else
 				{
-					if ( next_cell )
-					{
-						auto temp = _factory->create_cell();
-						next_cell->_next = temp;
-						next_cell = temp;
-					}
-					else
-						next_cell = retval;
-
-					if ( token_start_char == '(' )
-						next_cell->_value = parse_list();
-					else if ( token_start_char == '[' )
-						next_cell->_value = parse_array();
-					else
-					{
-						find_delimiter();
-						size_t token_end = cur_ptr;
-						next_cell->_value = parse_number_or_symbol( token_start, token_end );
-					}
+					auto temp = _factory->create_cell();
+					next_cell->_next = temp;
+					next_cell = temp;
 				}
-
-			} while( keep_going );
-
+				next_cell->_value = parse_next_item();
+				eatwhite();
+			}
+			//inc past the )
+			++cur_ptr;
 			return retval;
 		}
 		
