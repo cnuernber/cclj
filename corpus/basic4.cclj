@@ -1,0 +1,7 @@
+(defn lettest|f32 [a|f32 b|f32]
+	(let [c (- a b)
+		  d (+ c b)]
+		(* c d)))
+		
+		
+(lettest 10 20)

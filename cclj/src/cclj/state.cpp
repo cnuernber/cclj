@@ -210,7 +210,6 @@ namespace
 			PN->addIncoming(thenExpr.first, ThenBB);
 			PN->addIncoming(elseExpr.first, ElseBB);
 			return make_pair(PN, thenExpr.second);
-
 		}
 
 		void register_special_form( compiler_special_form fn, const char* name )
