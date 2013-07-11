@@ -62,7 +62,7 @@ string corpus_file_text( const char* fname )
 		input.read( temp_buf, 2056 );
 		auto read_amount = input.gcount();
 		if ( read_amount )
-			retval.append( temp_buf, read_amount );
+			retval.append( temp_buf, static_cast<size_t>( read_amount ) );
 
 	} while (input.eof() == false );
 
@@ -87,6 +87,15 @@ TEST(corpus_tests, basic2)
 	auto state_ptr = state::create_state();
 	float test_result = state_ptr->execute( test_data );
 	ASSERT_EQ( 8.0, test_result );
+}
+
+
+TEST(corpus_tests, basic3) 
+{
+	auto test_data = corpus_file_text( "basic3.cclj" );
+	auto state_ptr = state::create_state();
+	float test_result = state_ptr->execute( test_data );
+	ASSERT_EQ( 20.0f, test_result );
 }
 
 

@@ -43,7 +43,6 @@ namespace
 		virtual array* create_array()  { return _object_pool.construct<array>(); }
 		virtual symbol* create_symbol() { return _object_pool.construct<symbol>(); }
 		virtual constant* create_constant() { return _object_pool.construct<constant>(); }
-		virtual type_ref* create_type_ref() { return _object_pool.construct<type_ref>(); }
 		virtual object_ptr_buffer allocate_obj_buffer(size_t size)
 		{
 			if ( size == 0 )
@@ -53,6 +52,91 @@ namespace
 			memset( new_data, 0, size * sizeof( object_ptr* ) );
 			_buffer_allocs.push_back( new_data );
 			return object_ptr_buffer( new_data, size );
+		}
+	};
+
+	struct type_map_key
+	{
+		string_table_str	_name;
+		type_ref_ptr_buffer _specializations;
+		size_t				_hash_code;
+		type_map_key( string_table_str n, type_ref_ptr_buffer s )
+			: _name( n )
+			, _specializations( s )
+		{
+			_hash_code = std::hash<string_table_str>()( _name );
+			for_each( _specializations.begin(), _specializations.end(), [this]
+			( type_ref_ptr ref )
+			{
+				_hash_code = _hash_code ^ reinterpret_cast<size_t>( ref );
+			} );
+		}
+
+		bool operator==( const type_map_key& other ) const
+		{
+			if ( _name == other._name )
+			{
+				for ( size_t idx = 0, end = _specializations.size(); idx < end; ++idx )
+				{
+					if ( _specializations[idx] != other._specializations[idx] )
+						return false;
+				}
+				return true;
+			}
+			return false;
+		}
+	};
+}
+
+namespace std
+{
+	template<> struct hash<type_map_key>
+	{
+		size_t operator()( const type_map_key& k ) const { return k._hash_code; }
+	};
+}
+
+namespace {
+
+	class type_system_impl : public type_system
+	{
+		allocator_ptr _allocator;
+		typedef unordered_map<type_map_key, type_ref_ptr> type_map;
+		type_map _types;
+	public:
+		type_system_impl( allocator_ptr alloc )
+			: _allocator( alloc )
+		{
+		}
+
+		~type_system_impl()
+		{
+			for_each( _types.begin(), _types.end(), 
+			[this](type_map::value_type& type )
+			{
+				_allocator->deallocate( type.second );
+			} );
+		}
+
+		virtual type_ref& get_type_ref( string_table_str name, type_ref_ptr_buffer _specializations )
+		{
+			type_map_key theKey( name, _specializations );
+			type_map::iterator iter = _types.find( theKey );
+			if ( iter != _types.end() ) return *iter->second;
+			size_t type_size = sizeof( type_ref );
+			size_t array_size = sizeof( type_ref_ptr ) * _specializations.size();
+			uint8_t* mem = _allocator->allocate( type_size + array_size, sizeof(void*), CCLJ_IMMEDIATE_FILE_INFO() );
+			type_ref* retval = reinterpret_cast<type_ref*>( mem );
+			type_ref_ptr* array_data = reinterpret_cast<type_ref_ptr*>( mem + type_size );
+			new (retval) type_ref();
+			retval->_name = name;
+			if ( array_size ) {
+				memcpy( array_data, _specializations.begin(), array_size );
+				retval->_specializations = type_ref_ptr_buffer( array_data, _specializations.size() );
+			}
+			theKey = type_map_key( name, retval->_specializations );
+			_types.insert( make_pair( theKey, retval ) );
+			return *retval;
 		}
 	};
 
@@ -85,7 +169,8 @@ namespace
 
 	class reader_impl : public reader
 	{
-		factory_ptr _factory;
+		factory_ptr		_factory;
+		type_system_ptr _type_system;
 		string_table_ptr _str_table;
 		const string* str;
 		size_t cur_ptr;
@@ -97,8 +182,9 @@ namespace
 
 		string temp_str;
 	public:
-		reader_impl( factory_ptr f, string_table_ptr st ) 
+		reader_impl( factory_ptr f, type_system_ptr ts, string_table_ptr st ) 
 			: _factory( f )
+			, _type_system( ts )
 			, _str_table( st )
 			, number_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*" ) 
 			, _defmacro( st->register_str( "defmacro" ) )
@@ -171,17 +257,14 @@ namespace
 
 		type_ref* parse_type()
 		{
-			type_ref* type_info = nullptr;
 			size_t token_start = cur_ptr;
 			find_delimiter();
 			size_t token_end = cur_ptr;
-			type_info = _factory->create_type_ref();
-			type_info->_name = _str_table->register_str( substr( token_start, token_end ) );
-
-			if ( !atend() && current_char() == '[' )
-				type_info->_specializations = parse_type_array();
-
-			return type_info;
+			auto type_name = _str_table->register_str( substr( token_start, token_end ) );
+			vector<type_ref_ptr> specializations;
+			if ( current_char() == '[' )
+				specializations = parse_type_array();
+			return &_type_system->get_type_ref( type_name, specializations );
 		}
 
 		object_ptr parse_number_or_symbol(size_t token_start, size_t token_end)
@@ -260,27 +343,24 @@ namespace
 			return retval; 
 		}
 
-		object_ptr_buffer parse_type_array()
+		vector<type_ref_ptr> parse_type_array()
 		{
-			object_ptr_buffer  retval;
-			vector<object_ptr> array_contents;
+			++cur_ptr;
+			vector<type_ref*> array_contents;
 			eatwhite();
 			if ( atend() ) throw runtime_error( "fail" );
 			if ( current_char() == ']' )
-				return retval;
+				return vector<type_ref_ptr>();
 
+			char test = current_char();
 			while( current_char() != ']' )
 			{
 				array_contents.push_back( parse_type() );
+				test = current_char();
 			}
 			++cur_ptr;
 
-			if ( array_contents.size() )
-			{
-				retval = _factory->allocate_obj_buffer( array_contents.size() );
-				memcpy( retval.begin(), &array_contents[0], array_contents.size() * sizeof( object_ptr ) );
-			}
-			return retval; 
+			return array_contents;
 		}
 
 		object_ptr parse_list()
@@ -526,7 +606,12 @@ factory_ptr factory::create_factory( allocator_ptr allocator, const cons_cell& e
 	return make_shared<factory_impl>( allocator, empty_cell );
 }
 
-reader_ptr reader::create_reader( factory_ptr factory, string_table_ptr str_table )
+type_system_ptr type_system::create_type_system( allocator_ptr allocator )
 {
-	return make_shared<reader_impl>( factory, str_table );
+	return make_shared<type_system_impl>( allocator );
+}
+
+reader_ptr reader::create_reader( factory_ptr factory, type_system_ptr ts, string_table_ptr str_table )
+{
+	return make_shared<reader_impl>( factory, ts, str_table );
 }

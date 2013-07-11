@@ -1,0 +1,7 @@
+(defn max|f32 [a|f32 b|f32]
+	(if (> a b)
+		a
+		b))
+		
+
+(max 10 20)

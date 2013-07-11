@@ -37,19 +37,25 @@ using namespace llvm;
 namespace
 {
 	
+	typedef function<Value*(const vector<Value*>&)> compiler_intrinsic;
 	struct function_def
 	{
 		symbol*				_name;
 		object_ptr_buffer	_arguments;
 		cons_cell*			_body;
 		Function*			_compiled_code;
+		compiler_intrinsic	_compiler_code;
+		
 
 		function_def() : _name( nullptr ), _compiled_code( nullptr ) {}
 	};
 
-	typedef unordered_map<string_table_str, function_def> function_map;
+	typedef function<pair<Value*, type_ref_ptr> (cons_cell& cell)> compiler_special_form;
+
+	typedef unordered_map<type_ref_ptr, function_def> function_map;
 	typedef unordered_map<string_table_str, AllocaInst*> variable_map;
 	typedef unordered_map<string_table_str, Function*> compiler_map;
+	typedef unordered_map<string_table_str, compiler_special_form> compiler_special_form_map;
 
 	struct code_generator;
 	typedef object_ptr (*compiler_function)( code_generator*, object_ptr );
@@ -57,6 +63,7 @@ namespace
 	struct code_generator : public noncopyable
 	{
 		factory_ptr						_factory;
+		type_system_ptr					_type_system;
 		string_table_ptr				_str_table;
 		IRBuilder<>						_builder;
 		Module&							_module;
@@ -68,10 +75,12 @@ namespace
 		string_table_str				_binplus;
 		function_map					_context;
 		variable_map					_fn_context;
+		compiler_special_form_map		_special_forms;
 
 		
-		code_generator( factory_ptr f, string_table_ptr str_table, Module& m )
+		code_generator( factory_ptr f, type_system_ptr t, string_table_ptr str_table, Module& m )
 			: _factory( f )
+			, _type_system( t )
 			, _str_table( str_table )
 			, _builder( getGlobalContext() )
 			, _module( m )
@@ -104,14 +113,27 @@ namespace
 			// Simplify the control flow graph (deleting unreachable blocks, etc).
 			_fpm->add(createCFGSimplificationPass());
 			_fpm->doInitialization();
+			register_compiler_binary_fn( bind( &code_generator::f_plus, this, std::placeholders::_1 ), "+", "f32" );
+			register_compiler_compare_fn( bind( &code_generator::f_less_than, this, std::placeholders::_1 ), "<", "f32" );
+			register_compiler_compare_fn( bind( &code_generator::f_greater_than, this, std::placeholders::_1 ), ">", "f32" );
+			register_special_form( bind( &code_generator::if_special_form, this, std::placeholders::_1 ), "if" );
 		}
 
 		Type* symbol_type( object_ptr obj )
 		{
 			symbol& sym = object_traits::cast<symbol>( *obj );
-			if ( sym._type && sym._type->_name == _f32 )
-				return Type::getFloatTy( getGlobalContext() );
+			if ( sym._type && sym._type )
+				return type_ref_type( *sym._type );
 			throw runtime_error( "Unrecoginzed symbol type" );
+		}
+
+		Type* type_ref_type( type_ref& type )
+		{
+			if ( &type == &_type_system->get_type_ref( _str_table->register_str( "f32" ) ) )
+				return Type::getFloatTy( getGlobalContext() );
+			else if ( &type == &_type_system->get_type_ref( _str_table->register_str( "i1" ) ) )
+				return Type::getInt1Ty( getGlobalContext() );
+			throw runtime_error( "Unrecoginzed type" );
 		}
 
 		string_table_str symbol_name( object_ptr obj )
@@ -120,48 +142,167 @@ namespace
 			return sym._name;
 		}
 
-		Value* codegen_apply( cons_cell& cell )
+		Value* f_plus( const vector<Value*>& args )
 		{
-			symbol& fn_name = object_traits::cast<symbol>( *cell._value );
+			return _builder.CreateFAdd( args[0], args[1], "tmpadd" );
+		}
+
+		Value* f_less_than( const vector<Value*>& args )
+		{
+			return _builder.CreateFCmpULT( args[0], args[1], "tmpcmp" );
+		}
+
+		Value* f_greater_than( const vector<Value*>& args )
+		{
+			return _builder.CreateFCmpUGT( args[0], args[1], "tmpcmp" );
+		}
+
+		pair<Value*, type_ref_ptr> if_special_form( cons_cell& cell )
+		{
+			cons_cell* condition = object_traits::cast<cons_cell>( cell._next );
+			if ( !condition ) throw runtime_error( "invalid if statement" );
+			cons_cell* then_statement = object_traits::cast<cons_cell>( condition->_next );
+			if ( !then_statement ) throw runtime_error( "invalid if statement" );
+			cons_cell* else_statement = object_traits::cast<cons_cell>( then_statement->_next );
+			if ( !else_statement ) throw runtime_error( "invalid if statement" );
+			//Fine if there is no then statement.
+			pair<Value*,type_ref_ptr> condexpr = codegen_expr( condition->_value );
+			type_ref& bool_type = _type_system->get_type_ref( _str_table->register_str( "i1" ) );
+			if ( condexpr.second != &bool_type ) throw runtime_error( "if statements only work on boolean exprs" );
+			
+			Function *theFunction = _builder.GetInsertBlock()->getParent();
+  
+			// Create blocks for the then and else cases.  Insert the 'then' block at the
+			// end of the function.
+			BasicBlock *ThenBB = BasicBlock::Create(getGlobalContext(), "then", theFunction);
+
+			BasicBlock *ElseBB = BasicBlock::Create(getGlobalContext(), "else");
+
+			BasicBlock *MergeBB = BasicBlock::Create(getGlobalContext(), "ifcont");
+			_builder.CreateCondBr( condexpr.first, ThenBB, ElseBB );
+			_builder.SetInsertPoint( ThenBB );
+
+			pair<Value*,type_ref_ptr> thenExpr = codegen_expr( then_statement->_value );
+
+			_builder.CreateBr( MergeBB );
+
+			ThenBB = _builder.GetInsertBlock();
+
+			theFunction->getBasicBlockList().push_back( ElseBB );
+			_builder.SetInsertPoint( ElseBB );
+
+			pair<Value*,type_ref_ptr> elseExpr = codegen_expr( else_statement->_value );
+
+			if ( thenExpr.second != elseExpr.second ) 
+				throw runtime_error( "Invalid if statement, expressions do not match type" );
+
+			_builder.CreateBr( MergeBB );
+
+			ElseBB = _builder.GetInsertBlock();
+
+			
+			// Emit merge block.
+			theFunction->getBasicBlockList().push_back(MergeBB);
+			_builder.SetInsertPoint(MergeBB);
+			PHINode *PN = _builder.CreatePHI( type_ref_type(*thenExpr.second ), 2,
+											"iftmp");
+  
+			PN->addIncoming(thenExpr.first, ThenBB);
+			PN->addIncoming(elseExpr.first, ElseBB);
+			return make_pair(PN, thenExpr.second);
+
+		}
+
+		void register_special_form( compiler_special_form fn, const char* name )
+		{
+			_special_forms.insert( make_pair( _str_table->register_str( name ), fn ) );
+		}
+
+		//binary functions take two arguments and return the the same type.
+		void register_compiler_binary_fn( compiler_intrinsic fn, const char* name, const char* type )
+		{
+			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
+			type_ref* buffer[2] = { &arg_type, &arg_type};
+			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
+			function_def theDef;
+			theDef._name = _factory->create_symbol();
+			theDef._name->_name = _str_table->register_str( name );
+			theDef._name->_type = &arg_type;
+			theDef._body = nullptr;
+			theDef._compiler_code = fn;
+			_context.insert( make_pair( &func_type, theDef ) );
+		}
+		//comparison functions take two arguments and return an i1.
+		void register_compiler_compare_fn( compiler_intrinsic fn, const char* name, const char* type )
+		{
+			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
+			type_ref& ret_type = _type_system->get_type_ref( _str_table->register_str( "i1" ), type_ref_ptr_buffer() );
+			type_ref* buffer[2] = { &arg_type, &arg_type};
+			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
+			function_def theDef;
+			theDef._name = _factory->create_symbol();
+			theDef._name->_name = _str_table->register_str( name );
+			theDef._name->_type = &ret_type;
+			theDef._body = nullptr;
+			theDef._compiler_code = fn;
+			_context.insert( make_pair( &func_type, theDef ) );
+		}
+
+		pair<Value*,type_ref_ptr> codegen_apply( cons_cell& cell )
+		{
+			symbol& fn_name = object_traits::cast_ref<symbol>( cell._value );
+
+			//check special forms.  If a special form takes this then jump there.
+			compiler_special_form_map::iterator form_iter = _special_forms.find( fn_name._name );
+			if ( form_iter != _special_forms.end() )
+				return form_iter->second( cell );
 
 			vector<Value*> fn_args;
+			vector<type_ref_ptr> fn_arg_types;
 			for ( cons_cell * arg_cell = object_traits::cast<cons_cell>( cell._next )
 				; arg_cell; arg_cell = object_traits::cast<cons_cell>( arg_cell->_next ) )
 			{
-				Value* val = codegen_expr( arg_cell->_value );
-				if( val == nullptr ) throw runtime_error( "statement eval failed" );
-				fn_args.push_back( val );
+				pair<Value*,type_ref_ptr> val = codegen_expr( arg_cell->_value );
+				if( val.first == nullptr ) throw runtime_error( "statement eval failed" );
+				fn_args.push_back( val.first );
+				fn_arg_types.push_back( val.second );
 			}
 
-			if ( fn_name._name == _binplus )
-			{
-				if ( fn_args.size() != 2 )
-					throw runtime_error( "Unexpected num args" );
-				return _builder.CreateFAdd( fn_args[0], fn_args[1], "addtmp" );
-			}
+			type_ref& fn_type = _type_system->get_type_ref( fn_name._name, fn_arg_types );
 
-			function_map::iterator iter = _context.find( fn_name._name );
+			function_map::iterator iter = _context.find( &fn_type );
 
 			if ( iter == _context.end() ) throw runtime_error( "Failed to find function" );
-			if ( iter->second._compiled_code == nullptr ) throw runtime_error( "null function" );
-			if ( iter->second._compiled_code->arg_size() != fn_args.size() ) 
-				throw runtime_error( "function arity mismatch" );
+			if ( iter->second._compiled_code == nullptr && iter->second._compiler_code._Empty() ) throw runtime_error( "null function" );
+			if ( iter->second._compiled_code )
+			{
+				if ( iter->second._compiled_code->arg_size() != fn_args.size() ) 
+					throw runtime_error( "function arity mismatch" );
 
-			return _builder.CreateCall( iter->second._compiled_code, fn_args, "calltmp" );
+				return make_pair( _builder.CreateCall( iter->second._compiled_code, fn_args, "calltmp" )
+								, iter->second._name->_type );
+			}
+			else
+			{
+				return make_pair( iter->second._compiler_code( fn_args ), iter->second._name->_type );
+			}
 		}
-		Value* codegen_var( symbol& symbol )
+		pair<Value*,type_ref_ptr> codegen_var( symbol& symbol )
 		{
 			variable_map::iterator iter = _fn_context.find( symbol._name );
 			if ( iter == _fn_context.end() ) throw runtime_error( "failed to lookup variable" );
-			return _builder.CreateLoad( iter->second, symbol._name.c_str() );
+			return make_pair( _builder.CreateLoad( iter->second, symbol._name.c_str() )
+				, &_type_system->get_type_ref( _str_table->register_str( "f32" ), type_ref_ptr_buffer() ) );
 		}
-		Value* codegen_constant( constant& data )
+		pair<Value*,type_ref_ptr> codegen_constant( constant& data )
 		{
-			return ConstantFP::get(getGlobalContext(), APFloat(data.value) );
+			return make_pair(ConstantFP::get(getGlobalContext(), APFloat(data.value) )
+				, &_type_system->get_type_ref( _str_table->register_str( "f32" ), type_ref_ptr_buffer() ) );
 		}
 
-		Value* codegen_expr( object_ptr expr )
+		pair<Value*,type_ref_ptr> codegen_expr( object_ptr expr )
 		{
+			if ( !expr ) throw runtime_error( "Invalid expression" );
 			switch( expr->type() )
 			{
 			case types::cons_cell:
@@ -182,7 +323,7 @@ namespace
 						; progn_cell = object_traits::cast<cons_cell>( progn_cell->_next ) )
 			{
 				bool is_last = progn_cell->_next == nullptr;
-				Value* last_statement_return = codegen_expr( progn_cell->_value );
+				Value* last_statement_return = codegen_expr( progn_cell->_value ).first;
 				if ( is_last )
 				{
 					if ( last_statement_return )
@@ -209,10 +350,25 @@ namespace
 			if ( item->_next != nullptr )
 				throw runtime_error( "failed to handle function nullptr" );
 
+			FunctionType* fn_type = nullptr;
+			vector<Type*> arg_types;
+			vector<type_ref_ptr> arg_lisp_types;
+			for_each( fn_args._data.begin(), fn_args._data.end(), [&]
+			(object_ptr arg)
+			{
+				symbol& sym = object_traits::cast<symbol>(*arg);
+				if ( sym._type == nullptr ) throw runtime_error( "failed to handle symbol with no type" );
+				if ( sym._type->_name != _f32 ) throw runtime_error( "unrecogized data type" );
+				arg_types.push_back( Type::getFloatTy(getGlobalContext()));
+				arg_lisp_types.push_back( sym._type );
+			} );
+
+			type_ref& fn_lisp_type = _type_system->get_type_ref( _str_table->register_str( fn_def._name ), arg_lisp_types );
+			
 			function_def* fn_entry = nullptr;
 			if ( fn_def._name.empty() == false )
 			{
-				pair<function_map::iterator, bool> inserter = _context.insert( make_pair( fn_def._name, function_def() ) );
+				pair<function_map::iterator, bool> inserter = _context.insert( make_pair( &fn_lisp_type, function_def() ) );
 				fn_entry = &inserter.first->second;
 				//erase first function so we can make new function
 				if ( inserter.second == false && fn_entry->_compiled_code )
@@ -225,16 +381,6 @@ namespace
 				fn_entry->_arguments = fn_args._data;
 				fn_entry->_body = &fn_body;
 			}
-			FunctionType* fn_type = nullptr;
-			vector<Type*> arg_types;
-			for_each( fn_args._data.begin(), fn_args._data.end(), [&]
-			(object_ptr arg)
-			{
-				symbol& sym = object_traits::cast<symbol>(*arg);
-				if ( sym._type == nullptr ) throw runtime_error( "failed to handle symbol with no type" );
-				if ( sym._type->_name != _f32 ) throw runtime_error( "unrecogized data type" );
-				arg_types.push_back( Type::getFloatTy(getGlobalContext()));
-			} );
 
 			if ( fn_def._type == nullptr ) throw runtime_error( "unrecoginzed function return type" );
 			if ( fn_def._type->_name != _f32 ) throw runtime_error( "unrecoginzed function return type" );
@@ -297,13 +443,14 @@ namespace
 		virtual float execute( const string& data )
 		{
 			factory_ptr factory = factory::create_factory( _alloc, _empty_cell );
-			reader_ptr reader = reader::create_reader( factory, _str_table );
+			type_system_ptr type_system = type_system::create_type_system( _alloc );
+			reader_ptr reader = reader::create_reader( factory, type_system, _str_table );
 			object_ptr_buffer parse_result = reader->parse( data );
 			//run through, code-gen the function defs and call the functions.
 			InitializeNativeTarget();
 			LLVMContext &Context = getGlobalContext();
 			Module* module( new Module("my cool jit", Context) );
-			_code_gen = make_shared<code_generator>( factory, _str_table, *module );
+			_code_gen = make_shared<code_generator>( factory, type_system, _str_table, *module );
 
 			float retval = 0.0f;
 			for( object_ptr* obj_iter = parse_result.begin(), *end = parse_result.end();

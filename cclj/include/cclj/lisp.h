@@ -70,16 +70,18 @@ namespace cclj
 			virtual types::_enum type() const { return types::array; }
 		};
 
+		class type_ref;
+		typedef type_ref* type_ref_ptr;
+		typedef data_buffer<type_ref_ptr> type_ref_ptr_buffer;
 		
 		class type_ref : public object
 		{
 		public:
 			string_table_str			_name;
-			data_buffer<object_ptr>		_specializations;
+			type_ref_ptr_buffer			_specializations;
 			enum { item_type = types::type_ref };
 			virtual types::_enum type() const { return types::type_ref; }
 		};
-
 
 
 
@@ -119,7 +121,29 @@ namespace cclj
 				if ( obj.type() == obj_type::item_type ) return static_cast<obj_type&>( obj );
 				throw runtime_error( "invalid cast" );
 			}
+
+			template<typename obj_type>
+			static obj_type& cast_ref( object* obj )
+			{
+				if ( obj->type() == obj_type::item_type ) return *static_cast<obj_type*>( obj );
+				throw runtime_error( "invalid cast" );
+			}
 		};
+
+		class type_system
+		{
+		protected:
+			virtual ~type_system(){}
+		public:
+			friend class shared_ptr<type_system>;
+			//type system ensures the type refs are pointer-comparable.
+			virtual type_ref& get_type_ref( string_table_str name
+										, type_ref_ptr_buffer _specializations = type_ref_ptr_buffer() ) = 0;
+
+			static shared_ptr<type_system> create_type_system( allocator_ptr allocator );
+		};
+
+		typedef shared_ptr<type_system> type_system_ptr;
 
 
 		class factory
@@ -133,7 +157,6 @@ namespace cclj
 			virtual array* create_array() = 0;
 			virtual symbol* create_symbol() = 0;
 			virtual constant* create_constant() = 0;
-			virtual type_ref* create_type_ref() = 0;
 			virtual object_ptr_buffer allocate_obj_buffer(size_t size) = 0;
 
 			static shared_ptr<factory> create_factory( allocator_ptr allocator, const cons_cell& empty_cell );
@@ -149,7 +172,9 @@ namespace cclj
 			//Probably need some erro reporting in there somewhere.
 			virtual object_ptr_buffer parse( const string& str ) = 0;
 
-			static shared_ptr<reader> create_reader( factory_ptr factory, string_table_ptr str_table );
+			static shared_ptr<reader> create_reader( factory_ptr factory
+														, type_system_ptr type_system
+														, string_table_ptr str_table );
 		};
 
 		typedef shared_ptr<reader> reader_ptr;

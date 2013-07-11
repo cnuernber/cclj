@@ -59,6 +59,7 @@ namespace cclj
 	using std::regex;
 	using std::smatch;
 	using std::regex_search;
+	using std::bind;
 
 
 	class garbage_collector;
