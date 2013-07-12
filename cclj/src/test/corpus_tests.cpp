@@ -103,7 +103,7 @@ TEST(corpus_tests, basic4)
 	auto test_data = corpus_file_text( "basic4.cclj" );
 	auto state_ptr = state::create_state();
 	float test_result = state_ptr->execute( test_data );
-	ASSERT_EQ( 20.0f, test_result );
+	ASSERT_EQ( -100.0f, test_result );
 }
 
 

@@ -114,9 +114,12 @@ namespace
 			_fpm->add(createCFGSimplificationPass());
 			_fpm->doInitialization();
 			register_compiler_binary_fn( bind( &code_generator::f_plus, this, std::placeholders::_1 ), "+", "f32" );
+			register_compiler_binary_fn( bind( &code_generator::f_minus, this, std::placeholders::_1 ), "-", "f32" );
+			register_compiler_binary_fn( bind( &code_generator::f_mult, this, std::placeholders::_1 ), "*", "f32" );
 			register_compiler_compare_fn( bind( &code_generator::f_less_than, this, std::placeholders::_1 ), "<", "f32" );
 			register_compiler_compare_fn( bind( &code_generator::f_greater_than, this, std::placeholders::_1 ), ">", "f32" );
 			register_special_form( bind( &code_generator::if_special_form, this, std::placeholders::_1 ), "if" );
+			register_special_form( bind( &code_generator::let_special_form, this, std::placeholders::_1 ), "let" );
 		}
 
 		Type* symbol_type( object_ptr obj )
@@ -147,6 +150,16 @@ namespace
 			return _builder.CreateFAdd( args[0], args[1], "tmpadd" );
 		}
 
+		Value* f_minus( const vector<Value*>& args )
+		{
+			return _builder.CreateFSub( args[0], args[1], "tmpsub" );
+		}
+
+		Value* f_mult( const vector<Value*>& args )
+		{
+			return _builder.CreateFMul( args[0], args[1], "tmpmul" );
+		}
+
 		Value* f_less_than( const vector<Value*>& args )
 		{
 			return _builder.CreateFCmpULT( args[0], args[1], "tmpcmp" );
@@ -157,6 +170,38 @@ namespace
 			return _builder.CreateFCmpUGT( args[0], args[1], "tmpcmp" );
 		}
 
+		pair<Value*, type_ref_ptr> let_special_form( cons_cell& cell )
+		{
+			cons_cell& var_assign = object_traits::cast_ref<cons_cell>( cell._next );
+			cons_cell& body = object_traits::cast_ref<cons_cell>( var_assign._next );
+			object_ptr_buffer assign_block = object_traits::cast_ref<array>( var_assign._value )._data;
+			typedef pair<string_table_str, AllocaInst*> var_entry; 
+			vector<var_entry> shadowed_vars;
+			if ( assign_block.size() % 2 ) throw runtime_error( "invalid let statement" );
+			//Create builder that inserts to the function entry block.
+			Function* theFunction = _builder.GetInsertBlock()->getParent();
+			IRBuilder<> entryBuilder( &theFunction->getEntryBlock(), theFunction->getEntryBlock().begin() );
+			for ( size_t idx = 0, end = assign_block.size(); idx < end; idx += 2 )
+			{
+				symbol& name = object_traits::cast_ref<symbol>( assign_block[idx] );
+				pair<Value*, type_ref_ptr> expr_result = codegen_expr( assign_block[idx+1] );
+				AllocaInst* data = entryBuilder.CreateAlloca( type_ref_type( *expr_result.second ), 0, name._name.c_str() );
+				variable_map::iterator iter = _fn_context.find( name._name );
+				if( iter != _fn_context.end() )
+					shadowed_vars.push_back( *iter );
+				//Immediately map the name so it can be used in the very next expr
+				_fn_context[name._name] = data;
+				_builder.CreateStore( expr_result.first, data );
+			}
+			pair<Value*, type_ref_ptr> retval = codegen_expr( body._value );
+			for_each( shadowed_vars.begin(), shadowed_vars.end(), [this]( const var_entry& entry )
+			{
+				//Reset the variable context.
+				_fn_context[entry.first] = entry.second;
+			} );
+			return retval;
+		}
+
 		pair<Value*, type_ref_ptr> if_special_form( cons_cell& cell )
 		{
 			cons_cell* condition = object_traits::cast<cons_cell>( cell._next );
@@ -165,7 +210,7 @@ namespace
 			if ( !then_statement ) throw runtime_error( "invalid if statement" );
 			cons_cell* else_statement = object_traits::cast<cons_cell>( then_statement->_next );
 			if ( !else_statement ) throw runtime_error( "invalid if statement" );
-			//Fine if there is no then statement.
+
 			pair<Value*,type_ref_ptr> condexpr = codegen_expr( condition->_value );
 			type_ref& bool_type = _type_system->get_type_ref( _str_table->register_str( "i1" ) );
 			if ( condexpr.second != &bool_type ) throw runtime_error( "if statements only work on boolean exprs" );
@@ -174,6 +219,7 @@ namespace
   
 			// Create blocks for the then and else cases.  Insert the 'then' block at the
 			// end of the function.
+			// This code is taken directly from the tutorial.  I do not full understand it.
 			BasicBlock *ThenBB = BasicBlock::Create(getGlobalContext(), "then", theFunction);
 
 			BasicBlock *ElseBB = BasicBlock::Create(getGlobalContext(), "else");
