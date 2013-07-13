@@ -1,6 +1,9 @@
-(def-poly-fn [num-type] ten|num-type []
-  10|num-type)
-  
-  
- (+ (ten|[f32]) (ten|[f32] ))
+(defmacro combine [a b]
+	(quote(+ (unquote a) (unquote b))))
+
+(defn [num-type] add|num-type [a|num-type b|num-type]
+		(combine (+ a b) (static-cast|num-type 5|i8)))
+		
+		
+(add 8|f32 10|f32)
  

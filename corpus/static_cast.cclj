@@ -1,0 +1,4 @@
+(defn add|f32 [a|f32 b|f32]
+	(+ a b))
+	
+(add 10|f32 (static-cast|f32 20|f32))
