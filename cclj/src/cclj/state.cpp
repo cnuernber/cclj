@@ -56,13 +56,26 @@ namespace
 		vector<symbol*> _fields;
 		StructType*		_llvm_type;
 		pod_type() : _llvm_type( nullptr ) {}
+		pair<unsigned,type_ref_ptr> find_ref( string_table_str arg )
+		{
+			vector<symbol*>::iterator iter = find_if( _fields.begin(), _fields.end(), [=](symbol* sym)
+			{
+				return arg == sym->_name;
+			} );
+			if ( iter != _fields.end() )
+			{
+				unsigned idx = static_cast<unsigned>( iter - _fields.begin() );
+				return make_pair( idx, (*iter)->_type );
+			}
+			throw runtime_error( "unable to find symbol" );
+		}
 	};
 
 	typedef function<pair<Value*, type_ref_ptr> (cons_cell& cell)> compiler_special_form;
 	typedef function<type_ref_ptr(cons_cell& cell)> top_level_compiler_special_form;
 
 	typedef unordered_map<type_ref_ptr, function_def> function_map;
-	typedef unordered_map<string_table_str, AllocaInst*> variable_map;
+	typedef unordered_map<string_table_str, pair<AllocaInst*,type_ref_ptr> > variable_map;
 	typedef unordered_map<string_table_str, Function*> compiler_map;
 	typedef unordered_map<string_table_str, compiler_special_form> compiler_special_form_map;
 	typedef unordered_map<string_table_str, top_level_compiler_special_form> top_level_compiler_special_form_map;
@@ -129,6 +142,7 @@ namespace
 			register_special_form( bind( &code_generator::if_special_form, this, std::placeholders::_1 ), "if" );
 			register_special_form( bind( &code_generator::let_special_form, this, std::placeholders::_1 ), "let" );
 			register_top_level_special_form( bind( &code_generator::defn_special_form, this, std::placeholders::_1 ), "defn" );
+			register_top_level_special_form( bind( &code_generator::defpod_special_form, this, std::placeholders::_1 ), "defpod" );
 		}
 
 		Type* symbol_type( object_ptr obj )
@@ -200,7 +214,7 @@ namespace
 			cons_cell& var_assign = object_traits::cast_ref<cons_cell>( cell._next );
 			cons_cell& body = object_traits::cast_ref<cons_cell>( var_assign._next );
 			object_ptr_buffer assign_block = object_traits::cast_ref<array>( var_assign._value )._data;
-			typedef pair<string_table_str, AllocaInst*> var_entry; 
+			typedef pair<string_table_str, pair<AllocaInst*,type_ref_ptr> > var_entry; 
 			vector<var_entry> shadowed_vars;
 			if ( assign_block.size() % 2 ) throw runtime_error( "invalid let statement" );
 			//Create builder that inserts to the function entry block.
@@ -215,7 +229,7 @@ namespace
 				if( iter != _fn_context.end() )
 					shadowed_vars.push_back( *iter );
 				//Immediately map the name so it can be used in the very next expr
-				_fn_context[name._name] = data;
+				_fn_context[name._name] = make_pair(data, expr_result.second);
 				_builder.CreateStore( expr_result.first, data );
 			}
 			pair<Value*, type_ref_ptr> retval = codegen_expr( body._value );
@@ -362,12 +376,48 @@ namespace
 				return make_pair( iter->second._compiler_code( fn_args ), iter->second._name->_type );
 			}
 		}
+		vector<string> split_symbol( symbol& sym )
+		{
+			vector<string> retval;
+			string temp(sym._name.c_str());
+			size_t last_offset = 0;
+			for ( size_t off = temp.find( '.' ); off != string::npos;
+				off = temp.find( '.', off+1 ) )
+			{
+				retval.push_back( temp.substr( last_offset, off - last_offset ) );
+				last_offset = off + 1;
+			}
+			if ( last_offset < temp.size() )
+			{
+				retval.push_back( temp.substr( last_offset, temp.size() - last_offset ) );
+			}
+			return retval;
+		}
 		pair<Value*,type_ref_ptr> codegen_var( symbol& symbol )
 		{
-			variable_map::iterator iter = _fn_context.find( symbol._name );
+			vector<string> splitter( split_symbol( symbol ) );
+			if ( splitter.empty() ) throw runtime_error( "invalid symbol" );
+			variable_map::iterator iter = _fn_context.find( _str_table->register_str( splitter[0].c_str() ) );
 			if ( iter == _fn_context.end() ) throw runtime_error( "failed to lookup variable" );
-			return make_pair( _builder.CreateLoad( iter->second, symbol._name.c_str() )
-				, &_type_system->get_type_ref( _str_table->register_str( "f32" ), type_ref_ptr_buffer() ) );
+			Value* load_var = iter->second.first;
+			type_ref_ptr stack_type = iter->second.second;
+			if ( splitter.size() > 1 )
+			{
+				vector<Value*> GEPargs;
+				GEPargs.push_back( ConstantInt::get( Type::getInt32Ty(getGlobalContext()), 0 ) );
+				for ( size_t idx = 1, end = splitter.size(); idx < end; ++idx )
+				{
+					type_pod_map::iterator pod_type_iter = _pod_types.find( stack_type );
+					if( pod_type_iter == _pod_types.end() ) throw runtime_error( "symbol does not point to pod type" );
+					pod_type* pod = &pod_type_iter->second;
+					pair<unsigned,type_ref_ptr> sym_index = pod->find_ref( _str_table->register_str( splitter[idx].c_str() ) );
+					GEPargs.push_back( ConstantInt::get( Type::getInt32Ty(getGlobalContext()), sym_index.first ) ); 
+					stack_type = sym_index.second;
+				}
+				load_var = _builder.CreateInBoundsGEP(load_var, GEPargs);
+			}
+			Value* loaded_item = _builder.CreateLoad( load_var );
+			return make_pair( loaded_item, stack_type );
 		}
 		pair<Value*,type_ref_ptr> codegen_constant( constant& data )
 		{
@@ -444,7 +494,7 @@ namespace
 				// Store the initial value into the alloca.
 				_builder.CreateStore(AI, Alloca);
 				
-				bool inserted = _fn_context.insert(make_pair( arg_def._name, Alloca ) ).second;
+				bool inserted = _fn_context.insert(make_pair( arg_def._name, make_pair(Alloca, arg_def._type ) ) ).second;
 				if ( !inserted )
 					throw runtime_error( "duplicate function argument name" );
 			}
@@ -550,11 +600,13 @@ namespace
 			int idx = 0;
 			for_each( fields.begin(), fields.end(), [&](symbol* field)
 			{
-				Value* val_ptr = _builder.CreateConstGEP2_32( struct_alloca, 0, idx, field->_name.c_str() );
-				_builder.CreateStore( _fn_context.find( field->_name )->second, val_ptr );
+				Value* val_ptr = _builder.CreateConstInBoundsGEP2_32( struct_alloca, 0, idx, field->_name.c_str() );
+				Value* arg_val = _builder.CreateLoad( _fn_context.find( field->_name )->second.first );
+				_builder.CreateStore( arg_val, val_ptr );
 				++idx;
 			} );
-			_builder.CreateRet( struct_alloca );
+			Value* retval = _builder.CreateLoad( struct_alloca );
+			_builder.CreateRet( retval );
 			verifyFunction(*constructor );
 			_fpm->run( *constructor );
 			_fn_context.clear();

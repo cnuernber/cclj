@@ -89,12 +89,15 @@ namespace
 		{
 			if ( _name == other._name )
 			{
-				for ( size_t idx = 0, end = _specializations.size(); idx < end; ++idx )
+				if ( _specializations.size() == other._specializations.size() )
 				{
-					if ( _specializations[idx] != other._specializations[idx] )
-						return false;
+					for ( size_t idx = 0, end = _specializations.size(); idx < end; ++idx )
+					{
+						if ( _specializations[idx] != other._specializations[idx] )
+							return false;
+					}
+					return true;
 				}
-				return true;
 			}
 			return false;
 		}

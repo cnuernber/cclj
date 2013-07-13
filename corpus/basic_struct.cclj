@@ -4,6 +4,6 @@
 )
 
 (defn sum-struct|f32 [s|pod-type]
-	(+ (s.a) (s.b)))
+	(+ s.a s.b))
 	
 (sum-struct (pod-type 5|f32 10|f32))
