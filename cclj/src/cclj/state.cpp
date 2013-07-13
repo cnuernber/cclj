@@ -140,8 +140,8 @@ namespace
 			register_compiler_binary_float_fn( bind( &code_generator::f_plus, this, std::placeholders::_1 ), "+" );
 			register_compiler_binary_float_fn( bind( &code_generator::f_minus, this, std::placeholders::_1 ), "-" );
 			register_compiler_binary_float_fn( bind( &code_generator::f_mult, this, std::placeholders::_1 ), "*" );
-			register_compiler_binary_float_fn( bind( &code_generator::f_less_than, this, std::placeholders::_1 ), "<" );
-			register_compiler_binary_float_fn( bind( &code_generator::f_greater_than, this, std::placeholders::_1 ), ">" );
+			register_compiler_compare_float_fn( bind( &code_generator::f_less_than, this, std::placeholders::_1 ), "<" );
+			register_compiler_compare_float_fn( bind( &code_generator::f_greater_than, this, std::placeholders::_1 ), ">" );
 
 			register_compiler_binary_int_fn( bind( &code_generator::i_plus, this, std::placeholders::_1 ), "+" );
 			register_compiler_binary_int_fn( bind( &code_generator::i_minus, this, std::placeholders::_1 ), "-" );
@@ -161,7 +161,7 @@ namespace
 			register_top_level_special_form( 
 				bind( &code_generator::defn_special_form, this, std::placeholders::_1 ), "defn" );
 			register_top_level_special_form( 
-				bind( &code_generator::defpod_special_form, this, std::placeholders::_1 ), "defpod" );
+				bind( &code_generator::defpod_special_form, this, std::placeholders::_1 ), "def-pod" );
 		}
 
 		Type* symbol_type( object_ptr obj )
@@ -574,23 +574,7 @@ namespace
 				return make_pair( iter->second._compiler_code( fn_args ), iter->second._name->_type );
 			}
 		}
-		vector<string> split_symbol( symbol& sym )
-		{
-			vector<string> retval;
-			string temp(sym._name.c_str());
-			size_t last_offset = 0;
-			for ( size_t off = temp.find( '.' ); off != string::npos;
-				off = temp.find( '.', off+1 ) )
-			{
-				retval.push_back( temp.substr( last_offset, off - last_offset ) );
-				last_offset = off + 1;
-			}
-			if ( last_offset < temp.size() )
-			{
-				retval.push_back( temp.substr( last_offset, temp.size() - last_offset ) );
-			}
-			return retval;
-		}
+
 		pair<Value*,type_ref_ptr> codegen_var( symbol& symbol )
 		{
 			vector<string> splitter( split_symbol( symbol ) );

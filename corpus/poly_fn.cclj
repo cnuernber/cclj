@@ -1,0 +1,6 @@
+(def-poly-fn [num-type] ten|num-type []
+  10|num-type)
+  
+  
+ (+ (ten|[f32]) (ten|[f32] ))
+ 

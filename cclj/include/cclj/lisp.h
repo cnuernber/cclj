@@ -258,6 +258,25 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 
 		typedef shared_ptr<reader> reader_ptr;
 
+
+		
+		static vector<string> split_symbol( symbol& sym )
+		{
+			vector<string> retval;
+			string temp(sym._name.c_str());
+			size_t last_offset = 0;
+			for ( size_t off = temp.find( '.' ); off != string::npos;
+				off = temp.find( '.', off+1 ) )
+			{
+				retval.push_back( temp.substr( last_offset, off - last_offset ) );
+				last_offset = off + 1;
+			}
+			if ( last_offset < temp.size() )
+			{
+				retval.push_back( temp.substr( last_offset, temp.size() - last_offset ) );
+			}
+			return retval;
+		}
 	}
 }
 

@@ -1,4 +1,4 @@
-(defpod pod-type 
+(def-pod pod-type 
   a|f32
   b|f32
 )
