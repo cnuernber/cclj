@@ -1,0 +1,9 @@
+(defpod pod-type 
+  a|f32
+  b|f32
+)
+
+(defn sum-struct|f32 [s|pod-type]
+	(+ (s.a) (s.b)))
+	
+(sum-struct (pod-type 5|f32 10|f32))

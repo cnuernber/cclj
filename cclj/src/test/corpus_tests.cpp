@@ -72,39 +72,20 @@ string corpus_file_text( const char* fname )
 }
 
 
-TEST(corpus_tests, basic1) 
-{
-	auto test_data = corpus_file_text( "basic1.cclj" );
-	auto state_ptr = state::create_state();
-	float test_result = state_ptr->execute( test_data );
-	ASSERT_EQ( 3.0, test_result );
+#define DEFINE_SIMPLE_CORPUS_TEST( name, answer )			\
+TEST(corpus_tests, ##name )									\
+{															\
+	auto test_data = corpus_file_text( #name ".cclj" );		\
+	auto state_ptr = state::create_state();					\
+	float test_result = state_ptr->execute( test_data );	\
+	ASSERT_EQ( answer, test_result );						\
 }
 
-
-TEST(corpus_tests, basic2) 
-{
-	auto test_data = corpus_file_text( "basic2.cclj" );
-	auto state_ptr = state::create_state();
-	float test_result = state_ptr->execute( test_data );
-	ASSERT_EQ( 8.0, test_result );
-}
-
-
-TEST(corpus_tests, basic3) 
-{
-	auto test_data = corpus_file_text( "basic3.cclj" );
-	auto state_ptr = state::create_state();
-	float test_result = state_ptr->execute( test_data );
-	ASSERT_EQ( 20.0f, test_result );
-}
-
-TEST(corpus_tests, basic4) 
-{
-	auto test_data = corpus_file_text( "basic4.cclj" );
-	auto state_ptr = state::create_state();
-	float test_result = state_ptr->execute( test_data );
-	ASSERT_EQ( -100.0f, test_result );
-}
+DEFINE_SIMPLE_CORPUS_TEST( basic1, 3.0f );
+DEFINE_SIMPLE_CORPUS_TEST( basic2, 8.0f );
+DEFINE_SIMPLE_CORPUS_TEST( basic3, 20.0f );
+DEFINE_SIMPLE_CORPUS_TEST( basic4, -100.0f );
+DEFINE_SIMPLE_CORPUS_TEST( basic_struct, 15.0f );
 
 
 TEST(regex_tests, symbol_regex)

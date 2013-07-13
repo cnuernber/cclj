@@ -41,9 +41,9 @@ namespace
 	typedef function<Value*(const vector<Value*>&)> compiler_intrinsic;
 	struct function_def
 	{
+		//note that the _name._type signifies the return type of the function
+		//not the argument types.  These are not represented here.
 		symbol*				_name;
-		object_ptr_buffer	_arguments;
-		cons_cell*			_body;
 		Function*			_compiled_code;
 		compiler_intrinsic	_compiler_code;
 		
@@ -51,13 +51,23 @@ namespace
 		function_def() : _name( nullptr ), _compiled_code( nullptr ) {}
 	};
 
+	struct pod_type
+	{
+		vector<symbol*> _fields;
+		StructType*		_llvm_type;
+		pod_type() : _llvm_type( nullptr ) {}
+	};
+
 	typedef function<pair<Value*, type_ref_ptr> (cons_cell& cell)> compiler_special_form;
+	typedef function<type_ref_ptr(cons_cell& cell)> top_level_compiler_special_form;
 
 	typedef unordered_map<type_ref_ptr, function_def> function_map;
 	typedef unordered_map<string_table_str, AllocaInst*> variable_map;
 	typedef unordered_map<string_table_str, Function*> compiler_map;
 	typedef unordered_map<string_table_str, compiler_special_form> compiler_special_form_map;
+	typedef unordered_map<string_table_str, top_level_compiler_special_form> top_level_compiler_special_form_map;
 	typedef unordered_map<type_ref_ptr, Type*> type_llvm_type_map;
+	typedef unordered_map<type_ref_ptr,pod_type> type_pod_map;
 
 	struct code_generator;
 	typedef object_ptr (*compiler_function)( code_generator*, object_ptr );
@@ -65,21 +75,19 @@ namespace
 
 	struct code_generator : public noncopyable
 	{
-		factory_ptr						_factory;
-		type_system_ptr					_type_system;
-		string_table_ptr				_str_table;
-		IRBuilder<>						_builder;
-		Module&							_module;
-		shared_ptr<ExecutionEngine>		_exec_engine;
-		shared_ptr<FunctionPassManager>	_fpm;
-		string_table_str				_defn;
-		string_table_str				_defmacro;
-		string_table_str				_f32;
-		string_table_str				_binplus;
-		function_map					_context;
-		variable_map					_fn_context;
-		compiler_special_form_map		_special_forms;
-		type_llvm_type_map				_type_map;
+		factory_ptr							_factory;
+		type_system_ptr						_type_system;
+		string_table_ptr					_str_table;
+		IRBuilder<>							_builder;
+		Module&								_module;
+		shared_ptr<ExecutionEngine>			_exec_engine;
+		shared_ptr<FunctionPassManager>		_fpm;
+		function_map						_context;
+		variable_map						_fn_context;
+		compiler_special_form_map			_special_forms;
+		top_level_compiler_special_form_map	_top_level_special_forms;
+		type_llvm_type_map					_type_map;
+		type_pod_map						_pod_types;
 
 		
 		code_generator( factory_ptr f, type_system_ptr t, string_table_ptr str_table, Module& m )
@@ -88,10 +96,6 @@ namespace
 			, _str_table( str_table )
 			, _builder( getGlobalContext() )
 			, _module( m )
-			, _defn( str_table->register_str( "defn" ) )
-			, _defmacro( str_table->register_str( "defmacro" ) )
-			, _f32( str_table->register_str( "f32" ) )
-			, _binplus( str_table->register_str( "+" ) )
 		{
 			// Create the JIT.  This takes ownership of the module.
 			string ErrStr;
@@ -124,6 +128,7 @@ namespace
 			register_compiler_compare_fn( bind( &code_generator::f_greater_than, this, std::placeholders::_1 ), ">", "f32" );
 			register_special_form( bind( &code_generator::if_special_form, this, std::placeholders::_1 ), "if" );
 			register_special_form( bind( &code_generator::let_special_form, this, std::placeholders::_1 ), "let" );
+			register_top_level_special_form( bind( &code_generator::defn_special_form, this, std::placeholders::_1 ), "defn" );
 		}
 
 		Type* symbol_type( object_ptr obj )
@@ -278,9 +283,16 @@ namespace
 			return make_pair(PN, thenExpr.second);
 		}
 
+		
+
 		void register_special_form( compiler_special_form fn, const char* name )
 		{
 			_special_forms.insert( make_pair( _str_table->register_str( name ), fn ) );
+		}
+
+		void register_top_level_special_form( top_level_compiler_special_form fn, const char* name )
+		{
+			_top_level_special_forms.insert( make_pair( _str_table->register_str( name ), fn ) );
 		}
 
 		//binary functions take two arguments and return the the same type.
@@ -293,7 +305,6 @@ namespace
 			theDef._name = _factory->create_symbol();
 			theDef._name->_name = _str_table->register_str( name );
 			theDef._name->_type = &arg_type;
-			theDef._body = nullptr;
 			theDef._compiler_code = fn;
 			_context.insert( make_pair( &func_type, theDef ) );
 		}
@@ -308,7 +319,6 @@ namespace
 			theDef._name = _factory->create_symbol();
 			theDef._name->_name = _str_table->register_str( name );
 			theDef._name->_type = &ret_type;
-			theDef._body = nullptr;
 			theDef._compiler_code = fn;
 			_context.insert( make_pair( &func_type, theDef ) );
 		}
@@ -408,8 +418,39 @@ namespace
 				throw runtime_error( "function definition failed" );
 			return last_statement_return.second;
 		}
+
+		void initialize_function(Function& fn, data_buffer<symbol*> fn_args)
+		{
+			size_t arg_idx = 0;
+			for (Function::arg_iterator AI = fn.arg_begin(); arg_idx !=fn_args.size();
+				++AI, ++arg_idx)
+			{
+				symbol& fn_arg = *fn_args[arg_idx];
+				AI->setName(fn_arg._name.c_str());
+			}
+			
+			// Create a new basic block to start insertion into.
+			BasicBlock *function_entry_block = BasicBlock::Create(getGlobalContext(), "entry", &fn);
+			_builder.SetInsertPoint(function_entry_block);
+			Function::arg_iterator AI = fn.arg_begin();
+			IRBuilder<> entry_block_builder( &fn.getEntryBlock(), fn.getEntryBlock().begin() );
+			for (unsigned Idx = 0, e = fn_args.size(); Idx != e; ++Idx, ++AI) {
+				symbol& arg_def( *fn_args[Idx] );
+				// Create an alloca for this variable.
+				if ( arg_def._type == nullptr ) throw runtime_error( "Invalid function argument" );
+				AllocaInst *Alloca = entry_block_builder.CreateAlloca(type_ref_type( *arg_def._type ), 0,
+						arg_def._name.c_str());
+
+				// Store the initial value into the alloca.
+				_builder.CreateStore(AI, Alloca);
+				
+				bool inserted = _fn_context.insert(make_pair( arg_def._name, Alloca ) ).second;
+				if ( !inserted )
+					throw runtime_error( "duplicate function argument name" );
+			}
+		}
 		
-		Function* codegen_function_def( cons_cell& defn_cell )
+		pair<Function*,type_ref_ptr> codegen_function_def( cons_cell& defn_cell )
 		{
 			//use dereference cast because we want an exception if it isn't a cons cell.
 			cons_cell* item = &object_traits::cast<cons_cell>( *defn_cell._next );
@@ -424,12 +465,13 @@ namespace
 			FunctionType* fn_type = nullptr;
 			vector<Type*> arg_types;
 			vector<type_ref_ptr> arg_lisp_types;
+			vector<symbol*> fn_arg_symbols;
 			for_each( fn_args._data.begin(), fn_args._data.end(), [&]
 			(object_ptr arg)
 			{
 				symbol& sym = object_traits::cast<symbol>(*arg);
 				if ( sym._type == nullptr ) throw runtime_error( "failed to handle symbol with no type" );
-				if ( sym._type->_name != _f32 ) throw runtime_error( "unrecogized data type" );
+				fn_arg_symbols.push_back( &sym );
 				arg_types.push_back( type_ref_type( *sym._type ) );
 				arg_lisp_types.push_back( sym._type );
 			} );
@@ -449,8 +491,6 @@ namespace
 				}
 
 				fn_entry->_name = &fn_def;
-				fn_entry->_arguments = fn_args._data;
-				fn_entry->_body = &fn_body;
 			}
 
 			if ( fn_def._type == nullptr ) throw runtime_error( "unrecoginzed function return type" );
@@ -463,36 +503,70 @@ namespace
 			if ( fn_entry )
 				fn_entry->_compiled_code = fn;
 
-			size_t arg_idx = 0;
-			for (Function::arg_iterator AI = fn->arg_begin(); arg_idx != fn_args._data.size();
-				++AI, ++arg_idx)
-			{
-				symbol& fn_arg = object_traits::cast<symbol>( *fn_args._data[arg_idx] );
-				AI->setName(fn_arg._name.c_str());
-			}
-			
-			// Create a new basic block to start insertion into.
-			BasicBlock *function_entry_block = BasicBlock::Create(getGlobalContext(), "entry", fn);
-			_builder.SetInsertPoint(function_entry_block);
+			initialize_function( *fn, fn_arg_symbols );
 
-			IRBuilder<> entry_block_builder( &fn->getEntryBlock(), fn->getEntryBlock().begin() );
-			
-			Function::arg_iterator AI = fn->arg_begin();
-			for (unsigned Idx = 0, e = fn_args._data.size(); Idx != e; ++Idx, ++AI) {
-				// Create an alloca for this variable.
-				AllocaInst *Alloca = entry_block_builder.CreateAlloca(symbol_type( fn_args._data[Idx] ), 0,
-						symbol_name(fn_args._data[Idx]).c_str());
-
-				// Store the initial value into the alloca.
-				_builder.CreateStore(AI, Alloca);
-				
-				bool inserted = _fn_context.insert(make_pair( symbol_name(fn_args._data[Idx]), Alloca ) ).second;
-				if ( !inserted )
-					throw runtime_error( "duplicate function argument name" );
-			}
 			codegen_function_body( fn, fn_body );
+
 			_fn_context.clear();
-			return fn;
+			return make_pair(fn, fn_def._type);
+		}
+		type_ref_ptr defn_special_form( cons_cell& defn_cell )
+		{
+			return codegen_function_def(defn_cell).second;
+		}
+
+		type_ref_ptr defpod_special_form( cons_cell& defpod_cell )
+		{
+			//Create the struct, and create a function that given all the fields of the struct can
+			//return the struct.
+			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( defpod_cell._next  );
+			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
+			type_ref& this_pod_type = _type_system->get_type_ref( name._name );
+			pair<type_pod_map::iterator,bool> insert_result = _pod_types.insert(make_pair( &this_pod_type, pod_type() ));
+			if ( insert_result.second == false ) throw runtime_error( "redefinition of pod types is not allowed" );
+			pod_type& new_pod = insert_result.first->second;
+			vector<symbol*>& fields(new_pod._fields);
+			vector<type_ref*> fn_arg_types;
+			vector<Type*> types;
+			for ( cons_cell* field_cell = object_traits::cast<cons_cell>( name_cell._next );
+				field_cell; field_cell = object_traits::cast<cons_cell>( field_cell->_next ) )
+			{
+				symbol& field_name = object_traits::cast_ref<symbol>( field_cell->_value );
+				if ( field_name._type == nullptr ) throw runtime_error( "invalid pod type field" );
+				fields.push_back( &field_name );
+				types.push_back( type_ref_type( *field_name._type ) );
+				fn_arg_types.push_back( field_name._type );
+			}
+			new_pod._llvm_type = StructType::create( getGlobalContext(), types );
+			_type_map.insert( make_pair( &this_pod_type, new_pod._llvm_type ) );
+			type_ref& new_fn_type = _type_system->get_type_ref( name._name, fn_arg_types );
+			FunctionType* fn_llvm_type = FunctionType::get( new_pod._llvm_type, types, false );
+			_type_map.insert( make_pair( &new_fn_type, fn_llvm_type ) );
+			Function* constructor = Function::Create( fn_llvm_type, Function::ExternalLinkage, name._name.c_str(), &_module );
+			//output the function
+			initialize_function( *constructor, new_pod._fields );
+			IRBuilder<> entry_block_builder( &constructor->getEntryBlock(), constructor->getEntryBlock().begin() );
+			AllocaInst* struct_alloca = entry_block_builder.CreateAlloca( new_pod._llvm_type, 0, "retval" );
+			int idx = 0;
+			for_each( fields.begin(), fields.end(), [&](symbol* field)
+			{
+				Value* val_ptr = _builder.CreateConstGEP2_32( struct_alloca, 0, idx, field->_name.c_str() );
+				_builder.CreateStore( _fn_context.find( field->_name )->second, val_ptr );
+				++idx;
+			} );
+			_builder.CreateRet( struct_alloca );
+			verifyFunction(*constructor );
+			_fpm->run( *constructor );
+			_fn_context.clear();
+			function_def new_def;
+			symbol* fn_symbol = _factory->create_symbol();
+			fn_symbol->_name = name._name;
+			fn_symbol->_type = &this_pod_type;
+			new_def._name = fn_symbol;
+			new_def._compiled_code = constructor;
+			//wowsa this is pretty tough.
+			_context.insert( make_pair( &new_fn_type, new_def ) );
+			return &this_pod_type;
 		}
 	};
 
@@ -531,35 +605,33 @@ namespace
 				cons_cell* cell = object_traits::cast<cons_cell>( obj );
 				if ( cell )
 				{
-					symbol* item_name = object_traits::cast<symbol>(cell->_value);
-					if ( item_name )
+					symbol& item_name = object_traits::cast_ref<symbol>(cell->_value);
+					top_level_compiler_special_form_map::iterator sp 
+						= _code_gen->_top_level_special_forms.find( item_name._name );
+					if ( sp != _code_gen->_top_level_special_forms.end() )
 					{
-						if ( item_name->_name == _code_gen->_defn )
-						{
-							//run codegen for function.
-							_code_gen->codegen_function_def( *cell );
-						}
-						else
-						{
-							Type* rettype = Type::getFloatTy( getGlobalContext() );
-							FunctionType* fn_type = FunctionType::get(rettype, vector<Type*>(), false);
-							Function* fn = Function::Create( fn_type
-																, Function::ExternalLinkage
-																, "", &_code_gen->_module );
+						sp->second( *cell );
+					}
+					else
+					{
+						Type* rettype = Type::getFloatTy( getGlobalContext() );
+						FunctionType* fn_type = FunctionType::get(rettype, vector<Type*>(), false);
+						Function* fn = Function::Create( fn_type
+															, Function::ExternalLinkage
+															, "", &_code_gen->_module );
 							
-							BasicBlock *function_entry_block = BasicBlock::Create(getGlobalContext(), "entry", fn);
-							_code_gen->_builder.SetInsertPoint(function_entry_block);
-							cons_cell* progn_cell = factory->create_cell();
-							progn_cell->_value = cell;
-							type_ref_ptr ref = _code_gen->codegen_function_body( fn, *progn_cell );
-							if ( ref != &type_system->get_type_ref( base_numeric_types::f32 ) )
-								throw runtime_error( "Expression is not of float type" );
+						BasicBlock *function_entry_block = BasicBlock::Create(getGlobalContext(), "entry", fn);
+						_code_gen->_builder.SetInsertPoint(function_entry_block);
+						cons_cell* progn_cell = factory->create_cell();
+						progn_cell->_value = cell;
+						type_ref_ptr ref = _code_gen->codegen_function_body( fn, *progn_cell );
+						if ( ref != &type_system->get_type_ref( base_numeric_types::f32 ) )
+							throw runtime_error( "Expression is not of float type" );
 							
-							void *fn_ptr= _code_gen->_exec_engine->getPointerToFunction(fn);
-							if ( !fn_ptr ) throw runtime_error( "function definition failed" );
-							anon_fn_type anon_fn = reinterpret_cast<anon_fn_type>( fn_ptr );
-							retval = anon_fn();
-						}
+						void *fn_ptr= _code_gen->_exec_engine->getPointerToFunction(fn);
+						if ( !fn_ptr ) throw runtime_error( "function definition failed" );
+						anon_fn_type anon_fn = reinterpret_cast<anon_fn_type>( fn_ptr );
+						retval = anon_fn();
 					}
 				}
 			}
