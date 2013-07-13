@@ -57,6 +57,7 @@ namespace
 	typedef unordered_map<string_table_str, AllocaInst*> variable_map;
 	typedef unordered_map<string_table_str, Function*> compiler_map;
 	typedef unordered_map<string_table_str, compiler_special_form> compiler_special_form_map;
+	typedef unordered_map<type_ref_ptr, Type*> type_llvm_type_map;
 
 	struct code_generator;
 	typedef object_ptr (*compiler_function)( code_generator*, object_ptr );
@@ -78,6 +79,7 @@ namespace
 		function_map					_context;
 		variable_map					_fn_context;
 		compiler_special_form_map		_special_forms;
+		type_llvm_type_map				_type_map;
 
 		
 		code_generator( factory_ptr f, type_system_ptr t, string_table_ptr str_table, Module& m )
@@ -134,11 +136,27 @@ namespace
 
 		Type* type_ref_type( type_ref& type )
 		{
-			if ( &type == &_type_system->get_type_ref( _str_table->register_str( "f32" ) ) )
-				return Type::getFloatTy( getGlobalContext() );
-			else if ( &type == &_type_system->get_type_ref( _str_table->register_str( "i1" ) ) )
-				return Type::getInt1Ty( getGlobalContext() );
-			throw runtime_error( "Unrecoginzed type" );
+			
+			type_llvm_type_map::iterator iter = _type_map.find( &type );
+			if ( iter != _type_map.end() ) return iter->second;
+			base_numeric_types::_enum val = _type_system->to_base_numeric_type( type );
+			Type* base_type = nullptr;
+			switch( val )
+			{
+#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )				\
+			case base_numeric_types::name: base_type		\
+				= llvm_helper::llvm_constant_map<base_numeric_types::name>::type(); break;
+				CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+			default:
+				throw runtime_error( "unable to find type" );
+			}
+			//Just in case someone adds another lookup system.
+			if ( base_type == nullptr )
+				throw runtime_error( "unable to find type" );
+
+			_type_map.insert( make_pair( &type, base_type ) );
+			return base_type;
 		}
 
 		string_table_str symbol_name( object_ptr obj )
@@ -371,26 +389,24 @@ namespace
 			}
 		}
 
-		void codegen_function_body( Function* fn, cons_cell& fn_body )
+		type_ref_ptr codegen_function_body( Function* fn, cons_cell& fn_body )
 		{
 			//codegen the body of the function
+			pair<Value*,type_ref_ptr> last_statement_return( nullptr, nullptr );
 			for ( cons_cell* progn_cell = &fn_body; progn_cell
 						; progn_cell = object_traits::cast<cons_cell>( progn_cell->_next ) )
 			{
-				bool is_last = progn_cell->_next == nullptr;
-				Value* last_statement_return = codegen_expr( progn_cell->_value ).first;
-				if ( is_last )
-				{
-					if ( last_statement_return )
-					{
-						_builder.CreateRet( last_statement_return );
-						verifyFunction(*fn );
-						_fpm->run( *fn );
-					}
-					else
-						throw runtime_error( "function definition failed" );
-				}
+				last_statement_return = codegen_expr( progn_cell->_value );
 			}
+			if ( last_statement_return.first )
+			{
+				_builder.CreateRet( last_statement_return.first );
+				verifyFunction(*fn );
+				_fpm->run( *fn );
+			}
+			else
+				throw runtime_error( "function definition failed" );
+			return last_statement_return.second;
 		}
 		
 		Function* codegen_function_def( cons_cell& defn_cell )
@@ -414,7 +430,7 @@ namespace
 				symbol& sym = object_traits::cast<symbol>(*arg);
 				if ( sym._type == nullptr ) throw runtime_error( "failed to handle symbol with no type" );
 				if ( sym._type->_name != _f32 ) throw runtime_error( "unrecogized data type" );
-				arg_types.push_back( Type::getFloatTy(getGlobalContext()));
+				arg_types.push_back( type_ref_type( *sym._type ) );
 				arg_lisp_types.push_back( sym._type );
 			} );
 
@@ -438,11 +454,11 @@ namespace
 			}
 
 			if ( fn_def._type == nullptr ) throw runtime_error( "unrecoginzed function return type" );
-			if ( fn_def._type->_name != _f32 ) throw runtime_error( "unrecoginzed function return type" );
 
-			Type* rettype = Type::getFloatTy( getGlobalContext() );
+			Type* rettype = type_ref_type( *fn_def._type );
 			fn_type = FunctionType::get(rettype, arg_types, false);
 			Function* fn = Function::Create( fn_type, Function::ExternalLinkage, fn_def._name.c_str(), &_module );
+			_type_map.insert( make_pair( &fn_lisp_type, fn_type ) );
 			
 			if ( fn_entry )
 				fn_entry->_compiled_code = fn;
@@ -535,7 +551,9 @@ namespace
 							_code_gen->_builder.SetInsertPoint(function_entry_block);
 							cons_cell* progn_cell = factory->create_cell();
 							progn_cell->_value = cell;
-							_code_gen->codegen_function_body( fn, *progn_cell );
+							type_ref_ptr ref = _code_gen->codegen_function_body( fn, *progn_cell );
+							if ( ref != &type_system->get_type_ref( base_numeric_types::f32 ) )
+								throw runtime_error( "Expression is not of float type" );
 							
 							void *fn_ptr= _code_gen->_exec_engine->getPointerToFunction(fn);
 							if ( !fn_ptr ) throw runtime_error( "function definition failed" );
