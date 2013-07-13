@@ -222,14 +222,16 @@ namespace {
 		symbol*				_name;
 		object_ptr_buffer	_args;
 		cons_cell*			_body;
+		bool				_built_in;
 		poly_function( array& ta, symbol& n, array& args, cons_cell& b )
 			: _type_args( ta._data )
 			, _name( &n )
 			, _args( args._data )
 			, _body( &b )
+			, _built_in( false )
 		{
 		}
-		poly_function() : _body( nullptr ) {}
+		poly_function() : _body( nullptr ), _built_in( false ) {}
 		
 		enum { pp_op_type = preprocessor_op_types::poly_function };
 		virtual preprocessor_op_types::_enum type() { return preprocessor_op_types::poly_function; }
@@ -954,9 +956,8 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			if ( _generated_function_names.find( gen_name ) == _generated_function_names.end() )
 			{
 				_generated_function_names.insert( gen_name );
-				//a.  Run through function, rewriting symbol types that match our map and copying to new defn declaration.
-				//cons_cell* defn_cell = _factory->create_cell();
-					
+				//check if this is a built-in polymorphic function
+
 
 			}
 			
