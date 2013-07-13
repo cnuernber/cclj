@@ -27,6 +27,7 @@
 #ifdef _WIN32
 #pragma warning(pop)
 #endif
+#include "cclj/llvm_base_numeric_type_helper.h"
 
 
 using namespace cclj;
@@ -59,6 +60,7 @@ namespace
 
 	struct code_generator;
 	typedef object_ptr (*compiler_function)( code_generator*, object_ptr );
+
 
 	struct code_generator : public noncopyable
 	{
@@ -341,8 +343,16 @@ namespace
 		}
 		pair<Value*,type_ref_ptr> codegen_constant( constant& data )
 		{
-			return make_pair(ConstantFP::get(getGlobalContext(), APFloat(data.value) )
-				, &_type_system->get_type_ref( _str_table->register_str( "f32" ), type_ref_ptr_buffer() ) );
+			switch( _type_system->to_base_numeric_type( *data._type ) )
+			{
+#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )		\
+			case base_numeric_types::name:			\
+				return make_pair( llvm_helper::llvm_constant_map<base_numeric_types::name>::parse( data._value )	\
+								, data._type );
+				CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+			}
+			throw runtime_error( "failed to create numeric constant" );
 		}
 
 		pair<Value*,type_ref_ptr> codegen_expr( object_ptr expr )
@@ -488,7 +498,7 @@ namespace
 		virtual float execute( const string& data )
 		{
 			factory_ptr factory = factory::create_factory( _alloc, _empty_cell );
-			type_system_ptr type_system = type_system::create_type_system( _alloc );
+			type_system_ptr type_system = type_system::create_type_system( _alloc, _str_table );
 			reader_ptr reader = reader::create_reader( factory, type_system, _str_table );
 			object_ptr_buffer parse_result = reader->parse( data );
 			//run through, code-gen the function defs and call the functions.

@@ -20,7 +20,7 @@ namespace
 		allocator_ptr			_allocator;
 		pool<sizeof(type_ref)>	_object_pool;
 		const cons_cell&		_empty_cell;
-		vector<object_ptr*>		_buffer_allocs;
+		vector<uint8_t*>		_buffer_allocs;
 
 	public:
 		factory_impl( allocator_ptr alloc, const cons_cell& empty_cell )
@@ -32,7 +32,7 @@ namespace
 		~factory_impl()
 		{
 			for_each( _buffer_allocs.begin(), _buffer_allocs.end(),
-				[this]( object_ptr* alloc )
+				[this]( uint8_t* alloc )
 			{
 				_allocator->deallocate( alloc );
 			} );
@@ -43,6 +43,19 @@ namespace
 		virtual array* create_array()  { return _object_pool.construct<array>(); }
 		virtual symbol* create_symbol() { return _object_pool.construct<symbol>(); }
 		virtual constant* create_constant() { return _object_pool.construct<constant>(); }
+		virtual uint8_t* allocate_data( size_t size, uint8_t alignment )
+		{
+			if ( size <= sizeof(type_ref ) && alignment < sizeof(void*) )
+			{
+				return _object_pool.allocate();
+			}
+			else
+			{
+				uint8_t* retval = _allocator->allocate( size, alignment, CCLJ_IMMEDIATE_FILE_INFO() );
+				_buffer_allocs.push_back( retval );
+				return retval;
+			}
+		}
 		virtual object_ptr_buffer allocate_obj_buffer(size_t size)
 		{
 			if ( size == 0 )
@@ -50,7 +63,7 @@ namespace
 			object_ptr* new_data = reinterpret_cast<object_ptr*>( 
 				_allocator->allocate( size * sizeof( object_ptr* ), sizeof(void*), CCLJ_IMMEDIATE_FILE_INFO() ) );
 			memset( new_data, 0, size * sizeof( object_ptr* ) );
-			_buffer_allocs.push_back( new_data );
+			_buffer_allocs.push_back( reinterpret_cast<uint8_t*>( new_data ) );
 			return object_ptr_buffer( new_data, size );
 		}
 	};
@@ -100,12 +113,14 @@ namespace {
 
 	class type_system_impl : public type_system
 	{
-		allocator_ptr _allocator;
+		allocator_ptr		_allocator;
+		string_table_ptr	_str_table;
 		typedef unordered_map<type_map_key, type_ref_ptr> type_map;
 		type_map _types;
 	public:
-		type_system_impl( allocator_ptr alloc )
+		type_system_impl( allocator_ptr alloc, string_table_ptr str_t )
 			: _allocator( alloc )
+			, _str_table( str_t )
 		{
 		}
 
@@ -117,6 +132,8 @@ namespace {
 				_allocator->deallocate( type.second );
 			} );
 		}
+		
+		virtual string_table_ptr string_table() { return _str_table; }
 
 		virtual type_ref& get_type_ref( string_table_str name, type_ref_ptr_buffer _specializations )
 		{
@@ -166,6 +183,26 @@ namespace {
 	};
 
 	typedef unordered_map<string_table_str, macro_def> macro_map;
+
+	template<typename num_type>
+	struct str_to_num
+	{
+	};
+
+	//Lots of things to do here.  First would be to allow compile time expressions as constants and not just numbers.
+	//Second would be to allow number of different bases
+	//third would be to have careful checking of ranges.
+	template<> struct str_to_num<bool> { static bool parse( const string& val ) { return std::stol( val ) ? true : false; } };
+	template<> struct str_to_num<uint8_t> { static uint8_t parse( const string& val ) { return static_cast<uint8_t>( std::stol( val ) ); } };
+	template<> struct str_to_num<int8_t> { static int8_t parse( const string& val ) { return static_cast<int8_t>( std::stol( val ) ); } };
+	template<> struct str_to_num<uint16_t> { static uint16_t parse( const string& val ) { return static_cast<uint16_t>( std::stol( val ) ); } };
+	template<> struct str_to_num<int16_t> { static int16_t parse( const string& val ) { return static_cast<int16_t>( std::stol( val ) ); } };
+	template<> struct str_to_num<uint32_t> { static uint32_t parse( const string& val ) { return static_cast<uint32_t>( std::stoll( val ) ); } };
+	template<> struct str_to_num<int32_t> { static int32_t parse( const string& val ) { return static_cast<int32_t>( std::stoll( val ) ); } };
+	template<> struct str_to_num<uint64_t> { static uint64_t parse( const string& val ) { return static_cast<uint64_t>( std::stoll( val ) ); } };
+	template<> struct str_to_num<int64_t> { static int64_t parse( const string& val ) { return static_cast<int64_t>( std::stoll( val ) ); } };
+	template<> struct str_to_num<float> { static float parse( const string& val ) { return static_cast<float>( std::stof( val ) ); } };
+	template<> struct str_to_num<double> { static double parse( const string& val ) { return static_cast<double>( std::stod( val ) ); } };
 
 	class reader_impl : public reader
 	{
@@ -267,18 +304,52 @@ namespace {
 			return &_type_system->get_type_ref( type_name, specializations );
 		}
 
+		template<typename number_type>
+		uint8_t* parse_constant_value( const std::string& val )
+		{
+			number_type parse_val = str_to_num<number_type>::parse( val );
+			uint8_t* retval = _factory->allocate_data( sizeof( number_type ), sizeof( number_type ) );
+			memcpy( retval, &parse_val, sizeof( number_type ) );
+			return retval;
+		}
+
 		object_ptr parse_number_or_symbol(size_t token_start, size_t token_end)
 		{
 			substr( token_start, token_end );
 			smatch m;
-			regex_search( temp_str, m, number_regex );
-						
+			regex_search( temp_str, m, number_regex );	
 
 			//Parse each token.
 			if ( m.empty() == false )
 			{
+				std::string number_string( temp_str );
 				constant* new_constant = _factory->create_constant();
-				new_constant->value = static_cast<float>(atof( temp_str.c_str() ) );
+				//Define the type.  If the data is suffixed, then we have it.
+				if( current_char() == '|' )
+				{
+
+					++cur_ptr;
+					new_constant->_type = parse_type();
+				}
+				else 
+				{
+					if ( temp_str.find( '.' ) )
+						new_constant->_type = &_type_system->get_type_ref( base_numeric_types::f64 );
+					else
+						new_constant->_type = &_type_system->get_type_ref( base_numeric_types::i64 );
+				}
+				switch( _type_system->to_base_numeric_type( *new_constant->_type ) )
+				{
+#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )	\
+				case base_numeric_types::name:	\
+					new_constant->_value			\
+						= parse_constant_value<numeric_type_to_c_type_map<base_numeric_types::name>::numeric_type>( number_string );	\
+					break;
+CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+				default:
+					throw runtime_error( "Invalid constant type" );
+				}
 				return new_constant;
 			}
 			//symbol
@@ -606,9 +677,9 @@ factory_ptr factory::create_factory( allocator_ptr allocator, const cons_cell& e
 	return make_shared<factory_impl>( allocator, empty_cell );
 }
 
-type_system_ptr type_system::create_type_system( allocator_ptr allocator )
+type_system_ptr type_system::create_type_system( allocator_ptr allocator, string_table_ptr s )
 {
-	return make_shared<type_system_impl>( allocator );
+	return make_shared<type_system_impl>( allocator, s );
 }
 
 reader_ptr reader::create_reader( factory_ptr factory, type_system_ptr ts, string_table_ptr str_table )

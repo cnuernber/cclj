@@ -90,6 +90,7 @@ namespace cclj
 		public:
 			string_table_str	_name;
 			type_ref*			_type;
+			symbol() : _type( nullptr ) {}
 
 			enum { item_type = types::symbol };
 			virtual types::_enum type() const { return types::symbol; }
@@ -99,7 +100,10 @@ namespace cclj
 		class constant : public object
 		{
 		public:
-			float value; //for now.  Really this should be an unparsed string so we can late-convert the value
+			type_ref*		_type;
+			uint8_t*		_value; 
+			constant() : _type( nullptr ), _value( nullptr ) {}
+
 			enum { item_type = types::constant };
 			virtual types::_enum type() const { return types::constant; }
 		};
@@ -130,17 +134,91 @@ namespace cclj
 			}
 		};
 
+#define CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES	\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( f32 )		\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( f64 )		\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( i1 )			\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( i8 )			\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( u8 )			\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( i16 )		\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( u16 )		\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( i32 )		\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( u32 )		\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( i64 )		\
+	CCLJ_HANDLE_LIST_NUMERIC_TYPE( u64 )		
+
+		struct base_numeric_types
+		{
+			enum _enum
+			{
+				no_known_type = 0,
+#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name ) name,
+	CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+			};
+		};
+
+		template<base_numeric_types::_enum>
+		struct numeric_type_to_c_type_map
+		{
+		};
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::f32> { typedef float numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::f64> { typedef double numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::i1> { typedef bool numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::i8> { typedef int8_t numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::u8> { typedef uint8_t numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::i16> { typedef int16_t numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::u16> { typedef uint16_t numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::i32> { typedef int32_t numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::u32> { typedef uint32_t numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::i64> { typedef int64_t numeric_type; };
+		template<> struct numeric_type_to_c_type_map<base_numeric_types::u64> { typedef uint64_t numeric_type; };
+
+
 		class type_system
 		{
 		protected:
 			virtual ~type_system(){}
 		public:
 			friend class shared_ptr<type_system>;
+
+			virtual string_table_ptr string_table() = 0;
+
 			//type system ensures the type refs are pointer-comparable.
 			virtual type_ref& get_type_ref( string_table_str name
 										, type_ref_ptr_buffer _specializations = type_ref_ptr_buffer() ) = 0;
 
-			static shared_ptr<type_system> create_type_system( allocator_ptr allocator );
+			type_ref& get_type_ref( const char* name, type_ref_ptr_buffer _specializations = type_ref_ptr_buffer() )
+			{
+				return get_type_ref( string_table()->register_str( name ), _specializations );
+			}
+
+			virtual type_ref& get_type_ref( base_numeric_types::_enum type )
+			{
+				switch( type )
+				{
+#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name ) case base_numeric_types::name: return get_type_ref( #name );
+CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+				}
+				throw runtime_error( "unrecognized base numeric type" );
+			}
+
+			base_numeric_types::_enum to_base_numeric_type( type_ref& dtype )
+			{
+				if ( dtype._specializations.size() )
+					return base_numeric_types::no_known_type;
+#define CCLJ_HANDLE_LIST_NUMERIC_TYPE(name) \
+				if ( dtype._name == string_table()->register_str( #name ) ) \
+					return base_numeric_types::name;
+				 CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+				return base_numeric_types::no_known_type;
+			}
+
+
+
+			static shared_ptr<type_system> create_type_system( allocator_ptr allocator, string_table_ptr str_table );
 		};
 
 		typedef shared_ptr<type_system> type_system_ptr;
@@ -157,6 +235,7 @@ namespace cclj
 			virtual array* create_array() = 0;
 			virtual symbol* create_symbol() = 0;
 			virtual constant* create_constant() = 0;
+			virtual uint8_t* allocate_data( size_t size, uint8_t alignment ) = 0;
 			virtual object_ptr_buffer allocate_obj_buffer(size_t size) = 0;
 
 			static shared_ptr<factory> create_factory( allocator_ptr allocator, const cons_cell& empty_cell );

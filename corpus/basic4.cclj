@@ -4,4 +4,4 @@
 		(* c d)))
 		
 		
-(lettest 10 20)
+(lettest 10|f32 20|f32 )

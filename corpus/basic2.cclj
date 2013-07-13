@@ -2,10 +2,10 @@
 	(quote(+ (unquote a) (unquote b))))
 
 (defn add|f32 [a|f32 b|f32]
-		(combine (+ a b) 5))
+		(combine (+ a b) 5|f32))
 
 ;should eval to:
 ;(defn add [a b]
 ;	(+ (+ a b) 5))
 	
-(add 1 2)
+(add 1|f32 2|f32)
