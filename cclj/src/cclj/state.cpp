@@ -81,6 +81,7 @@ namespace
 	typedef unordered_map<string_table_str, top_level_compiler_special_form> top_level_compiler_special_form_map;
 	typedef unordered_map<type_ref_ptr, Type*> type_llvm_type_map;
 	typedef unordered_map<type_ref_ptr,pod_type> type_pod_map;
+	typedef pair<string_table_str, pair<AllocaInst*,type_ref_ptr> > var_entry; 
 
 	struct code_generator;
 	typedef object_ptr (*compiler_function)( code_generator*, object_ptr );
@@ -134,15 +135,33 @@ namespace
 			// Simplify the control flow graph (deleting unreachable blocks, etc).
 			_fpm->add(createCFGSimplificationPass());
 			_fpm->doInitialization();
-			register_compiler_binary_fn( bind( &code_generator::f_plus, this, std::placeholders::_1 ), "+", "f32" );
-			register_compiler_binary_fn( bind( &code_generator::f_minus, this, std::placeholders::_1 ), "-", "f32" );
-			register_compiler_binary_fn( bind( &code_generator::f_mult, this, std::placeholders::_1 ), "*", "f32" );
-			register_compiler_compare_fn( bind( &code_generator::f_less_than, this, std::placeholders::_1 ), "<", "f32" );
-			register_compiler_compare_fn( bind( &code_generator::f_greater_than, this, std::placeholders::_1 ), ">", "f32" );
+
+			
+			register_compiler_binary_float_fn( bind( &code_generator::f_plus, this, std::placeholders::_1 ), "+" );
+			register_compiler_binary_float_fn( bind( &code_generator::f_minus, this, std::placeholders::_1 ), "-" );
+			register_compiler_binary_float_fn( bind( &code_generator::f_mult, this, std::placeholders::_1 ), "*" );
+			register_compiler_binary_float_fn( bind( &code_generator::f_less_than, this, std::placeholders::_1 ), "<" );
+			register_compiler_binary_float_fn( bind( &code_generator::f_greater_than, this, std::placeholders::_1 ), ">" );
+
+			register_compiler_binary_int_fn( bind( &code_generator::i_plus, this, std::placeholders::_1 ), "+" );
+			register_compiler_binary_int_fn( bind( &code_generator::i_minus, this, std::placeholders::_1 ), "-" );
+			register_compiler_binary_int_fn( bind( &code_generator::i_mult, this, std::placeholders::_1 ), "*" );
+
+			register_compiler_compare_int_unsigned_fn( 
+				bind( &code_generator::i_less_than_unsigned, this, std::placeholders::_1 ), "<" );
+
+			register_compiler_compare_int_unsigned_fn( 
+				bind( &code_generator::i_greater_than_unsigned, this, std::placeholders::_1 ), ">" );
+			
+
 			register_special_form( bind( &code_generator::if_special_form, this, std::placeholders::_1 ), "if" );
 			register_special_form( bind( &code_generator::let_special_form, this, std::placeholders::_1 ), "let" );
-			register_top_level_special_form( bind( &code_generator::defn_special_form, this, std::placeholders::_1 ), "defn" );
-			register_top_level_special_form( bind( &code_generator::defpod_special_form, this, std::placeholders::_1 ), "defpod" );
+			register_special_form( bind( &code_generator::set_special_form, this, std::placeholders::_1 ), "set" );
+			register_special_form( bind( &code_generator::for_special_form, this, std::placeholders::_1 ), "for" );
+			register_top_level_special_form( 
+				bind( &code_generator::defn_special_form, this, std::placeholders::_1 ), "defn" );
+			register_top_level_special_form( 
+				bind( &code_generator::defpod_special_form, this, std::placeholders::_1 ), "defpod" );
 		}
 
 		Type* symbol_type( object_ptr obj )
@@ -184,6 +203,95 @@ namespace
 			return sym._name;
 		}
 
+		void register_special_form( compiler_special_form fn, const char* name )
+		{
+			_special_forms.insert( make_pair( _str_table->register_str( name ), fn ) );
+		}
+
+		void register_top_level_special_form( top_level_compiler_special_form fn, const char* name )
+		{
+			_top_level_special_forms.insert( make_pair( _str_table->register_str( name ), fn ) );
+		}
+
+		//binary functions take two arguments and return the the same type.
+		void register_compiler_binary_fn( compiler_intrinsic fn, const char* name, const char* type )
+		{
+			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
+			type_ref* buffer[2] = { &arg_type, &arg_type};
+			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
+			function_def theDef;
+			theDef._name = _factory->create_symbol();
+			theDef._name->_name = _str_table->register_str( name );
+			theDef._name->_type = &arg_type;
+			theDef._compiler_code = fn;
+			_context.insert( make_pair( &func_type, theDef ) );
+		}
+		
+		void register_compiler_binary_float_fn( compiler_intrinsic fn, const char* name )
+		{
+			register_compiler_binary_fn( fn, name, "f32" );
+			register_compiler_binary_fn( fn, name, "f64" );
+		}
+
+		void register_compiler_binary_int_signed_fn( compiler_intrinsic fn, const char* name )
+		{
+			register_compiler_binary_fn( fn, name, "i8" );
+			register_compiler_binary_fn( fn, name, "i16" );
+			register_compiler_binary_fn( fn, name, "i32" );
+			register_compiler_binary_fn( fn, name, "i64" );
+		}
+		
+		void register_compiler_binary_int_unsigned_fn( compiler_intrinsic fn, const char* name )
+		{
+			register_compiler_binary_fn( fn, name, "u8" );
+			register_compiler_binary_fn( fn, name, "u16" );
+			register_compiler_binary_fn( fn, name, "u32" );
+			register_compiler_binary_fn( fn, name, "u64" );
+		}
+
+		void register_compiler_binary_int_fn( compiler_intrinsic fn, const char* name )
+		{
+			register_compiler_binary_int_signed_fn( fn, name );
+			register_compiler_binary_int_unsigned_fn( fn, name );
+		}
+
+		//comparison functions take two arguments and return an i1.
+		void register_compiler_compare_fn( compiler_intrinsic fn, const char* name, const char* type )
+		{
+			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
+			type_ref& ret_type = _type_system->get_type_ref( _str_table->register_str( "i1" ), type_ref_ptr_buffer() );
+			type_ref* buffer[2] = { &arg_type, &arg_type};
+			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
+			function_def theDef;
+			theDef._name = _factory->create_symbol();
+			theDef._name->_name = _str_table->register_str( name );
+			theDef._name->_type = &ret_type;
+			theDef._compiler_code = fn;
+			_context.insert( make_pair( &func_type, theDef ) );
+		}
+
+		void register_compiler_compare_float_fn( compiler_intrinsic fn, const char* name )
+		{
+			register_compiler_compare_fn( fn, name, "f32" );
+			register_compiler_compare_fn( fn, name, "f64" );
+		}
+		
+		void register_compiler_compare_int_unsigned_fn( compiler_intrinsic fn, const char* name )
+		{
+			register_compiler_compare_fn( fn, name, "u8" );
+			register_compiler_compare_fn( fn, name, "u16" );
+			register_compiler_compare_fn( fn, name, "u32" );
+			register_compiler_compare_fn( fn, name, "u64" );
+		}
+		
+		void register_compiler_compare_int_signed_fn( compiler_intrinsic fn, const char* name )
+		{
+			register_compiler_compare_fn( fn, name, "i8" );
+			register_compiler_compare_fn( fn, name, "i16" );
+			register_compiler_compare_fn( fn, name, "i32" );
+			register_compiler_compare_fn( fn, name, "i64" );
+		}
+
 		Value* f_plus( const vector<Value*>& args )
 		{
 			return _builder.CreateFAdd( args[0], args[1], "tmpadd" );
@@ -209,12 +317,34 @@ namespace
 			return _builder.CreateFCmpUGT( args[0], args[1], "tmpcmp" );
 		}
 
-		pair<Value*, type_ref_ptr> let_special_form( cons_cell& cell )
+		
+		Value* i_plus( const vector<Value*>& args )
 		{
-			cons_cell& var_assign = object_traits::cast_ref<cons_cell>( cell._next );
-			cons_cell& body = object_traits::cast_ref<cons_cell>( var_assign._next );
-			object_ptr_buffer assign_block = object_traits::cast_ref<array>( var_assign._value )._data;
-			typedef pair<string_table_str, pair<AllocaInst*,type_ref_ptr> > var_entry; 
+			return _builder.CreateAdd( args[0], args[1], "tmpadd" );
+		}
+
+		Value* i_minus( const vector<Value*>& args )
+		{
+			return _builder.CreateSub( args[0], args[1], "tmpsub" );
+		}
+
+		Value* i_mult( const vector<Value*>& args )
+		{
+			return _builder.CreateMul( args[0], args[1], "tmpmul" );
+		}
+
+		Value* i_less_than_unsigned( const vector<Value*>& args )
+		{
+			return _builder.CreateICmpULT( args[0], args[1], "tmpcmp" );
+		}
+
+		Value* i_greater_than_unsigned( const vector<Value*>& args )
+		{
+			return _builder.CreateICmpUGT( args[0], args[1], "tmpcmp" );
+		}
+
+		vector<var_entry> gen_assign_block( object_ptr_buffer assign_block )
+		{
 			vector<var_entry> shadowed_vars;
 			if ( assign_block.size() % 2 ) throw runtime_error( "invalid let statement" );
 			//Create builder that inserts to the function entry block.
@@ -232,12 +362,36 @@ namespace
 				_fn_context[name._name] = make_pair(data, expr_result.second);
 				_builder.CreateStore( expr_result.first, data );
 			}
-			pair<Value*, type_ref_ptr> retval = codegen_expr( body._value );
+			return shadowed_vars;
+		}
+
+		void unwind_assign_block( object_ptr_buffer assign_block, const vector<var_entry>& shadowed_vars )
+		{
+			for ( size_t idx = 0, end = assign_block.size(); idx < end; idx += 2 )
+			{
+				symbol& name = object_traits::cast_ref<symbol>( assign_block[idx] );
+				_fn_context.erase( name._name );
+			}
 			for_each( shadowed_vars.begin(), shadowed_vars.end(), [this]( const var_entry& entry )
 			{
 				//Reset the variable context.
 				_fn_context[entry.first] = entry.second;
 			} );
+		}
+
+
+		pair<Value*, type_ref_ptr> let_special_form( cons_cell& cell )
+		{
+			cons_cell& var_assign = object_traits::cast_ref<cons_cell>( cell._next );
+			cons_cell& body = object_traits::cast_ref<cons_cell>( var_assign._next );
+			object_ptr_buffer assign_block = object_traits::cast_ref<array>( var_assign._value )._data;
+			vector<var_entry> shadowed_vars = gen_assign_block( assign_block );
+			pair<Value*, type_ref_ptr> retval;
+			for ( cons_cell* body_iter = &body; body_iter; body_iter = object_traits::cast<cons_cell>( body_iter->_next ) )
+			{
+				retval = codegen_expr( body_iter->_value );
+			}
+			unwind_assign_block( assign_block, shadowed_vars );
 			return retval;
 		}
 
@@ -296,45 +450,89 @@ namespace
 			PN->addIncoming(elseExpr.first, ElseBB);
 			return make_pair(PN, thenExpr.second);
 		}
-
 		
-
-		void register_special_form( compiler_special_form fn, const char* name )
+		pair<AllocaInst*, type_ref_ptr> get_fn_var( string_table_str name )
 		{
-			_special_forms.insert( make_pair( _str_table->register_str( name ), fn ) );
+			variable_map::iterator iter = _fn_context.find( name );
+			if ( iter == _fn_context.end() ) throw runtime_error( "unable to find symbol" );
+			return iter->second;
 		}
 
-		void register_top_level_special_form( top_level_compiler_special_form fn, const char* name )
+		pair<AllocaInst*, type_ref_ptr> get_fn_var( symbol& sym )
 		{
-			_top_level_special_forms.insert( make_pair( _str_table->register_str( name ), fn ) );
+			return get_fn_var( sym._name );
 		}
 
-		//binary functions take two arguments and return the the same type.
-		void register_compiler_binary_fn( compiler_intrinsic fn, const char* name, const char* type )
+		pair<Value*, type_ref_ptr> set_special_form( cons_cell& cell )
 		{
-			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
-			type_ref* buffer[2] = { &arg_type, &arg_type};
-			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
-			function_def theDef;
-			theDef._name = _factory->create_symbol();
-			theDef._name->_name = _str_table->register_str( name );
-			theDef._name->_type = &arg_type;
-			theDef._compiler_code = fn;
-			_context.insert( make_pair( &func_type, theDef ) );
+			cons_cell& symbol_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			cons_cell& expr_cell = object_traits::cast_ref<cons_cell>( symbol_cell._next );
+			symbol& target = object_traits::cast_ref<symbol>( symbol_cell._value );
+			pair<AllocaInst*, type_ref_ptr> fn_var = get_fn_var( target );
+			pair<Value*, type_ref_ptr> expr_result = codegen_expr( expr_cell._value );
+			if ( fn_var.second != expr_result.second ) throw runtime_error( "set type mismatch" );
+			_builder.CreateStore( expr_result.first, fn_var.first );
+			return expr_result;
 		}
-		//comparison functions take two arguments and return an i1.
-		void register_compiler_compare_fn( compiler_intrinsic fn, const char* name, const char* type )
+
+		pair<Value*, type_ref_ptr> for_special_form( cons_cell& cell )
 		{
-			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
-			type_ref& ret_type = _type_system->get_type_ref( _str_table->register_str( "i1" ), type_ref_ptr_buffer() );
-			type_ref* buffer[2] = { &arg_type, &arg_type};
-			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
-			function_def theDef;
-			theDef._name = _factory->create_symbol();
-			theDef._name->_name = _str_table->register_str( name );
-			theDef._name->_type = &ret_type;
-			theDef._compiler_code = fn;
-			_context.insert( make_pair( &func_type, theDef ) );
+			cons_cell& init_array_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			array& init_array = object_traits::cast_ref<array>( init_array_cell._value );
+			cons_cell& cond_expr = object_traits::cast_ref<cons_cell>( init_array_cell._next );
+			cons_cell& update_cell = object_traits::cast_ref<cons_cell>( cond_expr._next );
+			array& update_array = object_traits::cast_ref<array>( update_cell._value );
+			cons_cell& loop_body = object_traits::cast_ref<cons_cell>( update_cell._next );
+			//An init array is pretty much like a let statement.
+			vector<var_entry> shadow_vars = gen_assign_block( init_array._data );
+			Function* theFunction = _builder.GetInsertBlock()->getParent();
+			IRBuilder<> entry_block_builder( &theFunction->getEntryBlock(), theFunction->getEntryBlock().begin() );
+			BasicBlock* update_block = BasicBlock::Create( getGlobalContext(), "update_code" );
+			BasicBlock* loop_block = BasicBlock::Create( getGlobalContext(), "loop_block" );
+			BasicBlock* cond_block = BasicBlock::Create( getGlobalContext(), "cond_block" );
+			BasicBlock* exit_block = BasicBlock::Create( getGlobalContext(), "exit_block" );
+			_builder.CreateBr( cond_block ); //branch to condition, but we will 
+			
+			theFunction->getBasicBlockList().push_back( loop_block );
+			_builder.SetInsertPoint( loop_block );
+			for ( cons_cell* cur_body = &loop_body; cur_body
+				; cur_body = object_traits::cast<cons_cell>( cur_body->_next ) )
+			{
+				//codegen it but we do not actually care.
+				codegen_expr( cur_body->_value );
+			}
+
+			//Create unconditional branch to the update code.
+			_builder.CreateBr( update_block );
+
+			//update block
+			theFunction->getBasicBlockList().push_back( update_block );
+			_builder.SetInsertPoint( update_block );
+			for_each( update_array._data.begin(), update_array._data.end(), [&]( object_ptr item )
+			{
+				codegen_expr( item );
+			} );
+
+
+			_builder.CreateBr( cond_block );
+			
+			
+			//condition block
+			theFunction->getBasicBlockList().push_back( cond_block );
+			_builder.SetInsertPoint( cond_block );
+
+			pair<Value*, type_ref_ptr> cond_val = codegen_expr( cond_expr._value );
+			if ( _type_system->to_base_numeric_type( *cond_val.second ) != base_numeric_types::i1 )
+				throw runtime_error( "loop condition does not evaluate to a boolean" );
+			_builder.CreateCondBr( cond_val.first, loop_block, exit_block );
+
+
+			theFunction->getBasicBlockList().push_back( exit_block );
+			_builder.SetInsertPoint( exit_block );
+			//Set insert point where further items should be written.
+			unwind_assign_block( init_array._data, shadow_vars );
+			return make_pair( ConstantInt::get( Type::getInt32Ty( getGlobalContext() ), 0 )
+				, &_type_system->get_type_ref( base_numeric_types::u32 ) );
 		}
 
 		pair<Value*,type_ref_ptr> codegen_apply( cons_cell& cell )

@@ -86,6 +86,7 @@ DEFINE_SIMPLE_CORPUS_TEST( basic2, 8.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic3, 20.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic4, -100.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic_struct, 15.0f );
+DEFINE_SIMPLE_CORPUS_TEST( for_loop, 125.0f );
 
 
 TEST(regex_tests, symbol_regex)
