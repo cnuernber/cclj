@@ -162,6 +162,8 @@ namespace
 				bind( &code_generator::defn_special_form, this, std::placeholders::_1 ), "defn" );
 			register_top_level_special_form( 
 				bind( &code_generator::defpod_special_form, this, std::placeholders::_1 ), "def-pod" );
+			register_special_form( 
+				bind( &code_generator::numeric_cast_special_form, this, std::placeholders::_1 ), "numeric-cast" );
 		}
 
 		Type* symbol_type( object_ptr obj )
@@ -533,6 +535,67 @@ namespace
 			unwind_assign_block( init_array._data, shadow_vars );
 			return make_pair( ConstantInt::get( Type::getInt32Ty( getGlobalContext() ), 0 )
 				, &_type_system->get_type_ref( base_numeric_types::u32 ) );
+		}
+
+		pair<Value*,type_ref_ptr> numeric_cast_special_form( cons_cell& cell )
+		{
+			symbol& name = object_traits::cast_ref<symbol>( cell._value );
+			cons_cell& first_arg = object_traits::cast_ref<cons_cell>( cell._next );
+			type_ref_ptr rettype = name._type;
+			if ( !rettype ) throw runtime_error( "invalid numeric cast" );
+			pair<Value*,type_ref_ptr> arg_eval = codegen_expr( first_arg._value );
+			base_numeric_types::_enum target = _type_system->to_base_numeric_type( *rettype );
+			base_numeric_types::_enum source = _type_system->to_base_numeric_type( *arg_eval.second );
+			check_valid_numeric_cast_type( target );
+			check_valid_numeric_cast_type( source );
+			if ( target == source )
+				return arg_eval;
+
+			Type* target_type = type_ref_type( *rettype );
+
+			Value* retval = nullptr;
+			if ( base_numeric_types::is_float_type( source ) )
+			{
+				if ( target == base_numeric_types::f64 )
+					retval = _builder.CreateFPExt( arg_eval.first, target_type );
+				else if ( target == base_numeric_types::f32 )
+					retval = _builder.CreateFPTrunc( arg_eval.first, target_type );
+				else if ( base_numeric_types::is_signed_int_type( target ) )
+					retval = _builder.CreateFPToSI( arg_eval.first, target_type );
+				else if ( base_numeric_types::is_unsigned_int_type( target ) )
+					retval = _builder.CreateFPToUI( arg_eval.first, target_type );
+			}
+			else if ( base_numeric_types::is_int_type( source ) )
+			{
+				if ( base_numeric_types::is_float_type( target ) )
+				{
+					if ( base_numeric_types::is_signed_int_type( source ) )
+						retval = _builder.CreateSIToFP( arg_eval.first, target_type );
+					else
+						retval = _builder.CreateUIToFP( arg_eval.first, target_type );
+				}
+				else 
+				{
+					if ( base_numeric_types::num_bits( source ) > base_numeric_types::num_bits( target ) )
+					{
+						retval = _builder.CreateTrunc( arg_eval.first, target_type );
+					}
+					else if ( base_numeric_types::num_bits( source ) < base_numeric_types::num_bits( target ) )
+					{
+						if ( base_numeric_types::is_signed_int_type( target ) )
+							retval = _builder.CreateSExt( arg_eval.first, target_type );
+						else
+							retval = _builder.CreateZExt( arg_eval.first, target_type );
+					}
+					//types are same size, just do a bitcast of sorts.
+					else
+						retval = _builder.CreateBitCast( arg_eval.first, target_type );
+				}
+			}
+
+			if ( retval == nullptr ) throw runtime_error( "cast error" );
+
+			return make_pair( retval, rettype );
 		}
 
 		pair<Value*,type_ref_ptr> codegen_apply( cons_cell& cell )

@@ -156,6 +156,47 @@ namespace cclj
 	CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 #undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
 			};
+			static bool is_float_type( _enum val )
+			{
+				return val == f32 || val == f64;
+			}
+
+			static bool is_unsigned_int_type( _enum val )
+			{
+				return val == u8
+					|| val == u16
+					|| val == u32
+					|| val == u64;
+			}
+
+			static bool is_signed_int_type( _enum val )
+			{
+				return val == i8
+					|| val == i16
+					|| val == i32
+					|| val == i64;
+			}
+
+			static bool is_int_type( _enum val )
+			{
+				return is_unsigned_int_type( val )
+					|| is_signed_int_type( val );
+			}
+
+			static uint8_t num_bits( _enum val )
+			{
+				switch( val )
+				{
+				case f32: return 32;
+				case f64: return 64;
+				case i1: return 1; //probably 8 but whatever.
+				case i8: case u8: return 8;
+				case i16: case u16: return 16;
+				case i32: case u32: return 32;
+				case i64: case u64: return 64;
+				}
+				throw runtime_error( "invalid value to count bits" );
+			}
 		};
 
 		template<base_numeric_types::_enum>
@@ -276,6 +317,14 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				retval.push_back( temp.substr( last_offset, temp.size() - last_offset ) );
 			}
 			return retval;
+		}
+		
+
+		static void check_valid_numeric_cast_type( base_numeric_types::_enum val )
+		{
+			if ( val == base_numeric_types::no_known_type 
+				|| val == base_numeric_types::i1 )
+				throw runtime_error( "invalid numeric cast; either not a number of boolean" );
 		}
 	}
 }

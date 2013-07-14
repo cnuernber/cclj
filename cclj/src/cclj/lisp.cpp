@@ -369,6 +369,7 @@ namespace {
 			register_special_form( bind( &reader_impl::type_check_set, this, std::placeholders::_1 ), "set" );
 			register_special_form( bind( &reader_impl::type_check_for, this, std::placeholders::_1 ), "for" );
 			register_special_form( bind( &reader_impl::type_check_def_pod, this, std::placeholders::_1 ), "def-pod" );
+			register_special_form( bind( &reader_impl::type_check_numeric_cast, this, std::placeholders::_1 ), "numeric-cast" );
 		}
 
 
@@ -1066,6 +1067,21 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		type_ref_ptr type_check_expr( cons_cell& expr_parent )
 		{
 			return type_check_expr( expr_parent._value );
+		}
+
+		type_ref_ptr type_check_numeric_cast( cons_cell& cell )
+		{
+			symbol& cast_name = object_traits::cast_ref<symbol>( cell._value );
+			cons_cell& first_arg = object_traits::cast_ref<cons_cell>( cell._next );
+			type_ref_ptr rettype = cast_name._type;
+			type_ref_ptr first_arg_type = type_check_expr( first_arg._value );
+			if ( !rettype ) throw runtime_error( "invalid numeric cast" );
+			if ( first_arg._next ) throw runtime_error( "numeric cast only takes 1 argument" );
+			base_numeric_types::_enum target_type = _type_system->to_base_numeric_type( *rettype );
+			base_numeric_types::_enum source_type = _type_system->to_base_numeric_type( *first_arg_type );
+			check_valid_numeric_cast_type( target_type );
+			check_valid_numeric_cast_type( source_type );
+			return rettype;
 		}
 
 		//we need to do type checking so that we can figure out
