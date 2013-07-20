@@ -32,7 +32,7 @@ namespace cclj { namespace plugins {
 		{
 		}
 		
-		virtual pair<ast_node_ptr, type_ref_ptr> type_check( reader_context& context, lisp::cons_cell& cell );
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell );
 	};
 
 	struct function_call_node : public ast_node
@@ -40,14 +40,8 @@ namespace cclj { namespace plugins {
 		typedef apply_plugin plugin_type;
 
 		function_def_node&			_function;
-		data_buffer<ast_node_ptr>	_arguments;
 
-		function_call_node(const  apply_plugin& plugin, const function_def_node& _fun, data_buffer<ast_node_ptr> args )
-			: ast_node( plugin )
-			, _function( const_cast<function_def_node&>( _fun ) )
-			, _arguments( args )
-		{
-		}
+		function_call_node(const apply_plugin& plugin, const function_def_node& _fun );
 
 		virtual void compile_first_pass(compiler_context& context);
 		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context);
@@ -63,30 +57,62 @@ namespace cclj { namespace plugins {
 			: compiler_plugin( table->register_str( static_plugin_name() ) )
 		{
 		}
-		virtual pair<ast_node_ptr, type_ref_ptr> type_check( reader_context& context, lisp::cons_cell& cell );
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell );
 	};
 
 	struct function_def_node : public ast_node
 	{
 		typedef function_def_plugin plugin_type;
 
-		type_ref&					_return_type;
+		lisp::symbol&				_name;
 		type_ref&					_my_type;
 		data_buffer<lisp::symbol*>	_arguments;
 		llvm_function_ptr			_function;
 
-		function_def_node( function_def_plugin& plugin, type_ref& rettype, type_ref& mt, data_buffer<lisp::symbol*> arguments )
-			: ast_node( plugin )
-			, _return_type( rettype )
-			, _my_type( mt )
+		function_def_node( const function_def_plugin& plugin, const lisp::symbol& name
+							, const type_ref& mt, data_buffer<lisp::symbol*> arguments )
+			: ast_node( plugin, *_name._type )
+			, _name( const_cast<lisp::symbol&>( name ) )
+			, _my_type( const_cast<type_ref&>( mt ) )
 			, _arguments( arguments )
 			, _function( nullptr )
 		{
 		}
 		virtual void compile_first_pass(compiler_context& context);
 		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context);
+
+		static void initialize_function(compiler_context& context, llvm::Function& fn
+			, data_buffer<lisp::symbol*> fn_args, variable_context& var_context );
 	};
 
+	typedef function<void( string_table_str fn, compiler_plugin_ptr& comp )> register_function;
+
+	class binary_function_plugin_base : public compiler_plugin
+	{
+	protected:
+		type_ref& _type;
+		base_numeric_types::_enum _num_type;
+	public:
+		binary_function_plugin_base( string_table_str n, type_library_ptr type_lib
+									, base_numeric_types::_enum type ) 
+			: compiler_plugin( n )
+			, _type( type_lib->get_type_ref( type ) )
+			, _num_type( type ) 
+		{}
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell );
+
+		virtual ast_node& create_ast_node(reader_context& context) = 0;
+
+		static void register_binary_functions( register_function fn, type_library_ptr type_lib, string_table_ptr str_table );
+	};
+
+	
+	class binary_compare_function_plugin_base : public compiler_plugin
+	{
+
+	};
+
+	
 
 	template<typename data_type, typename allocator>
 	data_buffer<data_type> allocate_buffer( allocator& alloc, data_buffer<data_type> buf )

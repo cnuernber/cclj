@@ -29,6 +29,9 @@ namespace llvm
 {
 	class Value;
 	class AllocaInst;
+	class Type;
+	class Module;
+	class FunctionPassManager;
 }
 
 namespace cclj
@@ -36,7 +39,9 @@ namespace cclj
 	typedef llvm::Value* llvm_value_ptr;
 	typedef llvm::AllocaInst* llvm_alloca_ptr;
 	typedef llvm::IRBuilder<> llvm_builder;
+	typedef llvm::Type* llvm_type_ptr;
 	typedef unordered_map<string_table_str, type_ref_ptr> symbol_type_ref_map;
+	typedef unordered_map<type_ref_ptr, llvm_type_ptr> type_llvm_type_map;
 	//tool used during type checking.
 #pragma warning(disable:4512)
 	struct symbol_type_context : noncopyable
@@ -79,18 +84,52 @@ namespace cclj
 	typedef ast_node* ast_node_ptr;
 	class compiler_plugin;
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
-
-	typedef unordered_map<string_table_str, llvm_alloca_ptr> string_alloca_map;
+	
+	typedef unordered_map<string_table_str, pair<llvm_alloca_ptr,type_ref_ptr> > string_alloca_type_map;
 	typedef unordered_map<type_ref_ptr, ast_node_ptr> type_ast_node_map;
 	typedef shared_ptr<type_ast_node_map> type_ast_node_map_ptr;
+
+	struct variable_context
+	{
+		string_alloca_type_map&													_variables;
+		vector<pair<string_table_str, pair<llvm_alloca_ptr, type_ref_ptr> > >	_added_vars;
+		variable_context( string_alloca_type_map& vars ) : _variables( vars ) {}
+		~variable_context()
+		{
+			for_each( _variables.begin(), _variables.end(), [this]
+			( const pair<string_table_str, pair<llvm_alloca_ptr, type_ref_ptr> >& var )
+			{
+				if ( var.second.first )
+					_variables[var.first] = var.second;
+				else
+					_variables.erase( var.first );
+			});
+		}
+		
+		void add_variable( string_table_str name, llvm_alloca_ptr alloca, type_ref& type )
+		{
+			auto inserter = _variables.insert( make_pair( name, make_pair( alloca, &type ) ) );
+			pair<llvm_alloca_ptr, type_ref_ptr> old_value( nullptr, nullptr );
+			if ( inserter.second == false )
+			{
+				old_value = inserter.first->second;
+				inserter.first->second = make_pair( alloca, &type );
+			}
+			_added_vars.push_back( make_pair( name, old_value ) );
+		}
+	};
 
 	struct compiler_context
 	{
 		type_library_ptr			_type_library;
 		type_ast_node_map_ptr		_symbol_map;
 		llvm_builder				_builder;
-		string_alloca_map			_variables;
+		string_alloca_type_map		_variables;
+		type_llvm_type_map			_type_map;
+		llvm::Module&				_module;
+		llvm::FunctionPassManager&	_fpm;
 		compiler_context();
+		llvm_type_ptr type_ref_type( type_ref& type );
 	};
 
 	CCLJ_DEFINE_INVASIVE_SINGLE_LIST(ast_node); 
@@ -99,18 +138,22 @@ namespace cclj
 	class ast_node : noncopyable
 	{
 		ast_node_ptr			_next_node;
+		type_ref&				_type;
 		ast_node_list			_children;
 		compiler_plugin&		_plugin;
 	protected:
 		virtual ~ast_node(){}
 	public:
-		ast_node(const compiler_plugin& p ) : _next_node( nullptr ), _plugin( const_cast<compiler_plugin&>( p ) ) {}
+		ast_node(const compiler_plugin& p, const type_ref& t ) : _next_node( nullptr ), _type( const_cast<type_ref&> ( t ) )
+			, _plugin( const_cast<compiler_plugin&>( p ) ) {}
 		virtual compiler_plugin& plugin() { return _plugin; }
 		virtual void set_next_node( ast_node* n ) { _next_node = n; }
 		virtual ast_node_ptr next_node() { return _next_node; }
 		virtual ast_node_ptr next_node() const { return _next_node; }
 		ast_node_list& children() { return _children; }
 		const ast_node_list& children() const { return _children; }
+		virtual type_ref& type() { return _type; }
+
 		virtual void compile_first_pass(compiler_context& context) = 0;
 		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context) = 0;
 	};
@@ -124,7 +167,7 @@ namespace cclj
 
 	typedef shared_ptr<slab_allocator<> > slab_allocator_ptr;
 
-	typedef function<pair<ast_node_ptr,type_ref_ptr>( lisp::cons_cell& )> type_check_function;
+	typedef function<ast_node& (lisp::cons_cell&)> type_check_function;
 	class compiler_plugin;
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
 
@@ -155,7 +198,7 @@ namespace cclj
 		compiler_plugin( string_table_str pname ) : _plugin_name( pname ) {}
 		friend class shared_ptr<compiler_plugin>;
 		virtual string_table_str plugin_name() { return _plugin_name; }
-		virtual pair<ast_node_ptr, type_ref_ptr> type_check( reader_context& context, lisp::cons_cell& cell ) = 0;
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell ) = 0;
 	};
 
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
