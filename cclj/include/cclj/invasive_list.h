@@ -276,7 +276,7 @@ namespace cclj
 	
 	//Macros to speed up the definitely of invasive linked lists.
 #define CCLJ_DEFINE_INVASIVE_SINGLE_LIST( type )								\
-	class type;																\
+	class type;																	\
 	class type##_next_op														\
 	{																			\
 	public:																		\
@@ -302,7 +302,7 @@ namespace cclj
 		const type* get( const type& s ) const;												\
 		void set( type& inItem, type* inNext );												\
 	};																						\
-	typedef invasive_linked_list<type,type##previous_op,type##next_op> T##type##List;
+	typedef invasive_linked_list<type,type##previous_op,type##next_op> type##_list;
 
 		
 #define CCLJ_IMPLEMENT_INVASIVE_LIST( type, prevMember, nextMember )									\

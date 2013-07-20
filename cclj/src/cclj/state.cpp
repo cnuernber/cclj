@@ -90,7 +90,7 @@ namespace
 	struct code_generator : public noncopyable
 	{
 		factory_ptr							_factory;
-		type_system_ptr						_type_system;
+		type_library_ptr						_type_library;
 		string_table_ptr					_str_table;
 		IRBuilder<>							_builder;
 		Module&								_module;
@@ -104,9 +104,9 @@ namespace
 		type_pod_map						_pod_types;
 
 		
-		code_generator( factory_ptr f, type_system_ptr t, string_table_ptr str_table, Module& m )
+		code_generator( factory_ptr f, type_library_ptr t, string_table_ptr str_table, Module& m )
 			: _factory( f )
-			, _type_system( t )
+			, _type_library( t )
 			, _str_table( str_table )
 			, _builder( getGlobalContext() )
 			, _module( m )
@@ -179,7 +179,7 @@ namespace
 			
 			type_llvm_type_map::iterator iter = _type_map.find( &type );
 			if ( iter != _type_map.end() ) return iter->second;
-			base_numeric_types::_enum val = _type_system->to_base_numeric_type( type );
+			base_numeric_types::_enum val = _type_library->to_base_numeric_type( type );
 			Type* base_type = nullptr;
 			switch( val )
 			{
@@ -218,9 +218,9 @@ namespace
 		//binary functions take two arguments and return the the same type.
 		void register_compiler_binary_fn( compiler_intrinsic fn, const char* name, const char* type )
 		{
-			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
+			type_ref& arg_type = _type_library->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
 			type_ref* buffer[2] = { &arg_type, &arg_type};
-			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
+			type_ref& func_type = _type_library->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
 			function_def theDef;
 			theDef._name = _factory->create_symbol();
 			theDef._name->_name = _str_table->register_str( name );
@@ -260,10 +260,10 @@ namespace
 		//comparison functions take two arguments and return an i1.
 		void register_compiler_compare_fn( compiler_intrinsic fn, const char* name, const char* type )
 		{
-			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
-			type_ref& ret_type = _type_system->get_type_ref( _str_table->register_str( "i1" ), type_ref_ptr_buffer() );
+			type_ref& arg_type = _type_library->get_type_ref( _str_table->register_str( type ), type_ref_ptr_buffer() );
+			type_ref& ret_type = _type_library->get_type_ref( _str_table->register_str( "i1" ), type_ref_ptr_buffer() );
 			type_ref* buffer[2] = { &arg_type, &arg_type};
-			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
+			type_ref& func_type = _type_library->get_type_ref( _str_table->register_str( name), type_ref_ptr_buffer( buffer, 2 ) );
 			function_def theDef;
 			theDef._name = _factory->create_symbol();
 			theDef._name->_name = _str_table->register_str( name );
@@ -407,7 +407,7 @@ namespace
 			if ( !else_statement ) throw runtime_error( "invalid if statement" );
 
 			pair<Value*,type_ref_ptr> condexpr = codegen_expr( condition->_value );
-			type_ref& bool_type = _type_system->get_type_ref( _str_table->register_str( "i1" ) );
+			type_ref& bool_type = _type_library->get_type_ref( _str_table->register_str( "i1" ) );
 			if ( condexpr.second != &bool_type ) throw runtime_error( "if statements only work on boolean exprs" );
 			
 			Function *theFunction = _builder.GetInsertBlock()->getParent();
@@ -524,7 +524,7 @@ namespace
 			_builder.SetInsertPoint( cond_block );
 
 			pair<Value*, type_ref_ptr> cond_val = codegen_expr( cond_expr._value );
-			if ( _type_system->to_base_numeric_type( *cond_val.second ) != base_numeric_types::i1 )
+			if ( _type_library->to_base_numeric_type( *cond_val.second ) != base_numeric_types::i1 )
 				throw runtime_error( "loop condition does not evaluate to a boolean" );
 			_builder.CreateCondBr( cond_val.first, loop_block, exit_block );
 
@@ -534,7 +534,7 @@ namespace
 			//Set insert point where further items should be written.
 			unwind_assign_block( init_array._data, shadow_vars );
 			return make_pair( ConstantInt::get( Type::getInt32Ty( getGlobalContext() ), 0 )
-				, &_type_system->get_type_ref( base_numeric_types::u32 ) );
+				, &_type_library->get_type_ref( base_numeric_types::u32 ) );
 		}
 
 		pair<Value*,type_ref_ptr> numeric_cast_special_form( cons_cell& cell )
@@ -544,8 +544,8 @@ namespace
 			type_ref_ptr rettype = name._type;
 			if ( !rettype ) throw runtime_error( "invalid numeric cast" );
 			pair<Value*,type_ref_ptr> arg_eval = codegen_expr( first_arg._value );
-			base_numeric_types::_enum target = _type_system->to_base_numeric_type( *rettype );
-			base_numeric_types::_enum source = _type_system->to_base_numeric_type( *arg_eval.second );
+			base_numeric_types::_enum target = _type_library->to_base_numeric_type( *rettype );
+			base_numeric_types::_enum source = _type_library->to_base_numeric_type( *arg_eval.second );
 			check_valid_numeric_cast_type( target );
 			check_valid_numeric_cast_type( source );
 			if ( target == source )
@@ -618,7 +618,7 @@ namespace
 				fn_arg_types.push_back( val.second );
 			}
 
-			type_ref& fn_type = _type_system->get_type_ref( fn_name._name, fn_arg_types );
+			type_ref& fn_type = _type_library->get_type_ref( fn_name._name, fn_arg_types );
 
 			function_map::iterator iter = _context.find( &fn_type );
 
@@ -666,7 +666,7 @@ namespace
 		}
 		pair<Value*,type_ref_ptr> codegen_constant( constant& data )
 		{
-			switch( _type_system->to_base_numeric_type( *data._type ) )
+			switch( _type_library->to_base_numeric_type( *data._type ) )
 			{
 #define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )		\
 			case base_numeric_types::name:			\
@@ -771,7 +771,7 @@ namespace
 				arg_lisp_types.push_back( sym._type );
 			} );
 
-			type_ref& fn_lisp_type = _type_system->get_type_ref( _str_table->register_str( fn_def._name ), arg_lisp_types );
+			type_ref& fn_lisp_type = _type_library->get_type_ref( _str_table->register_str( fn_def._name ), arg_lisp_types );
 			
 			function_def* fn_entry = nullptr;
 			if ( fn_def._name.empty() == false )
@@ -816,7 +816,7 @@ namespace
 			//return the struct.
 			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( defpod_cell._next  );
 			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
-			type_ref& this_pod_type = _type_system->get_type_ref( name._name );
+			type_ref& this_pod_type = _type_library->get_type_ref( name._name );
 			pair<type_pod_map::iterator,bool> insert_result = _pod_types.insert(make_pair( &this_pod_type, pod_type() ));
 			if ( insert_result.second == false ) throw runtime_error( "redefinition of pod types is not allowed" );
 			pod_type& new_pod = insert_result.first->second;
@@ -834,7 +834,7 @@ namespace
 			}
 			new_pod._llvm_type = StructType::create( getGlobalContext(), types );
 			_type_map.insert( make_pair( &this_pod_type, new_pod._llvm_type ) );
-			type_ref& new_fn_type = _type_system->get_type_ref( name._name, fn_arg_types );
+			type_ref& new_fn_type = _type_library->get_type_ref( name._name, fn_arg_types );
 			FunctionType* fn_llvm_type = FunctionType::get( new_pod._llvm_type, types, false );
 			_type_map.insert( make_pair( &new_fn_type, fn_llvm_type ) );
 			Function* constructor = Function::Create( fn_llvm_type, Function::ExternalLinkage, name._name.c_str(), &_module );
@@ -885,14 +885,14 @@ namespace
 		virtual float execute( const string& data )
 		{
 			factory_ptr factory = factory::create_factory( _alloc, _empty_cell );
-			type_system_ptr type_system = type_system::create_type_system( _alloc, _str_table );
-			reader_ptr reader = reader::create_reader( factory, type_system, _str_table );
+			type_library_ptr type_library = type_library::create_type_library( _alloc, _str_table );
+			reader_ptr reader = reader::create_reader( factory, type_library, _str_table );
 			object_ptr_buffer parse_result = reader->parse( data );
 			//run through, code-gen the function defs and call the functions.
 			InitializeNativeTarget();
 			LLVMContext &Context = getGlobalContext();
 			Module* module( new Module("my cool jit", Context) );
-			_code_gen = make_shared<code_generator>( factory, type_system, _str_table, *module );
+			_code_gen = make_shared<code_generator>( factory, type_library, _str_table, *module );
 
 			float retval = 0.0f;
 			for( object_ptr* obj_iter = parse_result.begin(), *end = parse_result.end();
@@ -922,7 +922,7 @@ namespace
 						cons_cell* progn_cell = factory->create_cell();
 						progn_cell->_value = cell;
 						type_ref_ptr ref = _code_gen->codegen_function_body( fn, *progn_cell );
-						if ( ref != &type_system->get_type_ref( base_numeric_types::f32 ) )
+						if ( ref != &type_library->get_type_ref( base_numeric_types::f32 ) )
 							throw runtime_error( "Expression is not of float type" );
 							
 						void *fn_ptr= _code_gen->_exec_engine->getPointerToFunction(fn);

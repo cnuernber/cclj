@@ -114,20 +114,20 @@ namespace std
 
 namespace {
 
-	class type_system_impl : public type_system
+	class type_library_impl : public type_library
 	{
 		allocator_ptr		_allocator;
 		string_table_ptr	_str_table;
 		typedef unordered_map<type_map_key, type_ref_ptr> type_map;
 		type_map _types;
 	public:
-		type_system_impl( allocator_ptr alloc, string_table_ptr str_t )
+		type_library_impl( allocator_ptr alloc, string_table_ptr str_t )
 			: _allocator( alloc )
 			, _str_table( str_t )
 		{
 		}
 
-		~type_system_impl()
+		~type_library_impl()
 		{
 			for_each( _types.begin(), _types.end(), 
 			[this](type_map::value_type& type )
@@ -265,7 +265,6 @@ namespace {
 	
 
 	typedef unordered_map<string_table_str, poly_function> poly_function_map;
-	typedef unordered_map<string_table_str, type_ref_ptr> symbol_type_ref_map;
 	typedef unordered_set<string_table_str> string_set;
 	typedef unordered_map<type_ref_ptr, type_ref_ptr> type_type_map;
 	typedef function<type_ref_ptr(cons_cell&)> special_form_type_function;
@@ -277,49 +276,11 @@ namespace {
 	};
 	typedef unordered_map<type_ref_ptr, pod_def> type_pod_map;
 
-	//tool used during type checking.
-#pragma warning(disable:4512)
-	struct symbol_type_context : noncopyable
-	{
-		symbol_type_ref_map&							_context_symbol_types;
-		vector<pair<string_table_str, type_ref_ptr> >	_created_symbols;
-		symbol_type_context( symbol_type_ref_map& cst )
-			: _context_symbol_types( cst )
-		{
-		}
-		~symbol_type_context()
-		{
-			for_each( _created_symbols.begin(), _created_symbols.end(), [this]
-			( const pair<string_table_str, type_ref_ptr>& symbol )
-			{
-				if ( symbol.second )
-					_context_symbol_types[symbol.first] = symbol.second;
-				else
-					_context_symbol_types.erase( symbol.first );
-			});
-		}
-
-		void add_symbol( string_table_str name, type_ref& type )
-		{
-			pair<symbol_type_ref_map::iterator,bool> inserter 
-				= _context_symbol_types.insert( make_pair( name, &type ) );
-			type_ref_ptr old_type = nullptr;
-			if ( inserter.second == false )
-			{
-				//record the old type before overwriting
-				old_type = inserter.first->second;
-				inserter.first->second = &type;
-			}
-			//Record the old type to restore when this context is destroyed.
-			_created_symbols.push_back( make_pair( name, old_type ) );
-		}
-
-	};
 
 	class reader_impl : public reader
 	{
 		factory_ptr		_factory;
-		type_system_ptr _type_system;
+		type_library_ptr _type_library;
 		string_table_ptr _str_table;
 		const string* str;
 		size_t cur_ptr;
@@ -330,7 +291,6 @@ namespace {
 		string_preprocessor_form_map	_preprocessor_forms;
 
 		preprocessor_map				_preprocessor_objects;
-		symbol_type_ref_map				_context_symbol_types;
 		string_set						_generated_function_names;
 		//maps the function name+arg types to the return type.
 		type_type_map					_function_definition_map;
@@ -339,9 +299,9 @@ namespace {
 
 		string temp_str;
 	public:
-		reader_impl( factory_ptr f, type_system_ptr ts, string_table_ptr st ) 
+		reader_impl( factory_ptr f, type_library_ptr ts, string_table_ptr st ) 
 			: _factory( f )
-			, _type_system( ts )
+			, _type_library( ts )
 			, _str_table( st )
 			, number_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*" ) 
 		{
@@ -385,9 +345,9 @@ namespace {
 		
 		void register_compiler_binary_fn( const char* name, const char* type )
 		{
-			type_ref& arg_type = _type_system->get_type_ref( type );
+			type_ref& arg_type = _type_library->get_type_ref( type );
 			type_ref* fn_args[2] = { &arg_type, &arg_type };
-			type_ref& fn_type = _type_system->get_type_ref( _str_table->register_str( name )
+			type_ref& fn_type = _type_library->get_type_ref( _str_table->register_str( name )
 										, type_ref_ptr_buffer( fn_args, 2 ) );
 			_function_definition_map.insert( make_pair( &fn_type, &arg_type ) );
 		}
@@ -423,10 +383,10 @@ namespace {
 		}
 		void register_compiler_compare_fn( const char* name, const char* type )
 		{
-			type_ref& arg_type = _type_system->get_type_ref( _str_table->register_str( type ) );
-			type_ref& ret_type = _type_system->get_type_ref( _str_table->register_str( "i1" ) );
+			type_ref& arg_type = _type_library->get_type_ref( _str_table->register_str( type ) );
+			type_ref& ret_type = _type_library->get_type_ref( _str_table->register_str( "i1" ) );
 			type_ref* buffer[2] = { &arg_type, &arg_type};
-			type_ref& func_type = _type_system->get_type_ref( _str_table->register_str( name)
+			type_ref& func_type = _type_library->get_type_ref( _str_table->register_str( name)
 											, type_ref_ptr_buffer( buffer, 2 ) );
 			_function_definition_map.insert( make_pair( &func_type, &ret_type ) );
 		}
@@ -526,7 +486,7 @@ namespace {
 			vector<type_ref_ptr> specializations;
 			if ( current_char() == '[' )
 				specializations = parse_type_array();
-			return &_type_system->get_type_ref( type_name, specializations );
+			return &_type_library->get_type_ref( type_name, specializations );
 		}
 
 		template<typename number_type>
@@ -559,11 +519,11 @@ namespace {
 				else 
 				{
 					if ( temp_str.find( '.' ) )
-						new_constant->_type = &_type_system->get_type_ref( base_numeric_types::f64 );
+						new_constant->_type = &_type_library->get_type_ref( base_numeric_types::f64 );
 					else
-						new_constant->_type = &_type_system->get_type_ref( base_numeric_types::i64 );
+						new_constant->_type = &_type_library->get_type_ref( base_numeric_types::i64 );
 				}
-				switch( _type_system->to_base_numeric_type( *new_constant->_type ) )
+				switch( _type_library->to_base_numeric_type( *new_constant->_type ) )
 				{
 #define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )	\
 				case base_numeric_types::name:	\
@@ -877,7 +837,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 					if ( idx >= fn._type_args.size() ) throw runtime_error( "incorrect number of type arguments" );
 					symbol& arg_name = object_traits::cast_ref<symbol>( fn._type_args[idx] );
 					//It will be clear later why this is a map from type to type.
-					type_ref& arg_name_type = _type_system->get_type_ref( arg_name._name );
+					type_ref& arg_name_type = _type_library->get_type_ref( arg_name._name );
 					type_map.insert( make_pair( &arg_name_type, call_site_type ) );
 					++idx;
 				} );
@@ -896,7 +856,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				{
 					object_ptr type_arg = *iter;
 					symbol& type_arg_sym = object_traits::cast_ref<symbol>( type_arg );
-					type_ref& type_arg_type = _type_system->get_type_ref( type_arg_sym._name );
+					type_ref& type_arg_type = _type_library->get_type_ref( type_arg_sym._name );
 					is_generic = &type_arg_type == def_arg._type;
 				}
 
@@ -942,7 +902,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			( object_ptr type_arg )
 			{
 				symbol& type_arg_sym = object_traits::cast_ref<symbol>( type_arg );
-				type_ref_ptr type_var = &_type_system->get_type_ref( type_arg_sym._name );
+				type_ref_ptr type_var = &_type_library->get_type_ref( type_arg_sym._name );
 				type_type_map::iterator iter = type_map.find( type_var );
 				if ( iter == type_map.end() ) throw runtime_error( "Failed to handle type var" );
 				type_ref_ptr concrete_type = iter->second;
@@ -1040,7 +1000,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				type_ref_ptr expr_type = type_check_expr( arg_cell->_value );
 				arg_map.push_back( expr_type );
 			}
-			type_ref& fn_type = _type_system->get_type_ref( item_name._name, arg_map );
+			type_ref& fn_type = _type_library->get_type_ref( item_name._name, arg_map );
 			type_type_map::iterator fn_entry = _function_definition_map.find( &fn_type );
 			if ( fn_entry == _function_definition_map.end() ) throw runtime_error( "unable to find function" );
 			return fn_entry->second;
@@ -1077,8 +1037,8 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			type_ref_ptr first_arg_type = type_check_expr( first_arg._value );
 			if ( !rettype ) throw runtime_error( "invalid numeric cast" );
 			if ( first_arg._next ) throw runtime_error( "numeric cast only takes 1 argument" );
-			base_numeric_types::_enum target_type = _type_system->to_base_numeric_type( *rettype );
-			base_numeric_types::_enum source_type = _type_system->to_base_numeric_type( *first_arg_type );
+			base_numeric_types::_enum target_type = _type_library->to_base_numeric_type( *rettype );
+			base_numeric_types::_enum source_type = _type_library->to_base_numeric_type( *first_arg_type );
 			check_valid_numeric_cast_type( target_type );
 			check_valid_numeric_cast_type( source_type );
 			return rettype;
@@ -1104,7 +1064,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				func_specs.push_back( arg_sym._type );
 				var_context.add_symbol( arg_sym._name, *arg_sym._type );
 			} );
-			type_ref& fn_type = _type_system->get_type_ref( name._name, func_specs );
+			type_ref& fn_type = _type_library->get_type_ref( name._name, func_specs );
 			pair<type_type_map::iterator,bool> inserter = _function_definition_map.insert( make_pair( &fn_type, name._type ) );
 			//here is a quandary.  Eventually we would like this to be more dynamic.
 			if ( inserter.second == false ) throw runtime_error( "function x already defined" );
@@ -1122,7 +1082,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			cons_cell& then = object_traits::cast_ref<cons_cell>( cond._next );
 			cons_cell& els = object_traits::cast_ref<cons_cell>( then._next );
 			type_ref_ptr cond_type = type_check_expr( cond );
-			if ( base_numeric_types::i1 != _type_system->to_base_numeric_type( *cond_type ) )
+			if ( base_numeric_types::i1 != _type_library->to_base_numeric_type( *cond_type ) )
 				throw runtime_error( "invalid if condition" );
 			type_ref_ptr then_type = type_check_expr( then );
 			type_ref_ptr else_type = type_check_expr( els );
@@ -1178,7 +1138,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			symbol_type_context var_context( _context_symbol_types );
 			enter_assign_block( entry_block_data, var_context );
 			type_ref_ptr cond_type = type_check_expr( cond_block._value );
-			if ( base_numeric_types::i1 != _type_system->to_base_numeric_type( *cond_type ) )
+			if ( base_numeric_types::i1 != _type_library->to_base_numeric_type( *cond_type ) )
 				throw runtime_error( "Invalid if statement, condition does not evaluate to boolean" );
 
 			for ( cons_cell* body_iter = &loop_body; body_iter
@@ -1194,14 +1154,14 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				type_check_expr( item );
 			} );
 
-			return &_type_system->get_type_ref( base_numeric_types::u32 );
+			return &_type_library->get_type_ref( base_numeric_types::u32 );
 		}
 
 		type_ref_ptr type_check_def_pod( cons_cell& cell )
 		{
 			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( cell._next );
 			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
-			type_ref& retval = _type_system->get_type_ref( name._name );
+			type_ref& retval = _type_library->get_type_ref( name._name );
 			auto inserter = _pod_definitions.insert( make_pair( &retval, pod_def() ) );
 			if ( inserter.second == false ) throw runtime_error( "duplicate pod definition" );
 			pod_def& new_def = inserter.first->second;
@@ -1213,7 +1173,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				new_def._fields.push_back( &name );
 				constructor_args.push_back( name._type );
 			}
-			type_ref& cons_type = _type_system->get_type_ref( name._name, constructor_args );
+			type_ref& cons_type = _type_library->get_type_ref( name._name, constructor_args );
 			_function_definition_map.insert( make_pair( &cons_type, &retval ) );
 			return &retval;
 		}
@@ -1292,12 +1252,12 @@ factory_ptr factory::create_factory( allocator_ptr allocator, const cons_cell& e
 	return make_shared<factory_impl>( allocator, empty_cell );
 }
 
-type_system_ptr type_system::create_type_system( allocator_ptr allocator, string_table_ptr s )
+type_library_ptr type_library::create_type_library( allocator_ptr allocator, string_table_ptr s )
 {
-	return make_shared<type_system_impl>( allocator, s );
+	return make_shared<type_library_impl>( allocator, s );
 }
 
-reader_ptr reader::create_reader( factory_ptr factory, type_system_ptr ts, string_table_ptr str_table )
+reader_ptr reader::create_reader( factory_ptr factory, type_library_ptr ts, string_table_ptr str_table )
 {
 	return make_shared<reader_impl>( factory, ts, str_table );
 }
