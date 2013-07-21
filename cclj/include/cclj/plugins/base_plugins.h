@@ -9,7 +9,7 @@
 #define CCLJ_PLUGINS_BASE_PLUGINS_H
 #pragma once
 #include "cclj/cclj.h"
-#include "cclj/compiler_plugin.h"
+#include "cclj/plugins/compiler_plugin.h"
 
 namespace llvm
 {
@@ -37,13 +37,13 @@ namespace cclj { namespace plugins {
 
 	struct function_call_node : public ast_node
 	{
-		typedef apply_plugin plugin_type;
-
 		function_def_node&			_function;
 
-		function_call_node(const apply_plugin& plugin, const function_def_node& _fun );
+		static const char* static_node_type() { return "function call"; }
 
-		virtual void compile_first_pass(compiler_context& context);
+		function_call_node(string_table_ptr str_table, const function_def_node& _fun );
+
+		virtual bool executable_statement() const { return true; }
 		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context);
 	};
 
@@ -62,22 +62,23 @@ namespace cclj { namespace plugins {
 
 	struct function_def_node : public ast_node
 	{
-		typedef function_def_plugin plugin_type;
+		static const char* static_node_type() { return "function definition"; }
 
 		lisp::symbol&				_name;
 		type_ref&					_my_type;
 		data_buffer<lisp::symbol*>	_arguments;
 		llvm_function_ptr			_function;
 
-		function_def_node( const function_def_plugin& plugin, const lisp::symbol& name
+		function_def_node( string_table_ptr str_table, const lisp::symbol& name
 							, const type_ref& mt, data_buffer<lisp::symbol*> arguments )
-			: ast_node( plugin, *_name._type )
+			: ast_node( str_table->register_str( static_node_type() ), *_name._type )
 			, _name( const_cast<lisp::symbol&>( name ) )
 			, _my_type( const_cast<type_ref&>( mt ) )
 			, _arguments( arguments )
 			, _function( nullptr )
 		{
 		}
+		virtual ast_node& apply( reader_context& context, data_buffer<ast_node_ptr> args );
 		virtual void compile_first_pass(compiler_context& context);
 		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context);
 
@@ -85,31 +86,15 @@ namespace cclj { namespace plugins {
 			, data_buffer<lisp::symbol*> fn_args, variable_context& var_context );
 	};
 
-	typedef function<void( string_table_str fn, compiler_plugin_ptr& comp )> register_function;
+	typedef function<void( type_ref& fn_type, ast_node& comp_node )> register_function;
 
-	class binary_function_plugin_base : public compiler_plugin
+	//Binary nodes are things that take two arguments and return an answer.
+	//Examples of those are things like low level operator + and comparison functions.
+	class binary_low_level_ast_node
 	{
-	protected:
-		type_ref& _type;
-		base_numeric_types::_enum _num_type;
 	public:
-		binary_function_plugin_base( string_table_str n, type_library_ptr type_lib
-									, base_numeric_types::_enum type ) 
-			: compiler_plugin( n )
-			, _type( type_lib->get_type_ref( type ) )
-			, _num_type( type ) 
-		{}
-		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell );
-
-		virtual ast_node& create_ast_node(reader_context& context) = 0;
-
-		static void register_binary_functions( register_function fn, type_library_ptr type_lib, string_table_ptr str_table );
-	};
-
-	
-	class binary_compare_function_plugin_base : public compiler_plugin
-	{
-
+		static void register_binary_functions( register_function fn, type_library_ptr type_lib
+			, string_table_ptr str_table, slab_allocator_ptr ast_allocator );
 	};
 
 	

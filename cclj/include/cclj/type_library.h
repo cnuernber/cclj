@@ -150,12 +150,18 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			return base_numeric_types::no_known_type;
 		}
 
-
-
 		static shared_ptr<type_library> create_type_library( allocator_ptr allocator, string_table_ptr str_table );
 	};
 
 	typedef shared_ptr<type_library> type_library_ptr;
+	
+	
+	static void check_valid_numeric_cast_type( base_numeric_types::_enum val )
+	{
+		if ( val == base_numeric_types::no_known_type 
+			|| val == base_numeric_types::i1 )
+			throw runtime_error( "invalid numeric cast; either not a number or boolean" );
+	}
 }
 
 

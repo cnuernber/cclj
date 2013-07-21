@@ -35,8 +35,8 @@ using namespace llvm;
 ast_node& apply_plugin::type_check( reader_context& context, lisp::cons_cell& cell )
 {
 	symbol& fn_name = object_traits::cast_ref<symbol>( cell._value );
-	auto plugin_ptr_iter = context._plugins->find( fn_name._name );
-	if ( plugin_ptr_iter !=  context._plugins->end() )
+	auto plugin_ptr_iter = context._special_forms->find( fn_name._name );
+	if ( plugin_ptr_iter !=  context._special_forms->end() )
 	{
 		return plugin_ptr_iter->second->type_check( context, cell );
 	}
@@ -54,25 +54,15 @@ ast_node& apply_plugin::type_check( reader_context& context, lisp::cons_cell& ce
 	type_ref& fn_type = context._type_library->get_type_ref( fn_name._name, _arg_types );
 	auto context_node_iter = context._symbol_map->find( &fn_type );
 	if ( context_node_iter == context._symbol_map->end() ) throw runtime_error( "unable to resolve function" );
-	function_def_node& fun_def 
-		= compiler_plugin_traits::cast_ref<function_def_node>( context_node_iter->second, context._string_table );
-	
-	function_call_node* new_node = context._ast_allocator->construct<function_call_node>( *this, fun_def );
-	for_each( _resolved_args.begin(), _resolved_args.end(), [&]
-	( ast_node_ptr node )
-	{
-		new_node->children().push_back( *node );
-	} );
-	return *new_node;
+	ast_node& new_node = context_node_iter->second->apply( context, _resolved_args );
+	return new_node;
 }
 
-function_call_node::function_call_node(const apply_plugin& plugin, const function_def_node& _fun )
-	: ast_node( plugin, *_fun._name._type )
+function_call_node::function_call_node(string_table_ptr str_table, const function_def_node& _fun )
+	: ast_node( str_table->register_str( static_node_type() ), *_fun._name._type )
 	, _function( const_cast<function_def_node&>( _fun ) )
 {
 }
-
-void function_call_node::compile_first_pass(compiler_context&) {}
 
 
 pair<llvm_value_ptr, type_ref_ptr> function_call_node::compile_second_pass(compiler_context& context)
@@ -122,6 +112,17 @@ ast_node& function_def_plugin::type_check( reader_context& context, lisp::cons_c
 	return *new_node;
 }
 
+
+ast_node& function_def_node::apply( reader_context& context, data_buffer<ast_node_ptr> args )
+{
+	function_call_node* new_node = context._ast_allocator->construct<function_call_node>( context._string_table, *this );
+	for_each( args.begin(), args.end(), [&]
+	( ast_node_ptr arg )
+	{
+		new_node->children().push_back( *arg );
+	} );
+	return *new_node;
+}
 
 
 void function_def_node::compile_first_pass(compiler_context& context)
@@ -183,176 +184,196 @@ void function_def_node::initialize_function(compiler_context& context, Function&
 	}
 }
 
-
-
-ast_node& binary_function_plugin_base::type_check( reader_context& context, lisp::cons_cell& cell )
-{
-	cons_cell& arg1 = object_traits::cast_ref<cons_cell>( cell._next );
-	cons_cell& arg2 = object_traits::cast_ref<cons_cell>( arg1._next );
-	if ( arg2._next ) throw runtime_error( "function takes only two arguments" );
-	ast_node& arg1_eval = context._type_checker( arg1 );
-	ast_node& arg2_eval = context._type_checker( arg2 );
-	if ( &arg1_eval.type() != &_type
-		|| &arg2_eval.type() != &_type )
-		throw runtime_error( "arg1, arg2 types do not match" );
-	ast_node& new_node = create_ast_node(context);
-	new_node.children().push_back( arg1_eval );
-	new_node.children().push_back( arg1_eval );
-	return new_node;
-}
-
 namespace 
 {
 
 	typedef function<llvm_value_ptr (IRBuilder<>& builder, Value* lhs, Value* rhs )> builder_binary_function;
 
-	struct builder_binary_ast_node : public ast_node
+	//this node is both registered as a global symbol and used at the callsite.
+	struct binary_ast_node : public ast_node
 	{
-		builder_binary_function _creator;
-		builder_binary_ast_node( const compiler_plugin& p, const type_ref& t, builder_binary_function memfn )
-			: ast_node( p, t )
-			, _creator( memfn )
+		builder_binary_function _function;
+		binary_ast_node( string_table_str name, type_ref& rettype, builder_binary_function build_fn )
+			: ast_node( name, rettype )
+			, _function( build_fn )
 		{
 		}
-	
-		void compile_first_pass(compiler_context&) {}
 
-		pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		
+		virtual ast_node& apply( reader_context& context, data_buffer<ast_node_ptr> args )
 		{
-			ast_node& arg1 = *children()._head;
-			ast_node& arg2 = *arg1.next_node();
-			auto eval_1 = arg1.compile_second_pass( context );
-			auto eval_2 = arg2.compile_second_pass( context );
-			llvm_value_ptr value = _creator( context._builder, eval_1.first, eval_2.first );
-			return make_pair( value, &type() );
+			binary_ast_node* retval = context._ast_allocator->construct<binary_ast_node>( node_type(), type() );
+			retval->children().push_back( *args[0] );
+			retval->children().push_back( *args[1] );
+			return *retval;
+		}
+
+		virtual bool executable_statement() const { return true; }
+		
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			ast_node& lhs = *children()._head;
+			ast_node& rhs = *lhs.next_node();
+			llvm_value_ptr lhs_value = lhs.compile_second_pass( context ).first;
+			llvm_value_ptr rhs_value = rhs.compile_second_pass( context ).first;
+			llvm_value_ptr retval = _function( context._builder, lhs_value, rhs_value );
+			return make_pair( retval, &type() );
 		}
 	};
 
 
-	struct concrete_binary_function_plugin : public binary_function_plugin_base
-	{
-		builder_binary_function _builder_fn;
-		concrete_binary_function_plugin( string_table_str n, type_library_ptr type_lib
-										, base_numeric_types::_enum type
-										, builder_binary_function build_fn )
-										: binary_function_plugin_base( n, type_lib, type )
-										, _builder_fn( build_fn )
-		{
-		}
-		virtual ast_node& create_ast_node(reader_context& context)
-		{
-			builder_binary_ast_node* retval 
-				= context._ast_allocator->construct<builder_binary_ast_node>( *this, _type, _builder_fn );
-			return *retval;			
-		}
-	};
-
-	void do_register_binary_fn( register_function fn, string_table_str n, type_library_ptr type_lib
+	void do_register_binary_fn( register_function fn
+									, string_table_str node_name
+									, string_table_str symbol_name
+									, type_library_ptr type_lib
 									, builder_binary_function builder_function
-									, base_numeric_types::_enum type_enum
-									, string_table_str fn_symbol )
+									, base_numeric_types::_enum in_arg_type
+									, base_numeric_types::_enum in_ret_type
+									, slab_allocator_ptr ast_allocator )
 	{
-		shared_ptr<compiler_plugin> plugin 
-			= make_shared<concrete_binary_function_plugin>( n, type_lib, type_enum, builder_function );
-		fn( fn_symbol, plugin );
+		type_ref& ret_type = type_lib->get_type_ref( in_ret_type );
+		type_ref& arg_type = type_lib->get_type_ref( in_arg_type );
+		binary_ast_node* new_node = ast_allocator->construct<binary_ast_node>( node_name, ret_type, builder_function );
+		type_ref* arg_array[2] = { &ret_type, &ret_type };
+		type_ref& fn_type = type_lib->get_type_ref( symbol_name, data_buffer<type_ref_ptr>( arg_array, 2 ) );
+		fn( fn_type, *new_node );
 	}
 
 
 	void register_binary_float_fn( register_function fn, string_table_str n, type_library_ptr type_lib
 									, builder_binary_function builder_function
-									, string_table_str fn_symbol )
+									, string_table_str fn_symbol
+									, slab_allocator_ptr ast_allocator
+									, bool ret_type_same_as_arg_type )
 	{
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::f32, fn_symbol );
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::f64, fn_symbol );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::f32, ret_type_same_as_arg_type ? base_numeric_types::f32 : base_numeric_types::i1
+			, ast_allocator );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::f64, ret_type_same_as_arg_type ? base_numeric_types::f64 : base_numeric_types::i1
+			, ast_allocator );
 	}
 	
 	void register_binary_signed_integer_fn( register_function fn, string_table_str n, type_library_ptr type_lib
 									, builder_binary_function builder_function
-									, string_table_str fn_symbol )
+									, string_table_str fn_symbol
+									, slab_allocator_ptr ast_allocator
+									, bool ret_type_same_as_arg_type )
 	{
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::i8, fn_symbol );
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::i16, fn_symbol );
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::i32, fn_symbol );
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::i64, fn_symbol );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::i8, ret_type_same_as_arg_type ? base_numeric_types::i8 : base_numeric_types::i1
+			, ast_allocator );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::i16, ret_type_same_as_arg_type ? base_numeric_types::i16 : base_numeric_types::i1
+			, ast_allocator );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::i32, ret_type_same_as_arg_type ? base_numeric_types::i32 : base_numeric_types::i1
+			, ast_allocator );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::i64, ret_type_same_as_arg_type ? base_numeric_types::i64 : base_numeric_types::i1
+			, ast_allocator );
 	}
 	
 	void register_binary_unsigned_integer_fn( register_function fn, string_table_str n, type_library_ptr type_lib
 												, builder_binary_function builder_function
-												, string_table_str fn_symbol)
+												, string_table_str fn_symbol
+												, slab_allocator_ptr ast_allocator
+												, bool ret_type_same_as_arg_type)
 	{
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::u8, fn_symbol );
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::u16, fn_symbol );
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::u32, fn_symbol );
-		do_register_binary_fn( fn, n, type_lib, builder_function, base_numeric_types::u64, fn_symbol );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::u8, ret_type_same_as_arg_type ? base_numeric_types::u8 : base_numeric_types::i1
+			, ast_allocator );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::u16, ret_type_same_as_arg_type ? base_numeric_types::u16 : base_numeric_types::i1
+			, ast_allocator );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::u32, ret_type_same_as_arg_type ? base_numeric_types::u32 : base_numeric_types::i1
+			, ast_allocator );
+		do_register_binary_fn( fn, n, fn_symbol, type_lib, builder_function
+			, base_numeric_types::u64, ret_type_same_as_arg_type ? base_numeric_types::u64 : base_numeric_types::i1
+			, ast_allocator );
 	}
 	
 	void register_binary_integer_fn( register_function fn, string_table_str n, type_library_ptr type_lib
 									, builder_binary_function builder_function
-									, string_table_str fn_symbol)
+									, string_table_str fn_symbol
+									, slab_allocator_ptr ast_allocator
+									, bool ret_type_same_as_arg_type)
 	{
-		register_binary_signed_integer_fn( fn, n, type_lib, builder_function, fn_symbol );
-		register_binary_unsigned_integer_fn( fn, n, type_lib, builder_function, fn_symbol );
+		register_binary_signed_integer_fn( fn, n, type_lib, builder_function, fn_symbol
+												, ast_allocator, ret_type_same_as_arg_type );
+		register_binary_unsigned_integer_fn( fn, n, type_lib, builder_function, fn_symbol
+												, ast_allocator, ret_type_same_as_arg_type );
 	}
 }
 
 
 
 
-void binary_function_plugin_base::register_binary_functions( register_function fn, type_library_ptr type_lib
-																, string_table_ptr str_table )
+void binary_low_level_ast_node::register_binary_functions( register_function fn, type_library_ptr type_lib
+																, string_table_ptr str_table
+																, slab_allocator_ptr ast_allocator)
 {
 	register_binary_float_fn( fn, str_table->register_str( "float plus" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateFAdd( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "+" ) );
+								}, str_table->register_str( "+" )
+								, ast_allocator, true);
 
 	register_binary_float_fn( fn, str_table->register_str( "float minus" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateFSub( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "-" ) );
+								}, str_table->register_str( "-" )
+								, ast_allocator, true );
 	
 	register_binary_float_fn( fn, str_table->register_str( "float multiply" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateFMul( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "*" ) );
+								}, str_table->register_str( "*" )
+								, ast_allocator, true );
 	
 	register_binary_float_fn( fn, str_table->register_str( "float divide" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateFDiv( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "/" ) );
+								}, str_table->register_str( "/" )
+								, ast_allocator, true );
 	
 	register_binary_integer_fn( fn, str_table->register_str( "int plus" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateAdd( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "+" ) );
+								}, str_table->register_str( "+" )
+								, ast_allocator, true );
 	
 	register_binary_integer_fn( fn, str_table->register_str( "int minus" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateSub( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "-" ) );
+								}, str_table->register_str( "-" )
+								, ast_allocator, true );
 	
 	register_binary_integer_fn( fn, str_table->register_str( "int multiply" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateMul( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "*" ) );
+								}, str_table->register_str( "*" )
+								, ast_allocator, true );
 	
 	register_binary_signed_integer_fn( fn, str_table->register_str( "int divide" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateSDiv( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "/" ) );
+								}, str_table->register_str( "/" )
+								, ast_allocator, true );
 	
 	register_binary_unsigned_integer_fn( fn, str_table->register_str( "int divide" ), type_lib
 								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
 								{
 									return builder.CreateUDiv( lhs, rhs, "tmpadd" );
-								}, str_table->register_str( "/" ) );
-
+								}, str_table->register_str( "/" )
+								, ast_allocator, true );
 }

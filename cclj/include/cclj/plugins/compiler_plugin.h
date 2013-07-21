@@ -32,6 +32,7 @@ namespace llvm
 	class Type;
 	class Module;
 	class FunctionPassManager;
+	class ExecutionEngine;
 }
 
 namespace cclj
@@ -132,29 +133,42 @@ namespace cclj
 		llvm_type_ptr type_ref_type( type_ref& type );
 	};
 
+	struct reader_context;
+
 	CCLJ_DEFINE_INVASIVE_SINGLE_LIST(ast_node); 
 	//AST nodes are allocated with the slab allocator.  This means they do not need
 	//to be manually deallocated.
 	class ast_node : noncopyable
 	{
+		string_table_str		_node_type;
 		ast_node_ptr			_next_node;
 		type_ref&				_type;
 		ast_node_list			_children;
-		compiler_plugin&		_plugin;
 	protected:
 		virtual ~ast_node(){}
 	public:
-		ast_node(const compiler_plugin& p, const type_ref& t ) : _next_node( nullptr ), _type( const_cast<type_ref&> ( t ) )
-			, _plugin( const_cast<compiler_plugin&>( p ) ) {}
-		virtual compiler_plugin& plugin() { return _plugin; }
+		ast_node(string_table_str nt, const type_ref& t ) : _node_type( nt ), _next_node( nullptr )
+			, _type( const_cast<type_ref&> ( t ) )
+		{}
+		virtual string_table_str& node_type() { return _node_type; }
 		virtual void set_next_node( ast_node* n ) { _next_node = n; }
 		virtual ast_node_ptr next_node() { return _next_node; }
 		virtual ast_node_ptr next_node() const { return _next_node; }
 		ast_node_list& children() { return _children; }
 		const ast_node_list& children() const { return _children; }
 		virtual type_ref& type() { return _type; }
+		//return true if you can be executed at the top level.
+		virtual bool executable_statement() const { return false; }
 
-		virtual void compile_first_pass(compiler_context& context) = 0;
+		
+		//Not all nodes are callback, but if your node is registered as a global symbol in the type
+		//table then it needs to be able to handle this call.
+		virtual ast_node& apply( reader_context& /*context*/, data_buffer<ast_node_ptr> /*args*/ )
+		{
+			throw runtime_error( "ast node cannot handle apply" );
+		}
+
+		virtual void compile_first_pass(compiler_context& /*context*/) {}
 		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context) = 0;
 	};
 
@@ -183,7 +197,8 @@ namespace cclj
 		type_ast_node_map_ptr		_symbol_map;
 		ast_node_ptr_list_ptr		_top_level_symbols;
 		type_check_function			_type_checker;
-		string_plugin_map_ptr		_plugins;
+		string_plugin_map_ptr		_special_forms;
+		string_plugin_map_ptr		_top_level_special_forms;
 		string_table_ptr			_string_table;
 	};
 
@@ -227,7 +242,7 @@ namespace cclj
 		static ast_type* cast( ast_node_ptr node, string_table_ptr str_table )
 		{
 			if ( !node ) return nullptr;
-			if ( str_table->register_str( ast_type::plugin_type::static_plugin_name() ) 
+			if ( str_table->register_str( ast_type::static_node_type() ) 
 				== node->plugin().plugin_name() )
 				return static_cast<ast_type*>( node );
 			return nullptr;
