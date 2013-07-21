@@ -56,14 +56,6 @@ namespace cclj
 			}
 			return retval;
 		}
-		
-
-		static void check_valid_numeric_cast_type( base_numeric_types::_enum val )
-		{
-			if ( val == base_numeric_types::no_known_type 
-				|| val == base_numeric_types::i1 )
-				throw runtime_error( "invalid numeric cast; either not a number of boolean" );
-		}
 	}
 }
 
