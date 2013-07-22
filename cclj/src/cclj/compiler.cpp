@@ -318,13 +318,52 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		}
 	};
 
+	struct type_checker
+	{
+		shared_ptr<reader_context>				_context;
+		apply_plugin				_applier;
+		type_checker( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
+							, string_table_ptr st
+							, string_plugin_map_ptr special_forms
+							, string_plugin_map_ptr top_level_special_forms
+							, type_ast_node_map_ptr top_level_symbols
+							, slab_allocator_ptr ast_alloc )
+							: _applier( st )
+		{
+			type_check_function tc = [this]( cons_cell& cc ) -> ast_node&
+			{ 
+				return type_check_cell( cc ); 
+			};
+			_context = shared_ptr<reader_context>( new reader_context( alloc, f, l, st, tc, special_forms
+											, top_level_special_forms, top_level_symbols
+											, ast_alloc ) );
+		}
+
+		ast_node& type_check_cell( cons_cell& cc )
+		{
+			switch( cc._value->type() )
+			{
+			case types::symbol:
+				return _applier.type_check( *_context, cc );
+			default:
+				throw runtime_error( "unable to type check at this time" );
+			}
+		}
+
+
+	};
+
 	struct compiler_impl : public compiler
 	{
-		allocator_ptr		_allocator;
-		string_table_ptr	_str_table;
-		type_library_ptr	_type_library;
-		factory_ptr			_factory;
-		cons_cell			_empty_cell;
+		allocator_ptr				_allocator;
+		string_table_ptr			_str_table;
+		type_library_ptr			_type_library;
+		factory_ptr					_factory;
+		cons_cell					_empty_cell;
+		string_plugin_map_ptr		_special_forms;
+		string_plugin_map_ptr		_top_level_special_forms;
+		type_ast_node_map_ptr		_top_level_symbols;
+		slab_allocator_ptr			_ast_allocator;
 
 
 		compiler_impl()
@@ -332,8 +371,18 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			, _str_table( string_table::create() )
 			, _type_library( type_library::create_type_library( _allocator, _str_table ) )
 			, _factory( factory::create_factory( _allocator, _empty_cell ) )
+			, _special_forms( make_shared<string_plugin_map>() )
+			, _top_level_special_forms( make_shared<string_plugin_map>() )
+			, _top_level_symbols( make_shared<type_ast_node_map>() )
+			, _ast_allocator( make_shared<slab_allocator<> >( _allocator ) )
 		{
-
+			_top_level_special_forms->insert( make_pair( _str_table->register_str( "defn" )
+				, make_shared<function_def_plugin>( _str_table ) ) );
+			register_function reg_fn = [this]( type_ref& fn_type, ast_node& comp_node )
+			{
+				_top_level_symbols->insert( make_pair( &fn_type, &comp_node ) );
+			};
+			binary_low_level_ast_node::register_binary_functions( reg_fn, _type_library, _str_table, _ast_allocator );
 		}
 
 		//transform text into the lisp datastructures.
@@ -344,10 +393,18 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		}
 
 		//Preprocess evaluates macros and fills in polymorphic functions and types.
-		virtual vector<lisp::object_ptr> preprocess( data_buffer<lisp::object_ptr> read_result ) = 0;
+		virtual vector<lisp::object_ptr> preprocess( data_buffer<lisp::object_ptr> read_result )
+		{
+			return vector<object_ptr>( read_result.begin(), read_result.end() );
+		}
 
 		//Transform lisp datastructures into type-checked ast.
-		virtual vector<ast_node_ptr> type_check( data_buffer<lisp::object_ptr> preprocess_result ) = 0;
+		virtual vector<ast_node_ptr> type_check( data_buffer<lisp::object_ptr> preprocess_result )
+		{
+			type_checker checker( _allocator, _factory, _type_library
+								, _str_table, _special_forms
+								, _top_level_special_forms, _top_level_symbols, _ast_allocator );
+		}
 
 		//compile ast to binary.
 		virtual pair<void*,type_ref_ptr> compile( data_buffer<ast_node_ptr> ) = 0;

@@ -177,7 +177,6 @@ namespace cclj
 	inline void ast_node_next_op::set( ast_node& item, ast_node_ptr next ) { item.set_next_node( next ); }
 
 	typedef vector<ast_node_ptr> ast_node_ptr_list;
-	typedef shared_ptr<ast_node_ptr> ast_node_ptr_list_ptr;
 
 	typedef shared_ptr<slab_allocator<> > slab_allocator_ptr;
 
@@ -192,14 +191,19 @@ namespace cclj
 	{
 		lisp::factory_ptr			_factory;
 		type_library_ptr			_type_library;
-		symbol_type_ref_map			_context_symbol_types;
+		string_table_ptr			_string_table;
 		slab_allocator_ptr			_ast_allocator;
+		symbol_type_ref_map			_context_symbol_types;
 		type_ast_node_map_ptr		_symbol_map;
-		ast_node_ptr_list_ptr		_top_level_symbols;
 		type_check_function			_type_checker;
 		string_plugin_map_ptr		_special_forms;
 		string_plugin_map_ptr		_top_level_special_forms;
-		string_table_ptr			_string_table;
+		reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
+							, string_table_ptr st, type_check_function tc
+							, string_plugin_map_ptr special_forms
+							, string_plugin_map_ptr top_level_special_forms
+							, type_ast_node_map_ptr top_level_symbols
+							, slab_allocator_ptr ast_alloc );
 	};
 
 	//Compiler plugins process special forms.
