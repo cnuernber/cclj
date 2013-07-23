@@ -20,19 +20,16 @@ namespace cclj { namespace plugins {
 	typedef llvm::Function* llvm_function_ptr;
 	struct function_call_node;
 	struct function_def_node;
-	class apply_plugin : public compiler_plugin
+
+	class base_language_plugins
 	{
 		vector<type_ref_ptr> _arg_types;
 		vector<ast_node_ptr> _resolved_args;
 	public:
-		typedef function_call_node ast_node_type;
-		static const char* static_plugin_name() { return "apply"; }
-		apply_plugin( string_table_ptr table ) 
-			: compiler_plugin( table->register_str( static_plugin_name() ) )
-		{
-		}
 		
-		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell );
+		ast_node& type_check_apply( reader_context& context, lisp::cons_cell& cell );
+		ast_node& type_check_symbol( reader_context& context, lisp::cons_cell& cell );
+		ast_node& type_check_numeric_constant( reader_context& context, lisp::cons_cell& cell );
 	};
 
 	struct function_call_node : public ast_node
@@ -53,6 +50,7 @@ namespace cclj { namespace plugins {
 		typedef function_def_node ast_node_type;
 
 		static const char* static_plugin_name() { return "function definition"; }
+
 		function_def_plugin( string_table_ptr table )
 			: compiler_plugin( table->register_str( static_plugin_name() ) )
 		{
@@ -96,7 +94,6 @@ namespace cclj { namespace plugins {
 		static void register_binary_functions( register_function fn, type_library_ptr type_lib
 			, string_table_ptr str_table, slab_allocator_ptr ast_allocator );
 	};
-
 	
 
 	template<typename data_type, typename allocator>

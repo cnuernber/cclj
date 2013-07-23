@@ -175,7 +175,7 @@ namespace cclj
 				for ( iterator iter = begin(), endIter = end(); iter != endIter; ++iter )
 					lastObj = &(*iter);
 
-				NV_ASSERT( lastObj );
+				if ( !lastObj ) throw runtime_error( "invalid list" );
 				if ( lastObj )
 					obj_tail_op().set( *lastObj, &inObj );
 			}

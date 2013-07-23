@@ -26,13 +26,15 @@
 #pragma warning(pop)
 #endif
 
+#include "cclj/llvm_base_numeric_type_helper.h"
+
 using namespace cclj;
 using namespace cclj::lisp;
 using namespace cclj::plugins;
 using namespace llvm;
 
 
-ast_node& apply_plugin::type_check( reader_context& context, lisp::cons_cell& cell )
+ast_node& base_language_plugins::type_check_apply( reader_context& context, lisp::cons_cell& cell )
 {
 	symbol& fn_name = object_traits::cast_ref<symbol>( cell._value );
 	auto plugin_ptr_iter = context._special_forms->find( fn_name._name );
@@ -58,6 +60,65 @@ ast_node& apply_plugin::type_check( reader_context& context, lisp::cons_cell& ce
 	return new_node;
 }
 
+namespace {
+	struct symbol_ast_node : public ast_node
+	{
+		symbol& _symbol;
+		symbol_ast_node( string_table_ptr st, const symbol& s, const type_ref& t )
+			: ast_node( st->register_str( "symbol node" ), t )
+			, _symbol( const_cast<symbol&>( s ) )
+		{
+		}
+		
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			auto symbol_iter = context._variables.find( _symbol._name );
+			if ( symbol_iter == context._variables.end() ) throw runtime_error( "missing symbol" );
+			return make_pair( context._builder.CreateLoad( symbol_iter->second.first ), &type() );
+		}
+	};
+	struct numeric_constant_ast_node : public ast_node
+	{
+		constant& _constant;
+		numeric_constant_ast_node( string_table_ptr st, const constant& s )
+			: ast_node( st->register_str( "numeric constant" ), *s._type )
+			, _constant( const_cast<constant&>( s ) )
+		{
+		}
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			switch( context._type_library->to_base_numeric_type( type() ) )
+			{
+#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )		\
+			case base_numeric_types::name:			\
+				return make_pair( llvm_helper::llvm_constant_map<base_numeric_types::name>::parse( _constant._value )	\
+								, _constant._type );
+				CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+			}
+			throw runtime_error( "bad numeric constant" );
+		}
+	};
+}
+
+ast_node& base_language_plugins::type_check_symbol( reader_context& context, lisp::cons_cell& cell )
+{
+	symbol& cell_symbol = object_traits::cast_ref<symbol>( cell._value );
+	symbol_type_ref_map::iterator symbol_type = context._context_symbol_types.find( cell_symbol._name );
+	if ( symbol_type == context._context_symbol_types.end() ) throw runtime_error( "unresolved symbol" );
+	return *context._ast_allocator->construct<symbol_ast_node>( context._string_table, cell_symbol
+																, *symbol_type->second );
+}
+
+ast_node& base_language_plugins::type_check_numeric_constant( reader_context& context, lisp::cons_cell& cell )
+{
+	constant& cell_constant = object_traits::cast_ref<constant>( cell._value );
+	if ( context._type_library->to_base_numeric_type( *cell_constant._type ) 
+		== base_numeric_types::no_known_type ) throw runtime_error( "invalid base numeric type" );
+	return *context._ast_allocator->construct<numeric_constant_ast_node>( context._string_table, cell_constant );
+}
+
+
 function_call_node::function_call_node(string_table_ptr str_table, const function_def_node& _fun )
 	: ast_node( str_table->register_str( static_node_type() ), *_fun._name._type )
 	, _function( const_cast<function_def_node&>( _fun ) )
@@ -68,11 +129,11 @@ function_call_node::function_call_node(string_table_ptr str_table, const functio
 pair<llvm_value_ptr, type_ref_ptr> function_call_node::compile_second_pass(compiler_context& context)
 {
 	vector<llvm::Value*> fn_args;
-	for_each( children().begin(), children().end(), [&]
-	( ast_node_ptr node )
+	for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 	{
-		fn_args.push_back( node->compile_second_pass( context ).first );
-	} );
+		ast_node& node(*iter);
+		fn_args.push_back( node.compile_second_pass( context ).first );
+	}
 	return make_pair( context._builder.CreateCall( _function._function, fn_args, "calltmp" )
 					, _function._name._type );
 }
@@ -100,7 +161,8 @@ ast_node& function_def_plugin::type_check( reader_context& context, lisp::cons_c
 	}
 	type_ref& fn_type = context._type_library->get_type_ref( fn_name._name, type_array );
 	data_buffer<symbol*> args = allocate_buffer<symbol*>( *context._ast_allocator, symbol_array );
-	function_def_node* new_node = context._ast_allocator->construct<function_def_node>( *this, fn_name, fn_type, args );
+	function_def_node* new_node 
+		= context._ast_allocator->construct<function_def_node>( context._string_table, fn_name, fn_type, args );
 	ast_node_ptr last_body_eval( nullptr);
 	for ( cons_cell* body_cell = &body; body_cell; body_cell = object_traits::cast<cons_cell>( body_cell->_next ) )
 	{
@@ -193,7 +255,7 @@ namespace
 	struct binary_ast_node : public ast_node
 	{
 		builder_binary_function _function;
-		binary_ast_node( string_table_str name, type_ref& rettype, builder_binary_function build_fn )
+		binary_ast_node( string_table_str name, const type_ref& rettype, builder_binary_function build_fn )
 			: ast_node( name, rettype )
 			, _function( build_fn )
 		{
@@ -202,7 +264,8 @@ namespace
 		
 		virtual ast_node& apply( reader_context& context, data_buffer<ast_node_ptr> args )
 		{
-			binary_ast_node* retval = context._ast_allocator->construct<binary_ast_node>( node_type(), type() );
+			binary_ast_node* retval 
+				= context._ast_allocator->construct<binary_ast_node>( node_type(), type(), _function );
 			retval->children().push_back( *args[0] );
 			retval->children().push_back( *args[1] );
 			return *retval;
@@ -234,7 +297,7 @@ namespace
 		type_ref& ret_type = type_lib->get_type_ref( in_ret_type );
 		type_ref& arg_type = type_lib->get_type_ref( in_arg_type );
 		binary_ast_node* new_node = ast_allocator->construct<binary_ast_node>( node_name, ret_type, builder_function );
-		type_ref* arg_array[2] = { &ret_type, &ret_type };
+		type_ref* arg_array[2] = { &arg_type, &arg_type };
 		type_ref& fn_type = type_lib->get_type_ref( symbol_name, data_buffer<type_ref_ptr>( arg_array, 2 ) );
 		fn( fn_type, *new_node );
 	}

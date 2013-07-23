@@ -39,7 +39,7 @@ namespace cclj
 
 
 		
-		static vector<string> split_symbol( symbol& sym )
+		inline vector<string> split_symbol( symbol& sym )
 		{
 			vector<string> retval;
 			string temp(sym._name.c_str());
