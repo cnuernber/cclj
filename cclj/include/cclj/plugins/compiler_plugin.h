@@ -122,14 +122,18 @@ namespace cclj
 
 	struct compiler_context
 	{
+		llvm::Module&				_module;
+		llvm::FunctionPassManager&	_fpm;
 		type_library_ptr			_type_library;
 		type_ast_node_map_ptr		_symbol_map;
 		llvm_builder				_builder;
 		string_alloca_type_map		_variables;
 		type_llvm_type_map			_type_map;
-		llvm::Module&				_module;
-		llvm::FunctionPassManager&	_fpm;
-		compiler_context();
+
+		compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
+							, llvm::Module& m,  llvm::FunctionPassManager& fpm );
+
+
 		llvm_type_ptr type_ref_type( type_ref& type );
 	};
 

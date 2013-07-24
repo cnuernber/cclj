@@ -8,10 +8,29 @@
 #include "precompile.h"
 #include "cclj/compiler.h"
 #include "cclj/plugins/base_plugins.h"
+#ifdef _WIN32
+#pragma warning(push,2)
+#endif
+#include "llvm/Analysis/Passes.h"
+#include "llvm/Analysis/Verifier.h"
+#include "llvm/ExecutionEngine/ExecutionEngine.h"
+#include "llvm/ExecutionEngine/JIT.h"
+#include "llvm/IR/DataLayout.h"
+#include "llvm/IR/DerivedTypes.h"
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Module.h"
+#include "llvm/PassManager.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Transforms/Scalar.h"
+#ifdef _WIN32
+#pragma warning(pop)
+#endif
 
 using namespace cclj;
 using namespace cclj::lisp;
 using namespace cclj::plugins;
+using namespace llvm;
 
 
 namespace {
@@ -321,14 +340,14 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 	struct type_checker
 	{
 		shared_ptr<reader_context>				_context;
-		apply_plugin				_applier;
+		base_language_plugins					_applier;
 		type_checker( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
 							, string_table_ptr st
 							, string_plugin_map_ptr special_forms
 							, string_plugin_map_ptr top_level_special_forms
 							, type_ast_node_map_ptr top_level_symbols
 							, slab_allocator_ptr ast_alloc )
-							: _applier( st )
+							: _applier()
 		{
 			type_check_function tc = [this]( cons_cell& cc ) -> ast_node&
 			{ 
@@ -344,7 +363,11 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			switch( cc._value->type() )
 			{
 			case types::symbol:
-				return _applier.type_check( *_context, cc );
+				return _applier.type_check_symbol( *_context, cc );
+			case types::cons_cell:
+				return _applier.type_check_apply( *_context, cc );
+			case types::constant:
+				return _applier.type_check_numeric_constant( *_context, cc );
 			default:
 				throw runtime_error( "unable to type check at this time" );
 			}
@@ -364,7 +387,9 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		string_plugin_map_ptr		_top_level_special_forms;
 		type_ast_node_map_ptr		_top_level_symbols;
 		slab_allocator_ptr			_ast_allocator;
-
+		Module*							_module;
+		shared_ptr<ExecutionEngine>		_exec_engine;
+		shared_ptr<FunctionPassManager> _fpm;
 
 		compiler_impl()
 			: _allocator( allocator::create_checking_allocator() )
@@ -375,6 +400,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			, _top_level_special_forms( make_shared<string_plugin_map>() )
 			, _top_level_symbols( make_shared<type_ast_node_map>() )
 			, _ast_allocator( make_shared<slab_allocator<> >( _allocator ) )
+			, _module( nullptr )
 		{
 			_top_level_special_forms->insert( make_pair( _str_table->register_str( "defn" )
 				, make_shared<function_def_plugin>( _str_table ) ) );
@@ -404,12 +430,122 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			type_checker checker( _allocator, _factory, _type_library
 								, _str_table, _special_forms
 								, _top_level_special_forms, _top_level_symbols, _ast_allocator );
+
+			vector<ast_node_ptr> type_check_results;
+			for_each( preprocess_result.begin(), preprocess_result.end(), [&,this]
+			( object_ptr pp_result )
+			{
+				if ( pp_result->type() == types::cons_cell )
+				{
+					cons_cell& top_cell = object_traits::cast_ref<cons_cell>( pp_result );
+					symbol& first_item = object_traits::cast_ref<symbol>( top_cell._value );
+					string_plugin_map::iterator iter = _top_level_special_forms->find( first_item._name );
+					if ( iter != _top_level_special_forms->end() )
+					{
+						type_check_results.push_back( &iter->second->type_check( *checker._context, top_cell ) );
+					}
+					else
+					{
+						type_check_results.push_back( &checker._applier.type_check_apply( *checker._context, top_cell ) );
+					}
+				}
+				else
+					throw runtime_error( "invalid program, top level item is not a list" );
+			} );
+			return type_check_results;
 		}
 
 		//compile ast to binary.
-		virtual pair<void*,type_ref_ptr> compile( data_buffer<ast_node_ptr> ) = 0;
+		virtual pair<void*,type_ref_ptr> compile( data_buffer<ast_node_ptr> ast )
+		{
+			//run through and compile first steps.
+			
+			InitializeNativeTarget();
+			LLVMContext &Context = getGlobalContext();
+			if ( _module == nullptr )
+			{
+				_module = new Module("my cool jit", Context);
+
+				// Create the JIT.  This takes ownership of the module.
+				string ErrStr;
+				_exec_engine = shared_ptr<ExecutionEngine> ( EngineBuilder(_module).setErrorStr(&ErrStr).create() );
+				if (!_exec_engine) {
+					throw runtime_error( "Could not create ExecutionEngine\n" );
+				}
+				_fpm = make_shared<FunctionPassManager>(_module);
+
+				// Set up the optimizer pipeline.  Start with registering info about how the
+				// target lays out data structures.
+				_fpm->add(new DataLayout(*_exec_engine->getDataLayout()));
+				// Provide basic AliasAnalysis support for GVN.
+				_fpm->add(createBasicAliasAnalysisPass());
+				// Promote allocas to registers.
+				_fpm->add(createPromoteMemoryToRegisterPass());
+				// Do simple "peephole" optimizations and bit-twiddling optzns.
+				_fpm->add(createInstructionCombiningPass());
+				// Reassociate expressions.
+				_fpm->add(createReassociatePass());
+				// Eliminate Common SubExpressions.
+				_fpm->add(createGVNPass());
+				// Simplify the control flow graph (deleting unreachable blocks, etc).
+				_fpm->add(createCFGSimplificationPass());
+				_fpm->doInitialization();
+			}
+
+			compiler_context comp_context( _type_library, _top_level_symbols, *_module, *_fpm );
+			//The, ignoring all nodes that are not top level, create a function with the top level items
+			//compile it, and return the results.
+			for_each( ast.begin(), ast.end(), [&]
+			( ast_node_ptr node )
+			{
+				node->compile_first_pass(comp_context);
+			} );
+			//compile each top level node, record the type of each non-top-level.
+			type_ref_ptr rettype = nullptr;
+			for_each( ast.begin(), ast.end(), [&]
+			( ast_node_ptr node )
+			{
+				if ( node->executable_statement() == false )
+					node->compile_second_pass( comp_context );
+				else
+					rettype = &node->type();
+			} );
+
+			if ( rettype == nullptr )
+				return pair<void*,type_ref_ptr>( nullptr, nullptr );
+
+			FunctionType* fn_type = FunctionType::get( comp_context.type_ref_type( *rettype ), false );
+			Function* retfn = Function::Create( fn_type, GlobalValue::ExternalLinkage, "", _module );
+			variable_context var_context( comp_context._variables );
+			function_def_node::initialize_function( comp_context, *retfn, data_buffer<symbol*>(), var_context );
+			
+			llvm_value_ptr last_value = nullptr;
+			for_each( ast.begin(), ast.end(), [&]
+			( ast_node_ptr node )
+			{
+				if ( node->executable_statement() == true )
+					last_value = node->compile_second_pass( comp_context ).first;
+			} );
+			if ( last_value == nullptr ) throw runtime_error( "unexpected compile result" );
+			comp_context._builder.CreateRet( last_value );
+			
+			verifyFunction(*retfn );
+			_fpm->run( *retfn );
+			return make_pair( _exec_engine->getPointerToFunction( retfn ), rettype );
+		}
 
 		//Create a compiler and execute this text return the last value if it is a float else exception.
-		virtual float execute( const string& text ) = 0;
+		virtual float execute( const string& text )
+		{
+			vector<object_ptr> read_result = read( text );
+			vector<object_ptr> preprocess_result = preprocess( read_result );
+			vector<ast_node_ptr> type_check_result = type_check( preprocess_result );
+			pair<void*,type_ref_ptr> compile_result = compile( type_check_result );
+			if ( _type_library->to_base_numeric_type( *compile_result.second ) != base_numeric_types::f32 )
+				throw runtime_error( "failed to evaluate lisp data to float function" );
+			typedef float (*anon_fn_type)();
+			anon_fn_type exec_fn = reinterpret_cast<anon_fn_type>( compile_result.first );
+			return exec_fn();
+		}
 	};
 }

@@ -26,7 +26,7 @@ namespace cclj { namespace plugins {
 		vector<type_ref_ptr> _arg_types;
 		vector<ast_node_ptr> _resolved_args;
 	public:
-		
+		base_language_plugins(){}
 		ast_node& type_check_apply( reader_context& context, lisp::cons_cell& cell );
 		ast_node& type_check_symbol( reader_context& context, lisp::cons_cell& cell );
 		ast_node& type_check_numeric_constant( reader_context& context, lisp::cons_cell& cell );
