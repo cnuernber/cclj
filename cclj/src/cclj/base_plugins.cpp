@@ -171,6 +171,8 @@ ast_node& function_def_plugin::type_check( reader_context& context, lisp::cons_c
 	}
 	if ( &last_body_eval->type() != fn_name._type ) 
 		throw runtime_error( "function return type does not equal last statement" );
+	bool inserted = context._symbol_map->insert( make_pair( &fn_type, new_node ) ).second;
+	if ( !inserted ) throw runtime_error( "duplicate symbol" );
 	return *new_node;
 }
 

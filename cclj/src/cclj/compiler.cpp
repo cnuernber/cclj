@@ -365,7 +365,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			case types::symbol:
 				return _applier.type_check_symbol( *_context, cc );
 			case types::cons_cell:
-				return _applier.type_check_apply( *_context, cc );
+				return _applier.type_check_apply( *_context, object_traits::cast_ref<cons_cell>( cc._value ) );
 			case types::constant:
 				return _applier.type_check_numeric_constant( *_context, cc );
 			default:

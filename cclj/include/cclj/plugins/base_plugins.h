@@ -69,7 +69,7 @@ namespace cclj { namespace plugins {
 
 		function_def_node( string_table_ptr str_table, const lisp::symbol& name
 							, const type_ref& mt, data_buffer<lisp::symbol*> arguments )
-			: ast_node( str_table->register_str( static_node_type() ), *_name._type )
+			: ast_node( str_table->register_str( static_node_type() ), *name._type )
 			, _name( const_cast<lisp::symbol&>( name ) )
 			, _my_type( const_cast<type_ref&>( mt ) )
 			, _arguments( arguments )
