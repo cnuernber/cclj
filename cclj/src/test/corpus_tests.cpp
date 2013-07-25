@@ -7,7 +7,7 @@
 //==============================================================================
 #include "precompile.h"
 #include "cclj/cclj.h"
-#include "cclj/state.h"
+#include "cclj/compiler.h"
 #define NOMINMAX
 #include <windows.h>
 
@@ -76,18 +76,19 @@ string corpus_file_text( const char* fname )
 TEST(corpus_tests, ##name )									\
 {															\
 	auto test_data = corpus_file_text( #name ".cclj" );		\
-	auto state_ptr = state::create_state();					\
-	float test_result = state_ptr->execute( test_data );	\
+	auto compiler_ptr = compiler::create();					\
+	float test_result = compiler_ptr->execute( test_data );	\
 	ASSERT_EQ( answer, test_result );						\
 }
 
 DEFINE_SIMPLE_CORPUS_TEST( basic1, 3.0f );
-DEFINE_SIMPLE_CORPUS_TEST( basic2, 8.0f );
+/*DEFINE_SIMPLE_CORPUS_TEST( basic2, 8.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic3, 20.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic4, -100.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic_struct, 15.0f );
 DEFINE_SIMPLE_CORPUS_TEST( for_loop, 125.0f );
 DEFINE_SIMPLE_CORPUS_TEST( numeric_cast, 30.0f );
+*/
 
 
 TEST(regex_tests, symbol_regex)

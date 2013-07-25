@@ -7,7 +7,7 @@
 //==============================================================================
 #ifndef LLVM_BASE_NUMERIC_TYPE_HELPER_H
 #define LLVM_BASE_NUMERIC_TYPE_HELPER_H
-#include "cclj/lisp.h"
+#include "cclj/lisp_types.h"
 #ifdef _WIN32
 #pragma warning(push,2)
 #endif

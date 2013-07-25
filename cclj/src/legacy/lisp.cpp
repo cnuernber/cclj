@@ -15,150 +15,9 @@ using namespace cclj::lisp;
 
 namespace
 {
-	class factory_impl : public factory
-	{
-		allocator_ptr			_allocator;
-		pool<sizeof(type_ref)>	_object_pool;
-		const cons_cell&		_empty_cell;
-		vector<uint8_t*>		_buffer_allocs;
-
-	public:
-		factory_impl( allocator_ptr alloc, const cons_cell& empty_cell )
-			: _allocator( alloc )
-			, _object_pool( alloc, CCLJ_IMMEDIATE_FILE_INFO(), sizeof(void*) )
-			, _empty_cell( empty_cell )
-		{
-		}
-		~factory_impl()
-		{
-			for_each( _buffer_allocs.begin(), _buffer_allocs.end(),
-				[this]( uint8_t* alloc )
-			{
-				_allocator->deallocate( alloc );
-			} );
-		}
-		
-		virtual const cons_cell& empty_cell() { return _empty_cell; }
-		virtual cons_cell* create_cell() { return _object_pool.construct<cons_cell>(); }
-		virtual array* create_array()  { return _object_pool.construct<array>(); }
-		virtual symbol* create_symbol() { return _object_pool.construct<symbol>(); }
-		virtual constant* create_constant() { return _object_pool.construct<constant>(); }
-		virtual uint8_t* allocate_data( size_t size, uint8_t alignment )
-		{
-			if ( size <= sizeof(type_ref ) && alignment < sizeof(void*) )
-			{
-				return _object_pool.allocate();
-			}
-			else
-			{
-				uint8_t* retval = _allocator->allocate( size, alignment, CCLJ_IMMEDIATE_FILE_INFO() );
-				_buffer_allocs.push_back( retval );
-				return retval;
-			}
-		}
-		virtual object_ptr_buffer allocate_obj_buffer(size_t size)
-		{
-			if ( size == 0 )
-				return object_ptr_buffer();
-			object_ptr* new_data = reinterpret_cast<object_ptr*>( 
-				_allocator->allocate( size * sizeof( object_ptr* ), sizeof(void*), CCLJ_IMMEDIATE_FILE_INFO() ) );
-			memset( new_data, 0, size * sizeof( object_ptr* ) );
-			_buffer_allocs.push_back( reinterpret_cast<uint8_t*>( new_data ) );
-			return object_ptr_buffer( new_data, size );
-		}
-	};
-
-	struct type_map_key
-	{
-		string_table_str	_name;
-		type_ref_ptr_buffer _specializations;
-		size_t				_hash_code;
-		type_map_key( string_table_str n, type_ref_ptr_buffer s )
-			: _name( n )
-			, _specializations( s )
-		{
-			_hash_code = std::hash<string_table_str>()( _name );
-			for_each( _specializations.begin(), _specializations.end(), [this]
-			( type_ref_ptr ref )
-			{
-				_hash_code = _hash_code ^ reinterpret_cast<size_t>( ref );
-			} );
-		}
-
-		bool operator==( const type_map_key& other ) const
-		{
-			if ( _name == other._name )
-			{
-				if ( _specializations.size() == other._specializations.size() )
-				{
-					for ( size_t idx = 0, end = _specializations.size(); idx < end; ++idx )
-					{
-						if ( _specializations[idx] != other._specializations[idx] )
-							return false;
-					}
-					return true;
-				}
-			}
-			return false;
-		}
-	};
-}
-
-namespace std
-{
-	template<> struct hash<type_map_key>
-	{
-		size_t operator()( const type_map_key& k ) const { return k._hash_code; }
-	};
 }
 
 namespace {
-
-	class type_library_impl : public type_library
-	{
-		allocator_ptr		_allocator;
-		string_table_ptr	_str_table;
-		typedef unordered_map<type_map_key, type_ref_ptr> type_map;
-		type_map _types;
-	public:
-		type_library_impl( allocator_ptr alloc, string_table_ptr str_t )
-			: _allocator( alloc )
-			, _str_table( str_t )
-		{
-		}
-
-		~type_library_impl()
-		{
-			for_each( _types.begin(), _types.end(), 
-			[this](type_map::value_type& type )
-			{
-				_allocator->deallocate( type.second );
-			} );
-		}
-		
-		virtual string_table_ptr string_table() { return _str_table; }
-
-		virtual type_ref& get_type_ref( string_table_str name, type_ref_ptr_buffer _specializations )
-		{
-			type_map_key theKey( name, _specializations );
-			type_map::iterator iter = _types.find( theKey );
-			if ( iter != _types.end() ) return *iter->second;
-			size_t type_size = sizeof( type_ref );
-			size_t array_size = sizeof( type_ref_ptr ) * _specializations.size();
-			uint8_t* mem = _allocator->allocate( type_size + array_size, sizeof(void*), CCLJ_IMMEDIATE_FILE_INFO() );
-			type_ref* retval = reinterpret_cast<type_ref*>( mem );
-			type_ref_ptr* array_data = reinterpret_cast<type_ref_ptr*>( mem + type_size );
-			new (retval) type_ref();
-			retval->_name = name;
-			if ( array_size ) {
-				memcpy( array_data, _specializations.begin(), array_size );
-				retval->_specializations = type_ref_ptr_buffer( array_data, _specializations.size() );
-			}
-			theKey = type_map_key( name, retval->_specializations );
-			_types.insert( make_pair( theKey, retval ) );
-			return *retval;
-		}
-	};
 
 	typedef unordered_map<string_table_str, object_ptr> macro_arg_map;
 	typedef function<object_ptr (cons_cell* first_arg)> macro_function;
@@ -950,17 +809,6 @@ namespace {
 		}
 	};
 }
-
-factory_ptr factory::create_factory( allocator_ptr allocator, const cons_cell& empty_cell )
-{
-	return make_shared<factory_impl>( allocator, empty_cell );
-}
-
-type_library_ptr type_library::create_type_library( allocator_ptr allocator, string_table_ptr s )
-{
-	return make_shared<type_library_impl>( allocator, s );
-}
-
 reader_ptr reader::create_reader( factory_ptr factory, type_library_ptr ts, string_table_ptr str_table )
 {
 	return make_shared<reader_impl>( factory, ts, str_table );

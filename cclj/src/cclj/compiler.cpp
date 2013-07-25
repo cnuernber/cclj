@@ -547,5 +547,10 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			anon_fn_type exec_fn = reinterpret_cast<anon_fn_type>( compile_result.first );
 			return exec_fn();
 		}
-	};
+	}; 
+}
+
+compiler_ptr compiler::create()
+{
+	return make_shared<compiler_impl>();
 }
