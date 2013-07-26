@@ -37,26 +37,35 @@ using namespace llvm;
 ast_node& base_language_plugins::type_check_apply( reader_context& context, lisp::cons_cell& cell )
 {
 	symbol& fn_name = object_traits::cast_ref<symbol>( cell._value );
+	auto preprocess_iter = context._preprocess_objects.find( fn_name._name );
+	if ( preprocess_iter != context._preprocess_objects.end() )
+	{
+		object_ptr replacement = preprocess_iter->second->preprocess( context, cell );
+		cell._value = replacement;
+		return context._type_checker( cell );
+	}
+
+
 	auto plugin_ptr_iter = context._special_forms->find( fn_name._name );
 	if ( plugin_ptr_iter !=  context._special_forms->end() )
 	{
 		return plugin_ptr_iter->second->type_check( context, cell );
 	}
 	
-	_arg_types.clear();
-	_resolved_args.clear();
+	vector<type_ref_ptr> arg_types;
+	vector<ast_node_ptr> resolved_args;
 	//ensure we can find the function definition.
 	for ( cons_cell* arg = object_traits::cast<cons_cell>( cell._next )
 		; arg; arg = object_traits::cast<cons_cell>( arg->_next ) )
 	{
 		ast_node& eval_result = context._type_checker( *arg );
-		_arg_types.push_back( &eval_result.type() );
-		_resolved_args.push_back( &eval_result );
+		arg_types.push_back( &eval_result.type() );
+		resolved_args.push_back( &eval_result );
 	}
-	type_ref& fn_type = context._type_library->get_type_ref( fn_name._name, _arg_types );
+	type_ref& fn_type = context._type_library->get_type_ref( fn_name._name, arg_types );
 	auto context_node_iter = context._symbol_map->find( &fn_type );
 	if ( context_node_iter == context._symbol_map->end() ) throw runtime_error( "unable to resolve function" );
-	ast_node& new_node = context_node_iter->second->apply( context, _resolved_args );
+	ast_node& new_node = context_node_iter->second->apply( context, resolved_args );
 	return new_node;
 }
 
@@ -441,4 +450,143 @@ void binary_low_level_ast_node::register_binary_functions( register_function fn,
 									return builder.CreateUDiv( lhs, rhs, "tmpadd" );
 								}, str_table->register_str( "/" )
 								, ast_allocator, true );
+}
+
+namespace 
+{
+	struct fake_ast_node : public ast_node
+	{
+		fake_ast_node( string_table_ptr st, type_library_ptr tl )
+			: ast_node( st->register_str( "fake ast node" ), tl->get_type_ref( "fake ast node" ) )
+		{
+		}
+		
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context&)
+		{
+			return pair<llvm_value_ptr, type_ref_ptr>( nullptr, nullptr );
+		}
+	};
+	//todo - create plugin system for the macro language.
+	struct macro_preprocessor : public preprocessor
+	{
+		const symbol&			_name;
+		data_buffer<object_ptr> _arguments;
+		cons_cell&				_body;
+		string_table_str		_quote;
+		string_table_str		_unquote;
+		
+		macro_preprocessor( const symbol& name, data_buffer<object_ptr> args, const cons_cell& body, string_table_ptr st )
+			: _name( name )
+			, _arguments( args )
+			, _body( const_cast<cons_cell&>( body ) )
+			, _quote( st->register_str( "quote" ) )
+			, _unquote( st->register_str( "unquote" ) )
+		{
+		}
+
+		void quote_lisp_object( reader_context& context, object_ptr& item )
+		{
+			switch( item->type() )
+			{
+			case types::cons_cell:
+				{
+					cons_cell& arg_cell = object_traits::cast_ref<cons_cell>( item );
+					symbol& fn_name = object_traits::cast_ref<symbol>( arg_cell._value );
+					if ( fn_name._name == _unquote )
+					{
+						cons_cell& uq_arg = object_traits::cast_ref<cons_cell>( arg_cell._next );
+						symbol& uq_arg_sym = object_traits::cast_ref<symbol>( uq_arg._value );
+						auto sym_iter = context._preprocessor_symbols.find( uq_arg_sym._name );
+						if ( sym_iter == context._preprocessor_symbols.end() )
+							throw runtime_error( "failed to figure out preprocessor symbol" );
+						item = sym_iter->second;
+					}
+					else
+					{
+						quote_list( context, arg_cell );
+					}
+				}
+				break;
+			case types::array:
+				{
+					array& arg_array = object_traits::cast_ref<array>( item );
+					quote_array( context, arg_array );
+				}
+				break;
+			}
+		}
+
+		void quote_list( reader_context& context, cons_cell& item )
+		{
+			for ( cons_cell* next_arg = object_traits::cast<cons_cell>( &item );
+				next_arg; next_arg = object_traits::cast<cons_cell>( next_arg->_next ) )
+			{
+				quote_lisp_object( context, next_arg->_value );
+			}
+		}
+
+		void quote_array( reader_context& context, array& item )
+		{
+			for ( size_t idx = 0, end = item._data.size(); idx < end; ++idx )
+			{
+				quote_lisp_object( context, item._data[idx] );
+			}
+		}
+
+		object_ptr quote( reader_context& context, cons_cell& first_arg )
+		{
+			cons_cell& arg_val = object_traits::cast_ref<cons_cell>( first_arg._value );
+			object_ptr retval = &arg_val;
+			quote_list( context, arg_val );
+			return retval;
+		}
+
+		object_ptr lisp_apply( reader_context& context, cons_cell& cell )
+		{
+			symbol& app_name = object_traits::cast_ref<symbol>( cell._value );
+			if ( app_name._name == _quote )
+				return quote( context, object_traits::cast_ref<cons_cell>( cell._next ) );
+			else
+				throw runtime_error( "failed to handle preprocessor symbol" );
+		}
+		
+		virtual lisp::object_ptr preprocess( reader_context& context, cons_cell& callsite )
+		{
+			string_obj_ptr_map old_symbols( context._preprocessor_symbols );
+			context._preprocessor_symbols.clear();
+			preprocess_symbol_context preprocess( context._preprocessor_symbols );
+			cons_cell* previous_arg( &callsite );
+			for_each( _arguments.begin(), _arguments.end(), [&]
+			( object_ptr arg )
+			{
+				cons_cell* next_arg = &object_traits::cast_ref<cons_cell>( previous_arg->_next );
+				symbol& arg_name = object_traits::cast_ref<symbol>( arg );
+				preprocess.add_symbol( arg_name._name, *next_arg->_value );
+				previous_arg = next_arg;
+			} );
+			object_ptr retval = nullptr;
+			for ( cons_cell* body_cell = &_body; body_cell
+				; body_cell = object_traits::cast<cons_cell>( body_cell->_next ) )
+			{
+				retval = lisp_apply( context, object_traits::cast_ref<cons_cell>( body_cell->_value ) );
+			}
+			context._preprocessor_symbols = old_symbols;
+			return retval;
+		}
+	};
+}
+
+
+ast_node& macro_def_plugin::type_check( reader_context& context, lisp::cons_cell& cell )
+{
+	cons_cell& second_cell = object_traits::cast_ref<cons_cell>( cell._next );
+	symbol& macro_name = object_traits::cast_ref<symbol>( second_cell._value );
+	cons_cell& third_cell = object_traits::cast_ref<cons_cell>( second_cell._next );
+	cons_cell& fourth_cell = object_traits::cast_ref<cons_cell>( third_cell._next );
+	data_buffer<object_ptr> arg_array = object_traits::cast_ref<array>( third_cell._value )._data;
+	macro_preprocessor* preprocess 
+		= context._ast_allocator->construct<macro_preprocessor>( macro_name, arg_array, fourth_cell
+																	, context._string_table );
+	context._preprocess_objects[macro_name._name] = preprocess;
+	return *context._ast_allocator->construct<fake_ast_node>( context._string_table, context._type_library );
 }

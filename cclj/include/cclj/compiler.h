@@ -25,9 +25,6 @@ namespace cclj
 		//transform text into the lisp datastructures.
 		virtual vector<lisp::object_ptr> read( const string& text ) = 0;
 
-		//Preprocess evaluates macros and fills in polymorphic functions and types.
-		virtual vector<lisp::object_ptr> preprocess( data_buffer<lisp::object_ptr> read_result ) = 0;
-
 		//Transform lisp datastructures into type-checked ast.
 		virtual vector<ast_node*> type_check( data_buffer<lisp::object_ptr> preprocess_result ) = 0;
 

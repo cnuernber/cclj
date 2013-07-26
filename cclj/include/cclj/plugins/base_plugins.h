@@ -23,8 +23,6 @@ namespace cclj { namespace plugins {
 
 	class base_language_plugins
 	{
-		vector<type_ref_ptr> _arg_types;
-		vector<ast_node_ptr> _resolved_args;
 	public:
 		base_language_plugins(){}
 		ast_node& type_check_apply( reader_context& context, lisp::cons_cell& cell );
@@ -93,6 +91,18 @@ namespace cclj { namespace plugins {
 	public:
 		static void register_binary_functions( register_function fn, type_library_ptr type_lib
 			, string_table_ptr str_table, slab_allocator_ptr ast_allocator );
+	};
+
+	class macro_def_plugin : public compiler_plugin
+	{
+	public:
+		const char* static_plugin_name() { return "macro definition"; }
+		macro_def_plugin( string_table_ptr st )
+			: compiler_plugin( st->register_str( static_plugin_name() ) )
+		{
+		}
+		
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell );
 	};
 	
 

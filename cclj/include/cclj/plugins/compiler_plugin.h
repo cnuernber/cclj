@@ -190,6 +190,50 @@ namespace cclj
 
 	typedef unordered_map<string_table_str, compiler_plugin_ptr> string_plugin_map;
 	typedef shared_ptr<string_plugin_map> string_plugin_map_ptr;
+
+	
+
+	typedef unordered_map<string_table_str, lisp::object_ptr> string_obj_ptr_map;
+
+	class preprocessor
+	{
+	protected:
+		virtual ~preprocessor(){}
+	public:
+		virtual lisp::object_ptr preprocess( reader_context& context, lisp::cons_cell& callsite ) = 0;
+	};
+	typedef preprocessor* preprocessor_ptr;
+	typedef unordered_map<string_table_str, preprocessor*> string_preprocessor_map;
+
+	struct preprocess_symbol_context
+	{
+		string_obj_ptr_map& _symbols;
+		vector<pair<string_table_str, lisp::object_ptr> > _added_symbols;
+		preprocess_symbol_context( string_obj_ptr_map& s )
+			: _symbols( s )
+		{
+		}
+		~preprocess_symbol_context()
+		{
+			for_each( _added_symbols.begin(), _added_symbols.end(), [&]
+			( pair<string_table_str, lisp::object_ptr> item )
+			{
+				if ( item.second )
+					_symbols[item.first] = item.second;
+				else
+					_symbols.erase( item.first );
+			} );
+		}
+		void add_symbol( string_table_str name, lisp::object& val )
+		{
+			pair<string_obj_ptr_map::iterator,bool> inserter = _symbols.insert( make_pair( name, &val ) );
+			if ( inserter.second == false )
+			{
+				_added_symbols.push_back( *inserter.first );
+				inserter.first->second = &val;
+			}
+		}
+	};
 	 
 	struct reader_context
 	{
@@ -202,6 +246,8 @@ namespace cclj
 		type_check_function			_type_checker;
 		string_plugin_map_ptr		_special_forms;
 		string_plugin_map_ptr		_top_level_special_forms;
+		string_obj_ptr_map			_preprocessor_symbols;
+		string_preprocessor_map		_preprocess_objects;
 		reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
 							, string_table_ptr st, type_check_function tc
 							, string_plugin_map_ptr special_forms

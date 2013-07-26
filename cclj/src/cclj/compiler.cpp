@@ -378,15 +378,15 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 
 	struct compiler_impl : public compiler
 	{
-		allocator_ptr				_allocator;
-		string_table_ptr			_str_table;
-		type_library_ptr			_type_library;
-		factory_ptr					_factory;
-		cons_cell					_empty_cell;
-		string_plugin_map_ptr		_special_forms;
-		string_plugin_map_ptr		_top_level_special_forms;
-		type_ast_node_map_ptr		_top_level_symbols;
-		slab_allocator_ptr			_ast_allocator;
+		allocator_ptr					_allocator;
+		string_table_ptr				_str_table;
+		type_library_ptr				_type_library;
+		factory_ptr						_factory;
+		cons_cell						_empty_cell;
+		string_plugin_map_ptr			_special_forms;
+		string_plugin_map_ptr			_top_level_special_forms;
+		type_ast_node_map_ptr			_top_level_symbols;
+		slab_allocator_ptr				_ast_allocator;
 		Module*							_module;
 		shared_ptr<ExecutionEngine>		_exec_engine;
 		shared_ptr<FunctionPassManager> _fpm;
@@ -404,6 +404,8 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		{
 			_top_level_special_forms->insert( make_pair( _str_table->register_str( "defn" )
 				, make_shared<function_def_plugin>( _str_table ) ) );
+			_top_level_special_forms->insert( make_pair( _str_table->register_str( "defmacro" )
+				, make_shared<macro_def_plugin>( _str_table ) ) );
 			register_function reg_fn = [this]( type_ref& fn_type, ast_node& comp_node )
 			{
 				_top_level_symbols->insert( make_pair( &fn_type, &comp_node ) );
@@ -416,12 +418,6 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		{
 			reader _reader( _str_table, _type_library, _factory, text );
 			return _reader.read();
-		}
-
-		//Preprocess evaluates macros and fills in polymorphic functions and types.
-		virtual vector<lisp::object_ptr> preprocess( data_buffer<lisp::object_ptr> read_result )
-		{
-			return vector<object_ptr>( read_result.begin(), read_result.end() );
 		}
 
 		//Transform lisp datastructures into type-checked ast.
@@ -538,8 +534,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		virtual float execute( const string& text )
 		{
 			vector<object_ptr> read_result = read( text );
-			vector<object_ptr> preprocess_result = preprocess( read_result );
-			vector<ast_node_ptr> type_check_result = type_check( preprocess_result );
+			vector<ast_node_ptr> type_check_result = type_check( read_result );
 			pair<void*,type_ref_ptr> compile_result = compile( type_check_result );
 			if ( _type_library->to_base_numeric_type( *compile_result.second ) != base_numeric_types::f32 )
 				throw runtime_error( "failed to evaluate lisp data to float function" );
