@@ -35,6 +35,24 @@ using namespace llvm;
 
 namespace 
 {
+	vector<string> split_symbol( symbol& sym )
+	{
+		vector<string> retval;
+		string temp(sym._name.c_str());
+		size_t last_offset = 0;
+		for ( size_t off = temp.find( '.' ); off != string::npos;
+			off = temp.find( '.', off+1 ) )
+		{
+			retval.push_back( temp.substr( last_offset, off - last_offset ) );
+			last_offset = off + 1;
+		}
+		if ( last_offset < temp.size() )
+		{
+			retval.push_back( temp.substr( last_offset, temp.size() - last_offset ) );
+		}
+		return retval;
+	}
+
 
 	template<typename data_type, typename allocator>
 	data_buffer<data_type> allocate_buffer( allocator& alloc, data_buffer<data_type> buf )
@@ -49,21 +67,45 @@ namespace
 
 	struct function_def_node;
 
+	struct llvm_function_provider
+	{
+	protected:
+		virtual ~llvm_function_provider(){}
+	public:
+		virtual type_ref& return_type() = 0;
+		virtual Function& function() = 0; 
+	};
+
 	struct function_call_node : public ast_node
 	{
-		function_def_node&			_function;
+		llvm_function_provider&			_function;
 
 		static const char* static_node_type() { return "function call"; }
 		
 
-		function_call_node(string_table_ptr str_table, const function_def_node& _fun );
+		function_call_node(string_table_ptr str_table, const llvm_function_provider& _fun )
+		: ast_node( str_table->register_str( static_node_type() )
+					, const_cast<llvm_function_provider&>( _fun ).return_type()  )
+		, _function( const_cast<llvm_function_provider&>( _fun ) )
+		{
+		}
 
 		virtual bool executable_statement() const { return true; }
 
-		pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context);
+		pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			vector<llvm::Value*> fn_args;
+			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
+			{
+				ast_node& node(*iter);
+				fn_args.push_back( node.compile_second_pass( context ).first );
+			}
+			return make_pair( context._builder.CreateCall( &_function.function(), fn_args, "calltmp" )
+							, &_function.return_type() );
+		}
 	};
 
-	struct function_def_node : public ast_node
+	struct function_def_node : public ast_node, public llvm_function_provider
 	{
 		static const char* static_node_type() { return "function definition"; }
 
@@ -124,6 +166,20 @@ namespace
 			return make_pair( retVal, _name._type );
 		}
 
+		
+		virtual type_ref& return_type() 
+		{
+			if ( _name._type == nullptr ) throw runtime_error( "Invalid function return type" );
+			return *_name._type; 
+		}
+
+		virtual Function& function() 
+		{ 
+			if ( _function == nullptr )
+				throw runtime_error( "Function definition first pass not called yet" );
+			return *_function;
+		}
+
 
 
 		static void initialize_function(compiler_context& context, Function& fn, data_buffer<symbol*> fn_args
@@ -155,26 +211,6 @@ namespace
 			}
 		}
 	};
-
-	
-	function_call_node::function_call_node(string_table_ptr str_table, const function_def_node& _fun )
-		: ast_node( str_table->register_str( static_node_type() ), *_fun._name._type )
-		, _function( const_cast<function_def_node&>( _fun ) )
-	{
-	}
-
-	
-	pair<llvm_value_ptr, type_ref_ptr> function_call_node::compile_second_pass(compiler_context& context)
-	{
-		vector<llvm::Value*> fn_args;
-		for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
-		{
-			ast_node& node(*iter);
-			fn_args.push_back( node.compile_second_pass( context ).first );
-		}
-		return make_pair( context._builder.CreateCall( _function._function, fn_args, "calltmp" )
-						, _function._name._type );
-	}
 
 
 	class function_def_plugin : public compiler_plugin
@@ -576,6 +612,119 @@ namespace
 			return *new_node;
 		}
 	};
+
+	struct pod_def_ast_node : public ast_node, public llvm_function_provider
+	{
+		vector<symbol*>	_fields;
+		Function*		_function;
+		pod_def_ast_node( string_table_ptr st, const type_ref& type )
+			: ast_node( st->register_str( "pod definition" ), type )
+			, _function( nullptr )
+		{
+		}
+		//Called to allow the ast node to resolve the rest of a symbol when the symbol's first item pointed
+		//to a variable if this node type.  Used for struct lookups of the type a.b
+		virtual ast_node& resolve_symbol( reader_context& /*context*/, data_buffer<string_table_str> /*split_symbol*/ )
+		{
+			throw runtime_error( "ast node cannot resolve symbol" );
+		}
+
+		//compiler-created constructor
+		virtual ast_node& apply( reader_context& context, data_buffer<ast_node_ptr> args )
+		{
+			if ( _function == nullptr )
+				throw runtime_error( "Apply requested when first pass has not completed" );
+			function_call_node* new_node 
+				= context._ast_allocator->construct<function_call_node>( context._string_table, *this );
+			for_each( args.begin(), args.end(), [&]
+			( ast_node_ptr arg )
+			{
+				new_node->children().push_back( *arg );
+			} );
+			return *new_node;
+		}
+
+		virtual void compile_first_pass(compiler_context& context)
+		{
+			vector<llvm_type_ptr> arg_types;
+			for_each( _fields.begin(), _fields.end(), [&]
+			( symbol* field )
+			{
+				arg_types.push_back( context.type_ref_type( *field->_type ) );
+			} );
+			//Create struct type definition to llvm.
+			llvm_type_ptr struct_type = StructType::create( getGlobalContext(), arg_types );
+			context._type_map.insert( make_pair( &type(), struct_type ) );
+			FunctionType* fn_type = FunctionType::get( struct_type, arg_types, false );
+			_function = Function::Create( fn_type, GlobalValue::ExternalLinkage, "", &context._module );
+		}
+		
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			variable_context vcontext( context._variables );
+			function_def_node::initialize_function( context, *_function, _fields, vcontext );
+			IRBuilder<> entryBuilder( &_function->getEntryBlock(), _function->getEntryBlock().begin() );
+			Type* struct_type = context.type_ref_type( type() );
+			auto struct_ptr = entryBuilder.CreateAlloca( struct_type, 0 );
+			uint32_t idx = 0;
+			for_each( _fields.begin(), _fields.end(), [&]
+			( symbol* field )
+			{
+				Value* val_ptr = context._builder.CreateConstInBoundsGEP2_32( struct_ptr, 0, idx, field->_name.c_str() );
+				Value* arg_val = context._builder.CreateLoad( context._variables.find( field->_name )->second.first );
+				context._builder.CreateStore( arg_val, val_ptr );
+				++idx;
+			} );
+			auto struct_val = context._builder.CreateLoad( struct_ptr );
+			context._builder.CreateRet( struct_val );
+			verifyFunction(*_function );
+			context._fpm.run( *_function );
+			return make_pair( struct_val, &type() );
+		}
+		
+		virtual type_ref& return_type() { return type(); }
+		virtual Function& function() 
+		{
+			if ( _function == nullptr )
+				throw runtime_error( "podtype first pass not called yet" );
+			return *_function;
+		}
+	};
+
+	struct pod_def_compiler_plugin : public compiler_plugin
+	{
+		pod_def_compiler_plugin( string_table_ptr st )
+			: compiler_plugin( st->register_str( "pod definition" ) )
+		{
+		}
+		
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell )
+		{
+			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
+			cons_cell& field_start = object_traits::cast_ref<cons_cell>( name_cell._next );
+			vector<symbol*> fields;
+			vector<type_ref_ptr> fn_arg_type;
+			for( cons_cell* field_cell = &field_start; field_cell
+				; field_cell = object_traits::cast<cons_cell>( field_cell->_next ) )
+			{
+				fields.push_back( &object_traits::cast_ref<symbol>( field_cell->_value ) );
+				if ( fields.back()->_type == nullptr )
+					throw runtime_error( "pod fields must have a type" );
+				fn_arg_type.push_back( fields.back()->_type );
+			}
+			//type assigned to pod.
+			type_ref& struct_type = context._type_library->get_type_ref( name._name );
+			//type assigned to constructor.
+			type_ref& construct_type = context._type_library->get_type_ref( name._name, fn_arg_type );
+			pod_def_ast_node* new_node 
+				= context._ast_allocator->construct<pod_def_ast_node>( context._string_table, struct_type );
+			new_node->_fields = fields;
+			context._symbol_map->insert( make_pair( &struct_type, new_node ) );
+			context._symbol_map->insert( make_pair( &construct_type, new_node ) );
+			return *new_node;
+		}
+	};
 	
 
 	typedef function<llvm_value_ptr (IRBuilder<>& builder, Value* lhs, Value* rhs )> builder_binary_function;
@@ -765,6 +914,8 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 		, make_shared<function_def_plugin>( str_table ) ) );
 	top_level_special_forms->insert( make_pair( str_table->register_str( "defmacro" )
 		, make_shared<macro_def_plugin>( str_table ) ) );
+	top_level_special_forms->insert( make_pair( str_table->register_str( "def-pod" )
+		, make_shared<pod_def_compiler_plugin>( str_table ) ) );
 
 
 	special_forms->insert( make_pair( str_table->register_str( "if" )

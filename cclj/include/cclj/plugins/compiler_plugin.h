@@ -164,12 +164,19 @@ namespace cclj
 		//return true if you can be executed at the top level.
 		virtual bool executable_statement() const { return false; }
 
-		
+		 
 		//Not all nodes are callback, but if your node is registered as a global symbol in the type
 		//table then it needs to be able to handle this call.
 		virtual ast_node& apply( reader_context& /*context*/, data_buffer<ast_node_ptr> /*args*/ )
 		{
 			throw runtime_error( "ast node cannot handle apply" );
+		}
+
+		//Called to allow the ast node to resolve the rest of a symbol when the symbol's first item pointed
+		//to a variable if this node type.  Used for struct lookups of the type a.b
+		virtual ast_node& resolve_symbol( reader_context& /*context*/, data_buffer<string_table_str> /*split_symbol*/ )
+		{
+			throw runtime_error( "ast node cannot resolve symbol" );
 		}
 
 		virtual void compile_first_pass(compiler_context& /*context*/) {}
@@ -271,45 +278,6 @@ namespace cclj
 	};
 
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
-
-	struct compiler_plugin_traits
-	{
-		template<typename plugin_type>
-		static plugin_type* cast( compiler_plugin* plugin, string_table_ptr str_table )
-		{
-			if ( !plugin ) return nullptr;
-			if ( str_table->register_str( plugin_type::static_plugin_name() ) == plugin->plugin_name() )
-				return static_cast<plugin_type*>( plugin );
-			return nullptr
-		}
-
-		template<typename plugin_type>
-		static plugin_type& cast_ref( compiler_plugin* plugin, string_table_ptr str_table )
-		{
-			plugin_type* retval = cast<plugin_type>( plugin, str_table );
-			if ( retval ) return *retval;
-
-			throw runtime_error( "bad cast" );
-		}
-
-		template<typename ast_type>
-		static ast_type* cast( ast_node_ptr node, string_table_ptr str_table )
-		{
-			if ( !node ) return nullptr;
-			if ( str_table->register_str( ast_type::static_node_type() ) 
-				== node->plugin().plugin_name() )
-				return static_cast<ast_type*>( node );
-			return nullptr;
-		}
-		
-		template<typename ast_type>
-		static ast_type& cast_ref( ast_node_ptr node, string_table_ptr str_table )
-		{
-			ast_type* retval = cast<ast_type>( node, str_table );
-			if ( retval ) return *retval;
-			throw runtime_error( "bad cast" );
-		}
-	};
 }
 
 #endif
