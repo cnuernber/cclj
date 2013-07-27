@@ -106,18 +106,6 @@ namespace cclj { namespace plugins {
 	};
 	
 
-	template<typename data_type, typename allocator>
-	data_buffer<data_type> allocate_buffer( allocator& alloc, data_buffer<data_type> buf )
-	{
-		if ( buf.size() == 0 ) return data_buffer<data_type>();
-			 
-		data_type* mem = reinterpret_cast<data_type*>( alloc.allocate( buf.size() * sizeof( data_type )
-														, sizeof(void*), CCLJ_IMMEDIATE_FILE_INFO() ) );
-		memcpy( mem, buf.begin(), buf.size() * sizeof( data_type ) );
-		return data_buffer<data_type>( mem, buf.size() );
-	}
-	
-
 }}
 
 #endif

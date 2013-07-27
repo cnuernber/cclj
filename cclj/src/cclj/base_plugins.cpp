@@ -33,6 +33,20 @@ using namespace cclj::lisp;
 using namespace cclj::plugins;
 using namespace llvm;
 
+namespace 
+{
+	template<typename data_type, typename allocator>
+	data_buffer<data_type> allocate_buffer( allocator& alloc, data_buffer<data_type> buf )
+	{
+		if ( buf.size() == 0 ) return data_buffer<data_type>();
+			 
+		data_type* mem = reinterpret_cast<data_type*>( alloc.allocate( buf.size() * sizeof( data_type )
+														, sizeof(void*), CCLJ_IMMEDIATE_FILE_INFO() ) );
+		memcpy( mem, buf.begin(), buf.size() * sizeof( data_type ) );
+		return data_buffer<data_type>( mem, buf.size() );
+	}
+}
+
 
 ast_node& base_language_plugins::type_check_apply( reader_context& context, lisp::cons_cell& cell )
 {
@@ -450,6 +464,129 @@ void binary_low_level_ast_node::register_binary_functions( register_function fn,
 									return builder.CreateUDiv( lhs, rhs, "tmpadd" );
 								}, str_table->register_str( "/" )
 								, ast_allocator, true );
+
+	//boolean operations
+
+
+	register_binary_float_fn( fn, str_table->register_str( "float lt" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+							{
+								return builder.CreateFCmpULT( lhs, rhs, "tmpcmp" );
+							}, str_table->register_str( "<" )
+								, ast_allocator, false );
+
+							
+	register_binary_float_fn( fn, str_table->register_str( "float gt" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+							{
+								return builder.CreateFCmpUGT( lhs, rhs, "tmpcmp" );
+							}, str_table->register_str( ">" )
+								, ast_allocator, false );
+
+	register_binary_float_fn( fn, str_table->register_str( "float eq" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+							{
+								return builder.CreateFCmpUEQ( lhs, rhs, "tmpcmp" );
+							}, str_table->register_str( "==" )
+								, ast_allocator, false );
+							
+	register_binary_float_fn( fn, str_table->register_str( "float neq" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+							{
+								return builder.CreateFCmpUNE( lhs, rhs, "tmpcmp" );
+							}, str_table->register_str( "!=" )
+								, ast_allocator, false );
+							
+	register_binary_float_fn( fn, str_table->register_str( "float ge" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+							{
+								return builder.CreateFCmpUGE( lhs, rhs, "tmpcmp" );
+							}, str_table->register_str( ">=" )
+								, ast_allocator, false );
+							
+	register_binary_float_fn( fn, str_table->register_str( "float le" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+							{
+								return builder.CreateFCmpULE( lhs, rhs, "tmpcmp" );
+							}, str_table->register_str( ">=" )
+								, ast_allocator, false );
+
+							
+	register_binary_integer_fn( fn, str_table->register_str( "int eq" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpEQ( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( "==" )
+								, ast_allocator, false );
+								
+	register_binary_integer_fn( fn, str_table->register_str( "int neq" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpNE( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( "!=" )
+								, ast_allocator, false );
+	
+	register_binary_unsigned_integer_fn( fn, str_table->register_str( "uint lt" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpULT( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( "<" )
+								, ast_allocator, false );
+
+	register_binary_unsigned_integer_fn( fn, str_table->register_str( "uint le" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpULE( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( "<=" )
+								, ast_allocator, false );
+
+	register_binary_unsigned_integer_fn( fn, str_table->register_str( "uint gt" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpUGT( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( ">" )
+								, ast_allocator, false );
+								
+	register_binary_unsigned_integer_fn( fn, str_table->register_str( "uint ge" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpUGE( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( ">=" )
+								, ast_allocator, false );
+
+								
+
+
+	register_binary_signed_integer_fn( fn, str_table->register_str( "sint lt" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpSLT( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( "<" )
+								, ast_allocator, false );
+
+	register_binary_signed_integer_fn( fn, str_table->register_str( "sint le" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpSLE( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( "<=" )
+								, ast_allocator, false );
+
+	register_binary_signed_integer_fn( fn, str_table->register_str( "sint gt" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpSGT( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( ">" )
+								, ast_allocator, false );
+								
+	register_binary_signed_integer_fn( fn, str_table->register_str( "sint ge" ), type_lib
+								, []( IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs )
+								{
+									return builder.CreateICmpSGE( lhs, rhs, "tmpadd" );
+								}, str_table->register_str( ">=" )
+								, ast_allocator, false );
+
+
+
 }
 
 namespace 
