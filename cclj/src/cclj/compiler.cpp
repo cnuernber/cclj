@@ -402,10 +402,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			, _ast_allocator( make_shared<slab_allocator<> >( _allocator ) )
 			, _module( nullptr )
 		{
-			_top_level_special_forms->insert( make_pair( _str_table->register_str( "defn" )
-				, make_shared<function_def_plugin>( _str_table ) ) );
-			_top_level_special_forms->insert( make_pair( _str_table->register_str( "defmacro" )
-				, make_shared<macro_def_plugin>( _str_table ) ) );
+			base_language_plugins::register_base_compiler_plugins( _str_table, _top_level_special_forms, _special_forms );
 			register_function reg_fn = [this]( type_ref& fn_type, ast_node& comp_node )
 			{
 				_top_level_symbols->insert( make_pair( &fn_type, &comp_node ) );
@@ -513,7 +510,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			FunctionType* fn_type = FunctionType::get( comp_context.type_ref_type( *rettype ), false );
 			Function* retfn = Function::Create( fn_type, GlobalValue::ExternalLinkage, "", _module );
 			variable_context var_context( comp_context._variables );
-			function_def_node::initialize_function( comp_context, *retfn, data_buffer<symbol*>(), var_context );
+			base_language_plugins::initialize_function( comp_context, *retfn, data_buffer<symbol*>(), var_context );
 			
 			llvm_value_ptr last_value = nullptr;
 			for_each( ast.begin(), ast.end(), [&]
