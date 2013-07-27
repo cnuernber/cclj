@@ -215,7 +215,7 @@ namespace
 			ast_node_ptr last_body_eval( nullptr);
 			for ( cons_cell* body_cell = &body; body_cell; body_cell = object_traits::cast<cons_cell>( body_cell->_next ) )
 			{
-				last_body_eval = &context._type_checker( *body_cell );
+				last_body_eval = &context._type_checker( body_cell->_value );
 				new_node->children().push_back( *last_body_eval );
 			}
 			if ( &last_body_eval->type() != fn_name._type ) 
@@ -485,9 +485,9 @@ namespace
 			cons_cell& true_cell = object_traits::cast_ref<cons_cell>( cond_cell._next );
 			cons_cell& false_cell = object_traits::cast_ref<cons_cell>( true_cell._next );
 			if ( false_cell._next ) throw runtime_error( "Invalid if state, must have only 3 sub lists" );
-			ast_node& cond_node = context._type_checker( cond_cell );
-			ast_node& true_node = context._type_checker( true_cell );
-			ast_node& false_node = context._type_checker( false_cell );
+			ast_node& cond_node = context._type_checker( cond_cell._value );
+			ast_node& true_node = context._type_checker( true_cell._value );
+			ast_node& false_node = context._type_checker( false_cell._value );
 			if ( context._type_library->to_base_numeric_type( cond_node.type() ) != base_numeric_types::i1 )
 				throw runtime_error( "Invalid if condition type, must be boolean" );
 			if ( &true_node.type() != &false_node.type() )
@@ -498,6 +498,82 @@ namespace
 			retval->children().push_back( true_node );
 			retval->children().push_back( false_node );
 			return *retval;
+		}
+	};
+
+	struct let_ast_node : public ast_node
+	{
+		vector<pair<symbol*, ast_node*> > _let_vars;
+		let_ast_node( string_table_ptr st, const type_ref& type )
+			: ast_node( st->register_str( "let statement" ), type )
+		{
+		}
+		
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			variable_context let_vars( context._variables );
+			
+			Function* theFunction = context._builder.GetInsertBlock()->getParent();
+			IRBuilder<> entryBuilder( &theFunction->getEntryBlock(), theFunction->getEntryBlock().begin() );
+			
+			for_each( _let_vars.begin(), _let_vars.end(), [&]
+			( pair<symbol*, ast_node*>& var_dec )
+			{
+				auto var_eval = var_dec.second->compile_second_pass( context );
+				auto alloca = entryBuilder.CreateAlloca( context.type_ref_type( *var_eval.second )
+																, 0, var_dec.first->_name.c_str() );
+				context._builder.CreateStore( var_eval.first, alloca );
+				let_vars.add_variable( var_dec.first->_name, alloca, *var_eval.second );
+			} );
+
+			pair<llvm_value_ptr, type_ref_ptr> retval;
+			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
+			{
+				retval = iter->compile_second_pass( context );
+			}
+			return retval;
+		}
+	};
+
+	struct let_compiler_plugin : public compiler_plugin
+	{
+		let_compiler_plugin( string_table_ptr st )
+			: compiler_plugin( st->register_str( "let compiler plugin" ) )
+		{
+		}
+
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell )
+		{
+			cons_cell& array_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			cons_cell& body_start = object_traits::cast_ref<cons_cell>( array_cell._next );
+			object_ptr_buffer assign = object_traits::cast_ref<array>( array_cell._value )._data;
+			vector<pair<symbol*,ast_node*> > let_vars;
+			symbol_type_context let_check_context( context._context_symbol_types );
+			for ( size_t idx = 0, end = assign.size(); idx < end; idx = idx + 2 )
+			{
+				symbol& var_name = object_traits::cast_ref<symbol>( assign[idx] );
+				ast_node& var_expr = context._type_checker( assign[idx+1] );
+				let_vars.push_back( make_pair( &var_name, &var_expr ) );
+				let_check_context.add_symbol( var_name._name, var_expr.type() );
+			}
+			vector<ast_node*> body_nodes;
+			for ( cons_cell* body_cell = &body_start; body_cell
+				; body_cell = object_traits::cast<cons_cell>( body_cell->_next ) )
+			{
+				body_nodes.push_back( &context._type_checker( body_cell->_value ) );
+			}
+			//TODO change this to null so the system understand null or nil.
+			if( body_nodes.empty() )
+				throw runtime_error( "invalid let statement" );
+			let_ast_node* new_node 
+				= context._ast_allocator->construct<let_ast_node>( context._string_table, body_nodes.back()->type() );
+			new_node->_let_vars = let_vars;
+			for_each( body_nodes.begin(), body_nodes.end(), [&]
+			( ast_node* node )
+			{
+				new_node->children().push_back( *node );
+			} );
+			return *new_node;
 		}
 	};
 	
@@ -635,8 +711,7 @@ ast_node& base_language_plugins::type_check_apply( reader_context& context, lisp
 	if ( preprocess_iter != context._preprocess_objects.end() )
 	{
 		object_ptr replacement = preprocess_iter->second->preprocess( context, cell );
-		cell._value = replacement;
-		return context._type_checker( cell );
+		return context._type_checker( replacement );
 	}
 
 
@@ -652,7 +727,7 @@ ast_node& base_language_plugins::type_check_apply( reader_context& context, lisp
 	for ( cons_cell* arg = object_traits::cast<cons_cell>( cell._next )
 		; arg; arg = object_traits::cast<cons_cell>( arg->_next ) )
 	{
-		ast_node& eval_result = context._type_checker( *arg );
+		ast_node& eval_result = context._type_checker( arg->_value );
 		arg_types.push_back( &eval_result.type() );
 		resolved_args.push_back( &eval_result );
 	}
@@ -663,18 +738,18 @@ ast_node& base_language_plugins::type_check_apply( reader_context& context, lisp
 	return new_node;
 }
 
-ast_node& base_language_plugins::type_check_symbol( reader_context& context, lisp::cons_cell& cell )
+ast_node& base_language_plugins::type_check_symbol( reader_context& context, lisp::symbol& sym )
 {
-	symbol& cell_symbol = object_traits::cast_ref<symbol>( cell._value );
+	symbol& cell_symbol = sym;
 	symbol_type_ref_map::iterator symbol_type = context._context_symbol_types.find( cell_symbol._name );
 	if ( symbol_type == context._context_symbol_types.end() ) throw runtime_error( "unresolved symbol" );
 	return *context._ast_allocator->construct<symbol_ast_node>( context._string_table, cell_symbol
 																, *symbol_type->second );
 }
 
-ast_node& base_language_plugins::type_check_numeric_constant( reader_context& context, lisp::cons_cell& cell )
+ast_node& base_language_plugins::type_check_numeric_constant( reader_context& context, lisp::constant& cell )
 {
-	constant& cell_constant = object_traits::cast_ref<constant>( cell._value );
+	constant& cell_constant = cell;
 	if ( context._type_library->to_base_numeric_type( *cell_constant._type ) 
 		== base_numeric_types::no_known_type ) throw runtime_error( "invalid base numeric type" );
 	return *context._ast_allocator->construct<numeric_constant_ast_node>( context._string_table, cell_constant );
@@ -694,6 +769,8 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 
 	special_forms->insert( make_pair( str_table->register_str( "if" )
 		, make_shared<if_compiler_plugin>( str_table ) ) );
+	special_forms->insert( make_pair( str_table->register_str( "let" )
+		, make_shared<let_compiler_plugin>( str_table ) ) );
 
 }
 

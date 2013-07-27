@@ -184,7 +184,7 @@ namespace cclj
 
 	typedef shared_ptr<slab_allocator<> > slab_allocator_ptr;
 
-	typedef function<ast_node& (lisp::cons_cell&)> type_check_function;
+	typedef function<ast_node& (lisp::object_ptr)> type_check_function;
 	class compiler_plugin;
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
 

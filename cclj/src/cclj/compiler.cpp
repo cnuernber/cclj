@@ -349,7 +349,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 							, slab_allocator_ptr ast_alloc )
 							: _applier()
 		{
-			type_check_function tc = [this]( cons_cell& cc ) -> ast_node&
+			type_check_function tc = [this]( object_ptr cc ) -> ast_node&
 			{ 
 				return type_check_cell( cc ); 
 			};
@@ -358,16 +358,18 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 											, ast_alloc ) );
 		}
 
-		ast_node& type_check_cell( cons_cell& cc )
+		ast_node& type_check_cell( object_ptr value )
 		{
-			switch( cc._value->type() )
+			if ( value == nullptr ) throw runtime_error( "Invalid type check value" );
+
+			switch( value->type() )
 			{
 			case types::symbol:
-				return _applier.type_check_symbol( *_context, cc );
+				return _applier.type_check_symbol( *_context, object_traits::cast_ref<symbol>( value ) );
 			case types::cons_cell:
-				return _applier.type_check_apply( *_context, object_traits::cast_ref<cons_cell>( cc._value ) );
+				return _applier.type_check_apply( *_context, object_traits::cast_ref<cons_cell>( value ) );
 			case types::constant:
-				return _applier.type_check_numeric_constant( *_context, cc );
+				return _applier.type_check_numeric_constant( *_context, object_traits::cast_ref<constant>( value ) );
 			default:
 				throw runtime_error( "unable to type check at this time" );
 			}

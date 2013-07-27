@@ -23,9 +23,9 @@ namespace cclj { namespace plugins {
 	{
 	public:
 		base_language_plugins(){}
+		ast_node& type_check_symbol( reader_context& context, lisp::symbol& symbol );
 		ast_node& type_check_apply( reader_context& context, lisp::cons_cell& cell );
-		ast_node& type_check_symbol( reader_context& context, lisp::cons_cell& cell );
-		ast_node& type_check_numeric_constant( reader_context& context, lisp::cons_cell& cell );
+		ast_node& type_check_numeric_constant( reader_context& context, lisp::constant& cell );
 
 		static void initialize_function(compiler_context& context, llvm::Function& fn, data_buffer<lisp::symbol*> fn_args
 														, variable_context& var_context);
