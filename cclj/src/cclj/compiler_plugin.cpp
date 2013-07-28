@@ -189,6 +189,7 @@ namespace
 
 		virtual llvm_value_ptr load( compiler_context& context )
 		{
+			if ( _data.empty() ) throw runtime_error( "invalid variable reference" );
 			if ( _data.size() > 1 || _data.back().type() != sym_res_types::gep )
 				throw runtime_error( "value accessors not supported yet" );
 
@@ -209,6 +210,7 @@ namespace
 		}
 		virtual void store( compiler_context& /*context*/, llvm_value_ptr /*val*/ )
 		{
+			if ( _data.empty() ) throw runtime_error( "invalid variable reference" );
 			if ( _data.size() > 1 || _data.back().type() != sym_res_types::gep )
 				throw runtime_error( "value accessors not supported yet" );
 		}

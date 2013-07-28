@@ -428,6 +428,22 @@ namespace
 			return make_pair( context._builder.CreateLoad( symbol_iter->second.first ), &type() );
 		}
 	};
+	
+	struct resolution_ast_node : public ast_node
+	{
+		symbol_resolution_context_ptr _resolution;
+		resolution_ast_node( string_table_ptr st, symbol_resolution_context_ptr res )
+			: ast_node( st->register_str( "resolution node" ), res->resolved_type() )
+			, _resolution( res )
+		{
+		}
+
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			return make_pair( _resolution->load( context ), &_resolution->resolved_type() );
+		}
+	};
+
 	struct numeric_constant_ast_node : public ast_node
 	{
 		constant& _constant;
@@ -624,22 +640,20 @@ namespace
 		}
 		//Called to allow the ast node to resolve the rest of a symbol when the symbol's first item pointed
 		//to a variable if this node type.  Used for struct lookups of the type a.b
-		virtual void resolve_symbol( reader_context& context
+		virtual void resolve_symbol( reader_context& /*context*/
 											, string_table_str split_symbol
 											, symbol_resolution_context& resolution_context )
 		{
 			auto find_result = find_if( _fields.begin(), _fields.end(), [&]
 			( symbol* sym ) { return sym->_name == split_symbol; } );
 			if ( find_result == _fields.end() ) throw runtime_error( "enable to result symbol" );
-			uint32_t find_idx = static_cast<uint32_t>( find_result - _fields.end() );
+			uint32_t find_idx = static_cast<uint32_t>( find_result - _fields.begin() );
 			resolution_context.add_GEP_index( find_idx, *(*find_result)->_type );
 		}
 
 		//compiler-created constructor
 		virtual ast_node& apply( reader_context& context, data_buffer<ast_node_ptr> args )
 		{
-			if ( _function == nullptr )
-				throw runtime_error( "Apply requested when first pass has not completed" );
 			function_call_node* new_node 
 				= context._ast_allocator->construct<function_call_node>( context._string_table, *this );
 			for_each( args.begin(), args.end(), [&]
@@ -896,10 +910,37 @@ ast_node& base_language_plugins::type_check_apply( reader_context& context, lisp
 ast_node& base_language_plugins::type_check_symbol( reader_context& context, lisp::symbol& sym )
 {
 	symbol& cell_symbol = sym;
-	symbol_type_ref_map::iterator symbol_type = context._context_symbol_types.find( cell_symbol._name );
-	if ( symbol_type == context._context_symbol_types.end() ) throw runtime_error( "unresolved symbol" );
-	return *context._ast_allocator->construct<symbol_ast_node>( context._string_table, cell_symbol
-																, *symbol_type->second );
+	vector<string> parts = split_symbol( cell_symbol );
+	if ( parts.size() == 1 )
+	{
+		//common case.
+		symbol_type_ref_map::iterator symbol_type = context._context_symbol_types.find( cell_symbol._name );
+		if ( symbol_type == context._context_symbol_types.end() ) throw runtime_error( "unresolved symbol" );
+		return *context._ast_allocator->construct<symbol_ast_node>( context._string_table, cell_symbol
+																	, *symbol_type->second );
+	}
+	else
+	{
+		string_table_str initial = context._string_table->register_str( parts[0] );
+		symbol_type_ref_map::iterator symbol_type = context._context_symbol_types.find( initial );
+		if ( symbol_type == context._context_symbol_types.end() ) throw runtime_error( "unresolved symbol" );
+
+		auto next_type_iter = context._symbol_map->find( symbol_type->second );
+		if ( next_type_iter == context._symbol_map->end() )
+			throw runtime_error( "unresolved symbol" );
+
+		symbol_resolution_context_ptr res_context = symbol_resolution_context::create( initial );
+		//magic of the gep, have to add zero to start it off.
+		res_context->add_GEP_index( 0, *next_type_iter->first );
+		for ( size_t idx = 1, end = parts.size(); idx < end; ++idx )
+		{
+			auto next_part = context._string_table->register_str( parts[idx] );
+			next_type_iter->second->resolve_symbol( context, next_part, *res_context );
+		}
+		resolution_ast_node* retval 
+			= context._ast_allocator->construct<resolution_ast_node>( context._string_table, res_context );
+		return *retval;
+	}
 }
 
 ast_node& base_language_plugins::type_check_numeric_constant( reader_context& context, lisp::constant& cell )
