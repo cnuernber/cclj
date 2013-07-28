@@ -139,6 +139,41 @@ namespace cclj
 
 	struct reader_context;
 
+	struct value_accessor
+	{
+	protected:
+		virtual ~value_accessor(){}
+	public:
+		virtual type_ref& value_type() = 0;
+		virtual llvm_value_ptr get_value( compiler_context& context ) = 0;
+		virtual void set_value( compiler_context& context, llvm_value_ptr value ) = 0;
+	};
+
+	//intermediary to allow arbitrary symbol resolution via the ast plugin system.
+	struct symbol_resolution_context
+	{
+	protected:
+		virtual ~symbol_resolution_context(){}
+	public:
+		friend class shared_ptr<symbol_resolution_context>;
+
+		virtual string_table_str initial_symbol() = 0;
+		//provided by the AST plugins
+		virtual void add_GEP_index( uint32_t idx, type_ref& type ) = 0;
+		//obviously the accessor will need to last the lifetime of the compiler system.
+		virtual void add_value_accessor( value_accessor& accessor ) = 0; 
+
+
+		//used by the system.
+		virtual type_ref& resolved_type() = 0;
+		virtual llvm_value_ptr load( compiler_context& context ) = 0;
+		virtual void store( compiler_context& context, llvm_value_ptr val ) = 0;
+
+		static shared_ptr<symbol_resolution_context> create(string_table_str initial_symbol);
+	};
+
+	typedef shared_ptr<symbol_resolution_context> symbol_resolution_context_ptr;
+
 	CCLJ_DEFINE_INVASIVE_SINGLE_LIST(ast_node); 
 	//AST nodes are allocated with the slab allocator.  This means they do not need
 	//to be manually deallocated.
@@ -173,8 +208,11 @@ namespace cclj
 		}
 
 		//Called to allow the ast node to resolve the rest of a symbol when the symbol's first item pointed
-		//to a variable if this node type.  Used for struct lookups of the type a.b
-		virtual ast_node& resolve_symbol( reader_context& /*context*/, data_buffer<string_table_str> /*split_symbol*/ )
+		//to a variable if this node type.  Used for chained lookups of the type a.b.c.d regardless of if
+		//getting or setting.  This allows AST nodes to provide custom get/set code for properties.
+		virtual void resolve_symbol( reader_context& /*context*/
+											, string_table_str /*split_symbol*/
+											, symbol_resolution_context& /*resolution_context*/ )
 		{
 			throw runtime_error( "ast node cannot resolve symbol" );
 		}

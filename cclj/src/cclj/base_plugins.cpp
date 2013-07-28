@@ -624,9 +624,15 @@ namespace
 		}
 		//Called to allow the ast node to resolve the rest of a symbol when the symbol's first item pointed
 		//to a variable if this node type.  Used for struct lookups of the type a.b
-		virtual ast_node& resolve_symbol( reader_context& /*context*/, data_buffer<string_table_str> /*split_symbol*/ )
+		virtual void resolve_symbol( reader_context& context
+											, string_table_str split_symbol
+											, symbol_resolution_context& resolution_context )
 		{
-			throw runtime_error( "ast node cannot resolve symbol" );
+			auto find_result = find_if( _fields.begin(), _fields.end(), [&]
+			( symbol* sym ) { return sym->_name == split_symbol; } );
+			if ( find_result == _fields.end() ) throw runtime_error( "enable to result symbol" );
+			uint32_t find_idx = static_cast<uint32_t>( find_result - _fields.end() );
+			resolution_context.add_GEP_index( find_idx, *(*find_result)->_type );
 		}
 
 		//compiler-created constructor
