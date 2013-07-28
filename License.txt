@@ -1,0 +1,2 @@
+Projects located under this directory are licensed individually according
+to their specific license.
