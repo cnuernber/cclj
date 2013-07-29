@@ -169,7 +169,7 @@ namespace cclj
 		virtual llvm_value_ptr load( compiler_context& context ) = 0;
 		virtual void store( compiler_context& context, llvm_value_ptr val ) = 0;
 
-		static shared_ptr<symbol_resolution_context> create(string_table_str initial_symbol);
+		static shared_ptr<symbol_resolution_context> create(string_table_str initial_symbol, type_ref& initial_type);
 	};
 
 	typedef shared_ptr<symbol_resolution_context> symbol_resolution_context_ptr;

@@ -155,8 +155,9 @@ namespace
 		type_ref_ptr	 _final_type;
 		string_table_str _initial_symbol;
 
-		symbol_resolution_context_impl( string_table_str sym )
+		symbol_resolution_context_impl( string_table_str sym, type_ref& initial_type )
 			: _initial_symbol( sym )
+			, _final_type( &initial_type )
 		{
 		}
 
@@ -189,12 +190,16 @@ namespace
 
 		virtual llvm_value_ptr load( compiler_context& context )
 		{
-			if ( _data.empty() ) throw runtime_error( "invalid variable reference" );
+			auto sym_iter = context._variables.find( _initial_symbol );
+			if ( sym_iter == context._variables.end() ) throw runtime_error( "failed to resolve initial symbol" );
+			if ( _data.size() == 0 )
+			{
+				llvm_value_ptr load_val = context._builder.CreateLoad( sym_iter->second.first );
+				return load_val;
+			}
 			if ( _data.size() > 1 || _data.back().type() != sym_res_types::gep )
 				throw runtime_error( "value accessors not supported yet" );
 
-			auto sym_iter = context._variables.find( _initial_symbol );
-			if ( sym_iter == context._variables.end() ) throw runtime_error( "failed to resolve initial symbol" );
 
 			llvm_value_ptr start_addr = sym_iter->second.first;
 			uint32_list& lookup_chain( _data.back().data<uint32_list>() );
@@ -208,17 +213,23 @@ namespace
 			llvm_value_ptr addr = context._builder.CreateGEP( start_addr, lookups, "gep lookup" );
 			return context._builder.CreateLoad( addr );
 		}
-		virtual void store( compiler_context& /*context*/, llvm_value_ptr /*val*/ )
+		virtual void store( compiler_context& context, llvm_value_ptr val )
 		{
-			if ( _data.empty() ) throw runtime_error( "invalid variable reference" );
-			if ( _data.size() > 1 || _data.back().type() != sym_res_types::gep )
-				throw runtime_error( "value accessors not supported yet" );
+			auto sym_iter = context._variables.find( _initial_symbol );
+			if ( sym_iter == context._variables.end() ) throw runtime_error( "failed to resolve initial symbol" );
+			if ( _data.size() == 0 )
+			{
+				context._builder.CreateStore( val, sym_iter->second.first, false );
+			}
+			else
+				throw runtime_error( "storing to complex accessor not supported yet" );
 		}
 	};
 }
 
 
-symbol_resolution_context_ptr symbol_resolution_context::create(string_table_str initial_symbol)
+symbol_resolution_context_ptr symbol_resolution_context::create(string_table_str initial_symbol
+																, type_ref& initial_type)
 {
-	return make_shared<symbol_resolution_context_impl>( initial_symbol );
+	return make_shared<symbol_resolution_context_impl>( initial_symbol, initial_type );
 }

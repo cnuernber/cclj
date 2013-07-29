@@ -53,6 +53,34 @@ namespace
 		return retval;
 	}
 
+	symbol_resolution_context_ptr resolve_symbol( reader_context& context, lisp::symbol& sym )
+	{
+		vector<string> parts = split_symbol( sym );
+		string_table_str initial = context._string_table->register_str( parts[0] );
+		symbol_type_ref_map::iterator symbol_type = context._context_symbol_types.find( initial );
+		if ( symbol_type == context._context_symbol_types.end() ) throw runtime_error( "unresolved symbol" );
+		
+		symbol_resolution_context_ptr res_context = symbol_resolution_context::create( initial, *symbol_type->second );
+		if ( parts.size() > 1 )
+		{
+			for ( size_t idx = 1, end = parts.size(); idx < end; ++idx )
+			{
+				auto next_type_iter = context._symbol_map->find( symbol_type->second );
+				if ( next_type_iter == context._symbol_map->end() )
+					throw runtime_error( "unresolved symbol" );
+
+				//magic of the gep, have to add zero to start it off.
+				if ( idx == 1 )
+				{
+					res_context->add_GEP_index( 0, *next_type_iter->first );
+				}
+				auto next_part = context._string_table->register_str( parts[idx] );
+				next_type_iter->second->resolve_symbol( context, next_part, *res_context );
+			}
+		}
+		return res_context;
+	}
+
 
 	template<typename data_type, typename allocator>
 	data_buffer<data_type> allocate_buffer( allocator& alloc, data_buffer<data_type> buf )
@@ -560,15 +588,15 @@ namespace
 			: ast_node( st->register_str( "let statement" ), type )
 		{
 		}
-		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+
+		static void initialize_assign_block( compiler_context& context
+												, vector<pair<symbol*, ast_node*> >& vars
+												, variable_context& let_vars )
 		{
-			variable_context let_vars( context._variables );
-			
 			Function* theFunction = context._builder.GetInsertBlock()->getParent();
 			IRBuilder<> entryBuilder( &theFunction->getEntryBlock(), theFunction->getEntryBlock().begin() );
 			
-			for_each( _let_vars.begin(), _let_vars.end(), [&]
+			for_each( vars.begin(), vars.end(), [&]
 			( pair<symbol*, ast_node*>& var_dec )
 			{
 				auto var_eval = var_dec.second->compile_second_pass( context );
@@ -577,6 +605,12 @@ namespace
 				context._builder.CreateStore( var_eval.first, alloca );
 				let_vars.add_variable( var_dec.first->_name, alloca, *var_eval.second );
 			} );
+		}
+		
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			variable_context let_vars( context._variables );
+			initialize_assign_block( context, _let_vars, let_vars );
 
 			pair<llvm_value_ptr, type_ref_ptr> retval;
 			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
@@ -745,6 +779,156 @@ namespace
 			return *new_node;
 		}
 	};
+
+	struct for_loop_ast_node : public ast_node
+	{
+		vector<pair<symbol*, ast_node*> >	_for_vars;
+		ast_node_ptr						_cond_node;
+
+		for_loop_ast_node( string_table_ptr st, type_library_ptr lt )
+			: ast_node( st->register_str( "for loop" ), lt->get_type_ref( base_numeric_types::i32 ) )
+		{
+		}
+
+		
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			variable_context let_vars( context._variables );
+			let_ast_node::initialize_assign_block( context, _for_vars, let_vars ); 
+			Function* theFunction = context._builder.GetInsertBlock()->getParent();
+			
+			BasicBlock* loop_update_block = BasicBlock::Create( getGlobalContext(), "loop update", theFunction );
+			BasicBlock* cond_block = BasicBlock::Create( getGlobalContext(), "cond block", theFunction );
+			BasicBlock* exit_block = BasicBlock::Create( getGlobalContext(), "exit block", theFunction );
+			context._builder.CreateBr( cond_block );
+			context._builder.SetInsertPoint( cond_block );
+			llvm_value_ptr next_val = _cond_node->compile_second_pass( context ).first;
+			context._builder.CreateCondBr( next_val, loop_update_block, exit_block );
+
+			context._builder.SetInsertPoint( loop_update_block );
+			//output looping
+			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
+			{
+				iter->compile_second_pass( context );
+			}
+			context._builder.CreateBr( cond_block );
+			context._builder.SetInsertPoint( exit_block );
+			return make_pair( ConstantInt::get( Type::getInt32Ty( getGlobalContext() ), 0 )
+								, &context._type_library->get_type_ref( base_numeric_types::i32 ) );
+		}
+	};
+	
+
+	struct for_loop_plugin : public compiler_plugin
+	{
+		for_loop_plugin( string_table_ptr st ) : compiler_plugin( st->register_str( "for loop plugin" ) )
+		{
+		}
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell )
+		{
+			// for loop is an array of init statements
+			// a boolean conditional, 
+			// an array of update statements
+			// and the rest is the for body.
+			cons_cell& init_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			cons_cell& cond_cell = object_traits::cast_ref<cons_cell>( init_cell._next );
+			cons_cell& update_cell = object_traits::cast_ref<cons_cell>( cond_cell._next );
+			cons_cell& body_start = object_traits::cast_ref<cons_cell>( update_cell._next );
+			object_ptr_buffer init_list = object_traits::cast_ref<array>( init_cell._value )._data;
+			object_ptr_buffer update_list = object_traits::cast_ref<array>( update_cell._value )._data;
+			vector<pair<symbol*, ast_node*> > init_nodes;
+			symbol_type_context for_check_context( context._context_symbol_types );
+			for ( size_t idx = 0, end = init_list.size(); idx < end; idx +=2  )
+			{
+				symbol& var_name = object_traits::cast_ref<symbol>( init_list[idx] );
+				ast_node& var_expr = context._type_checker( init_list[idx+1] );
+				init_nodes.push_back( make_pair( &var_name, &var_expr ) );
+				for_check_context.add_symbol( var_name._name, var_expr.type() );
+			}
+			ast_node& cond_node = context._type_checker( cond_cell._value );
+			if ( context._type_library->to_base_numeric_type( cond_node.type() )
+				!= base_numeric_types::i1 )
+				throw runtime_error( "invalid for statement; condition not boolean" );
+			vector<ast_node*> body_nodes;
+			for ( cons_cell* body_cell = &body_start; body_cell
+					; body_cell = object_traits::cast<cons_cell>( body_cell->_next ) )
+			{
+				body_nodes.push_back( &context._type_checker( body_cell->_value ) );
+			}
+			for_each ( update_list.begin(), update_list.end(), [&]
+			( object_ptr item )
+			{
+				body_nodes.push_back( &context._type_checker( item ) );
+			} );
+			for_loop_ast_node* new_node 
+				= context._ast_allocator->construct<for_loop_ast_node>( context._string_table, context._type_library );
+			new_node->_for_vars = init_nodes;
+			new_node->_cond_node = &cond_node;
+			for_each( body_nodes.begin(), body_nodes.end(), [&]
+			( ast_node_ptr node )
+			{
+				new_node->children().push_back( *node );
+			} );
+			return *new_node;
+		}
+	};
+
+
+	struct set_ast_node : public ast_node
+	{
+		symbol_resolution_context_ptr _resolve_context;
+		set_ast_node( string_table_ptr st, symbol_resolution_context_ptr sr )
+			: ast_node( st->register_str( "set node" ), sr->resolved_type() )
+			, _resolve_context( sr )
+		{
+		}
+
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass( compiler_context& context )
+		{
+			pair<llvm_value_ptr, type_ref_ptr> assign_var (nullptr, nullptr );
+			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
+			{
+				assign_var = iter->compile_second_pass( context );
+			}
+			if ( assign_var.first == nullptr ) throw runtime_error( "invalid assignment variable" );
+			_resolve_context->store( context, assign_var.first );
+			return assign_var;
+		}
+	};
+
+
+	struct set_plugin : public compiler_plugin
+	{
+		set_plugin( string_table_ptr st ) 
+			: compiler_plugin( st->register_str( "set plugin" ) )
+		{
+		}
+
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell )
+		{
+			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			cons_cell& first_expr_cell = object_traits::cast_ref<cons_cell>( name_cell._next );
+			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
+			
+			auto res_context = resolve_symbol( context, name );
+			set_ast_node* retval 
+				= context._ast_allocator->construct<set_ast_node>( context._string_table, res_context );
+
+			ast_node* last_expr_node = nullptr;
+			for ( cons_cell* expr = &first_expr_cell; expr; expr = object_traits::cast<cons_cell>( expr->_next ) )
+			{
+				ast_node& new_node = context._type_checker( expr->_value );
+				retval->children().push_back( new_node );
+				last_expr_node = &new_node;
+			}
+			if ( last_expr_node == nullptr ) throw runtime_error( "invalid set: no expression" );
+			if ( &last_expr_node->type() != &res_context->resolved_type() )
+				throw runtime_error( "Invalid set: variable type and expression type do not match" );
+
+			return *retval;
+		}
+	};
+
 	
 
 	typedef function<llvm_value_ptr (IRBuilder<>& builder, Value* lhs, Value* rhs )> builder_binary_function;
@@ -921,22 +1105,7 @@ ast_node& base_language_plugins::type_check_symbol( reader_context& context, lis
 	}
 	else
 	{
-		string_table_str initial = context._string_table->register_str( parts[0] );
-		symbol_type_ref_map::iterator symbol_type = context._context_symbol_types.find( initial );
-		if ( symbol_type == context._context_symbol_types.end() ) throw runtime_error( "unresolved symbol" );
-
-		auto next_type_iter = context._symbol_map->find( symbol_type->second );
-		if ( next_type_iter == context._symbol_map->end() )
-			throw runtime_error( "unresolved symbol" );
-
-		symbol_resolution_context_ptr res_context = symbol_resolution_context::create( initial );
-		//magic of the gep, have to add zero to start it off.
-		res_context->add_GEP_index( 0, *next_type_iter->first );
-		for ( size_t idx = 1, end = parts.size(); idx < end; ++idx )
-		{
-			auto next_part = context._string_table->register_str( parts[idx] );
-			next_type_iter->second->resolve_symbol( context, next_part, *res_context );
-		}
+		auto res_context = resolve_symbol( context, sym );
 		resolution_ast_node* retval 
 			= context._ast_allocator->construct<resolution_ast_node>( context._string_table, res_context );
 		return *retval;
@@ -969,6 +1138,10 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 		, make_shared<if_compiler_plugin>( str_table ) ) );
 	special_forms->insert( make_pair( str_table->register_str( "let" )
 		, make_shared<let_compiler_plugin>( str_table ) ) );
+	special_forms->insert( make_pair( str_table->register_str( "for" )
+		, make_shared<for_loop_plugin>( str_table ) ) );
+	special_forms->insert( make_pair( str_table->register_str( "set" )
+		, make_shared<set_plugin>( str_table ) ) );
 
 }
 
