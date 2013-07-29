@@ -929,6 +929,109 @@ namespace
 		}
 	};
 
+
+	struct numeric_cast_node : public ast_node
+	{
+		numeric_cast_node( string_table_ptr st, const type_ref& t )
+			: ast_node( st->register_str( "numeric cast node" ), t )
+		{
+		}
+
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass( compiler_context& context )
+		{
+			pair<llvm_value_ptr, type_ref_ptr> arg_eval( nullptr, nullptr );
+			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
+			{
+				arg_eval = iter->compile_second_pass( context );
+			}
+			if ( arg_eval.first == nullptr ) throw runtime_error( "invalid numeric cast" );
+			auto source = context._type_library->to_base_numeric_type( *arg_eval.second );
+			auto target = context._type_library->to_base_numeric_type( type() );
+			
+			Type* target_type = context.type_ref_type( type() );
+			Value* retval = nullptr;
+			if ( base_numeric_types::is_float_type( source ) )
+			{
+				if ( target == base_numeric_types::f64 )
+					retval = context._builder.CreateFPExt( arg_eval.first, target_type );
+				else if ( target == base_numeric_types::f32 )
+					retval = context._builder.CreateFPTrunc( arg_eval.first, target_type );
+				else if ( base_numeric_types::is_signed_int_type( target ) )
+					retval = context._builder.CreateFPToSI( arg_eval.first, target_type );
+				else if ( base_numeric_types::is_unsigned_int_type( target ) )
+					retval = context._builder.CreateFPToUI( arg_eval.first, target_type );
+			}
+			else if ( base_numeric_types::is_int_type( source ) )
+			{
+				if ( base_numeric_types::is_float_type( target ) )
+				{
+					if ( base_numeric_types::is_signed_int_type( source ) )
+						retval = context._builder.CreateSIToFP( arg_eval.first, target_type );
+					else
+						retval = context._builder.CreateUIToFP( arg_eval.first, target_type );
+				}
+				else 
+				{
+					if ( base_numeric_types::num_bits( source ) > base_numeric_types::num_bits( target ) )
+					{
+						retval = context._builder.CreateTrunc( arg_eval.first, target_type );
+					}
+					else if ( base_numeric_types::num_bits( source ) < base_numeric_types::num_bits( target ) )
+					{
+						if ( base_numeric_types::is_signed_int_type( target ) )
+							retval = context._builder.CreateSExt( arg_eval.first, target_type );
+						else
+							retval = context._builder.CreateZExt( arg_eval.first, target_type );
+					}
+					//types are same size, just do a bitcast of sorts.
+					else
+						retval = context._builder.CreateBitCast( arg_eval.first, target_type );
+				}
+			}
+
+			if ( retval == nullptr ) throw runtime_error( "cast error" );
+
+			return make_pair( retval, &type() );
+		}
+	};
+
+	
+	struct numeric_cast_plugin : public compiler_plugin
+	{
+		numeric_cast_plugin( string_table_ptr st )
+			: compiler_plugin( st->register_str( "numeric cast plugin" ) )
+		{
+		}
+
+		static void check_valid_numeric_type( base_numeric_types::_enum t )
+		{
+			if ( t == base_numeric_types::no_known_type
+				|| t == base_numeric_types::i1 )
+				throw runtime_error( "invalid type for numeric cast" );
+		}
+		
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell )
+		{
+			symbol& my_name = object_traits::cast_ref<symbol>( cell._value );
+			cons_cell& body_start = object_traits::cast_ref<cons_cell>( cell._next );
+
+			if ( my_name._type== nullptr ) throw runtime_error( "numeric cast must have type" );
+			auto num_type = context._type_library->to_base_numeric_type( *my_name._type );
+			check_valid_numeric_type( num_type );
+			numeric_cast_node* num_node 
+				= context._ast_allocator->construct<numeric_cast_node>( context._string_table, *my_name._type );
+			ast_node_ptr last_node( nullptr );
+			for ( cons_cell* body = &body_start; body; body = object_traits::cast<cons_cell>( body->_next ) )
+			{
+				last_node = &context._type_checker( body->_value );
+				num_node->children().push_back( *last_node );
+			}
+			if ( last_node == nullptr ) throw runtime_error( "invalid numeric cast" );
+			check_valid_numeric_type( context._type_library->to_base_numeric_type( last_node->type() ) );
+			return *num_node;
+		}
+	};
+
 	
 
 	typedef function<llvm_value_ptr (IRBuilder<>& builder, Value* lhs, Value* rhs )> builder_binary_function;
@@ -1142,6 +1245,8 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 		, make_shared<for_loop_plugin>( str_table ) ) );
 	special_forms->insert( make_pair( str_table->register_str( "set" )
 		, make_shared<set_plugin>( str_table ) ) );
+	special_forms->insert( make_pair( str_table->register_str( "numeric-cast" )
+		, make_shared<numeric_cast_plugin>( str_table ) ) );
 
 }
 
