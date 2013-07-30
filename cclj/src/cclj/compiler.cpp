@@ -374,8 +374,36 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				throw runtime_error( "unable to type check at this time" );
 			}
 		}
+	};
 
+	struct global_variable_entry
+	{
+		void*				_value;
+		string_table_str	_name;
+		type_ref_ptr		_type;
+		GlobalVariable*		_variable;
 
+		global_variable_entry()
+			: _value( nullptr )
+			, _type( nullptr )
+			, _variable( nullptr )
+		{
+		}
+	};
+
+	struct global_function_entry
+	{
+		void*			_fn_entry;
+		type_ref_ptr	_ret_type;
+		type_ref_ptr	_fn_type;
+		Function*		_function;
+		global_function_entry()
+			: _fn_entry( nullptr )
+			, _ret_type( nullptr )
+			, _fn_type( nullptr )
+			, _function( nullptr )
+		{
+		}
 	};
 
 	struct compiler_impl : public compiler
@@ -392,6 +420,8 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		Module*							_module;
 		shared_ptr<ExecutionEngine>		_exec_engine;
 		shared_ptr<FunctionPassManager> _fpm;
+		vector<global_variable_entry>   _global_variables;
+		vector<global_function_entry>	_global_functions;
 
 		compiler_impl()
 			: _allocator( allocator::create_checking_allocator() )
@@ -410,6 +440,14 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				_top_level_symbols->insert( make_pair( &fn_type, &comp_node ) );
 			};
 			binary_low_level_ast_node::register_binary_functions( reg_fn, _type_library, _str_table, _ast_allocator );
+			type_ref& runtime_type = _type_library->get_type_ref( "cclj-runtime" );
+			_global_variables.push_back( global_variable_entry() );
+			_global_variables.back()._name = _str_table->register_str( "rt" );
+			_global_variables.back()._value = this;
+			_global_variables.back()._type = &runtime_type;
+
+			_global_functions.push_back( global_function_entry() );
+
 		}
 
 		//transform text into the lisp datastructures.
@@ -484,7 +522,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				_fpm->add(createGVNPass());
 				// Simplify the control flow graph (deleting unreachable blocks, etc).
 				_fpm->add(createCFGSimplificationPass());
-				_fpm->doInitialization();
+				_fpm->doInitialization(); 
 			}
 
 			compiler_context comp_context( _type_library, _top_level_symbols, *_module, *_fpm );
@@ -540,6 +578,18 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			typedef float (*anon_fn_type)();
 			anon_fn_type exec_fn = reinterpret_cast<anon_fn_type>( compile_result.first );
 			return exec_fn();
+		}
+
+		static void* rt_malloc( void* comp_ptr, uint32_t item_size, uint32_t item_align )
+		{
+			compiler_impl* compiler = reinterpret_cast<compiler_impl*>( comp_ptr );
+			return compiler->_allocator->allocate( item_size, item_align, CCLJ_IMMEDIATE_FILE_INFO() );
+		}
+
+		static void rt_free( void* comp_ptr, void* value )
+		{
+			compiler_impl* compiler = reinterpret_cast<compiler_impl*>( comp_ptr );
+			compiler->_allocator->deallocate( value );
 		}
 	}; 
 }
