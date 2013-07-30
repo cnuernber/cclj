@@ -389,22 +389,16 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			, _variable( nullptr )
 		{
 		}
-	};
-
-	struct global_function_entry
-	{
-		void*			_fn_entry;
-		type_ref_ptr	_ret_type;
-		type_ref_ptr	_fn_type;
-		Function*		_function;
-		global_function_entry()
-			: _fn_entry( nullptr )
-			, _ret_type( nullptr )
-			, _fn_type( nullptr )
-			, _function( nullptr )
+		
+		global_variable_entry(void* v, string_table_str s, type_ref& t )
+			: _value( v )
+			, _name( s )
+			, _type( &t )
+			, _variable( nullptr )
 		{
 		}
 	};
+
 
 	struct compiler_impl : public compiler
 	{
@@ -446,8 +440,24 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			_global_variables.back()._value = this;
 			_global_variables.back()._type = &runtime_type;
 
-			_global_functions.push_back( global_function_entry() );
-
+			{
+				type_ref& ret_type = _type_library->get_ptr_type( base_numeric_types::u8 );
+				type_ref* arg_types[3] = {
+					&runtime_type
+					, &_type_library->get_type_ref( base_numeric_types::u32 )
+					, &_type_library->get_type_ref( base_numeric_types::u8 )
+				};
+				type_ref& fn_type = _type_library->get_type_ref( "malloc", type_ref_ptr_buffer( arg_types, 3 ) );
+				void* fn_ptr = &compiler_impl::rt_malloc;
+				_global_functions.push_back( global_function_entry( fn_ptr, ret_type, fn_type ) );
+			}
+			{
+				type_ref& ret_type = _type_library->get_type_ref( base_numeric_types::u32 );
+				type_ref* arg_ptr_type = &_type_library->get_unqual_ptr_type();
+				type_ref& fn_type = _type_library->get_type_ref( "free", type_ref_ptr_buffer( &arg_ptr_type, 1 ) );
+				void* fn_ptr = &compiler_impl::rt_free;
+				_global_functions.push_back( global_function_entry( fn_ptr, ret_type, fn_type ) );
+			}
 		}
 
 		//transform text into the lisp datastructures.
@@ -463,6 +473,21 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			type_checker checker( _allocator, _factory, _type_library
 								, _str_table, _special_forms
 								, _top_level_special_forms, _top_level_symbols, _ast_allocator );
+
+			for_each( _global_variables.begin(), _global_variables.end(), [&,this]
+			( global_variable_entry& entry )
+			{
+				checker._context->_context_symbol_types.insert( make_pair( entry._name, entry._type ) );
+			} );
+
+			for_each( _global_functions.begin(), _global_functions.end(), [&,this]
+			( global_function_entry& entry )
+			{
+				checker._context->_symbol_map->insert( 
+					make_pair( entry._fn_type
+						, &checker._applier.create_global_function_node( checker._context->_ast_allocator, entry,
+																				checker._context->_string_table ) ) );
+			} );
 
 			vector<ast_node_ptr> type_check_results;
 			for_each( preprocess_result.begin(), preprocess_result.end(), [&,this]
@@ -525,7 +550,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				_fpm->doInitialization(); 
 			}
 
-			compiler_context comp_context( _type_library, _top_level_symbols, *_module, *_fpm );
+			compiler_context comp_context( _type_library, _top_level_symbols, *_module, *_fpm, *_exec_engine );
 			//The, ignoring all nodes that are not top level, create a function with the top level items
 			//compile it, and return the results.
 			for_each( ast.begin(), ast.end(), [&]
@@ -533,6 +558,25 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			{
 				node->compile_first_pass(comp_context);
 			} );
+
+			for_each( _global_variables.begin(), _global_variables.end(), [&,this]
+			( global_variable_entry& entry )
+			{
+				entry._variable = new GlobalVariable( comp_context.type_ref_type( *entry._type )
+														, true
+														, GlobalValue::LinkageTypes::CommonLinkage
+														, NULL
+														, entry._name.c_str() );
+				_exec_engine->addGlobalMapping( entry._variable, entry._value );
+			} );
+
+			
+			for_each( _global_functions.begin(), _global_functions.end(), [&,this]
+			( global_function_entry& entry )
+			{
+				comp_context._symbol_map->find( entry._fn_type )->second->compile_first_pass( comp_context );
+			} );
+
 			//compile each top level node, record the type of each non-top-level.
 			type_ref_ptr rettype = nullptr;
 			for_each( ast.begin(), ast.end(), [&]
@@ -580,16 +624,17 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			return exec_fn();
 		}
 
-		static void* rt_malloc( void* comp_ptr, uint32_t item_size, uint32_t item_align )
+		static void* rt_malloc( void* comp_ptr, uint32_t item_size, uint8_t item_align )
 		{
 			compiler_impl* compiler = reinterpret_cast<compiler_impl*>( comp_ptr );
 			return compiler->_allocator->allocate( item_size, item_align, CCLJ_IMMEDIATE_FILE_INFO() );
 		}
 
-		static void rt_free( void* comp_ptr, void* value )
+		static uint32_t rt_free( void* comp_ptr, void* value )
 		{
 			compiler_impl* compiler = reinterpret_cast<compiler_impl*>( comp_ptr );
 			compiler->_allocator->deallocate( value );
+			return 0;
 		}
 	}; 
 }

@@ -886,12 +886,15 @@ namespace
 		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass( compiler_context& context )
 		{
 			pair<llvm_value_ptr, type_ref_ptr> assign_var (nullptr, nullptr );
+			vector<llvm_value_ptr> indexes;
 			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 			{
 				assign_var = iter->compile_second_pass( context );
+				indexes.push_back( assign_var.first );
 			}
 			if ( assign_var.first == nullptr ) throw runtime_error( "invalid assignment variable" );
-			_resolve_context->store( context, assign_var.first );
+			indexes.pop_back();
+			_resolve_context->store( context, indexes, assign_var.first );
 			return assign_var;
 		}
 	};
@@ -908,22 +911,87 @@ namespace
 		{
 			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( cell._next );
 			cons_cell& first_expr_cell = object_traits::cast_ref<cons_cell>( name_cell._next );
+			
 			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
 			
 			auto res_context = resolve_symbol( context, name );
 			set_ast_node* retval 
 				= context._ast_allocator->construct<set_ast_node>( context._string_table, res_context );
 
+			type_ref_ptr item_type = &res_context->resolved_type();
 			ast_node* last_expr_node = nullptr;
+			vector<ast_node_ptr> children;
 			for ( cons_cell* expr = &first_expr_cell; expr; expr = object_traits::cast<cons_cell>( expr->_next ) )
 			{
 				ast_node& new_node = context._type_checker( expr->_value );
-				retval->children().push_back( new_node );
+				children.push_back( &new_node );
 				last_expr_node = &new_node;
+				if ( expr->_next )
+				{
+					auto num_type = context._type_library->to_base_numeric_type( new_node.type() );
+					if ( base_numeric_types::is_int_type( num_type ) == false )
+						throw runtime_error( "indexes into arrays must be integers" );
+					item_type = &context._type_library->deref_ptr_type( *item_type );
+				}
 			}
 			if ( last_expr_node == nullptr ) throw runtime_error( "invalid set: no expression" );
-			if ( &last_expr_node->type() != &res_context->resolved_type() )
+			if ( &last_expr_node->type() != item_type )
 				throw runtime_error( "Invalid set: variable type and expression type do not match" );
+
+			return *retval;
+		}
+	};
+
+	struct get_ast_node : public ast_node
+	{
+		symbol_resolution_context_ptr _resolve_context;
+		get_ast_node( string_table_ptr st, symbol_resolution_context_ptr sr, type_ref& type )
+			: ast_node( st->register_str( "set node" ), type )
+			, _resolve_context( sr )
+		{
+		}
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass( compiler_context& context )
+		{
+			pair<llvm_value_ptr, type_ref_ptr> assign_var (nullptr, nullptr );
+			vector<llvm_value_ptr> indexes;
+			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
+			{
+				assign_var = iter->compile_second_pass( context );
+				indexes.push_back( assign_var.first );
+			}
+			if ( assign_var.first == nullptr ) throw runtime_error( "invalid assignment variable" );
+			return make_pair( _resolve_context->load( context, indexes ), &type() );
+		}
+
+	};
+	
+	struct get_plugin : public compiler_plugin
+	{
+		get_plugin( string_table_ptr st ) 
+			: compiler_plugin( st->register_str( "get plugin" ) )
+		{
+		}
+
+		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell )
+		{
+			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			cons_cell* first_expr_cell = object_traits::cast<cons_cell>( name_cell._next );
+			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
+			
+			auto res_context = resolve_symbol( context, name );
+			type_ref* resolved_type = &res_context->resolved_type();
+			vector<ast_node_ptr> children;
+			for ( cons_cell* expr = first_expr_cell; expr; expr = object_traits::cast<cons_cell>( expr->_next ) )
+			{
+				ast_node& new_node = context._type_checker( expr->_value );
+				children.push_back( &new_node );
+				auto num_type = context._type_library->to_base_numeric_type( new_node.type() );
+				if ( base_numeric_types::is_int_type( num_type ) == false )
+					throw runtime_error( "indexes into arrays must be integers" );
+				resolved_type = &context._type_library->deref_ptr_type( *resolved_type );
+			}
+			get_ast_node* retval 
+				= context._ast_allocator->construct<get_ast_node>( context._string_table, res_context, *resolved_type );
 
 			return *retval;
 		}
@@ -1069,6 +1137,56 @@ namespace
 		}
 	};
 
+
+	struct global_function_ast_node : public ast_node, public llvm_function_provider
+	{
+		global_function_entry _entry;
+		global_function_ast_node( string_table_ptr st, const global_function_entry& e )
+			: ast_node( st->register_str( "global ast node" ), *_entry._ret_type )
+		{
+		}
+		
+		virtual ast_node& apply( reader_context& context, data_buffer<ast_node_ptr> args )
+		{
+			function_call_node* new_node 
+				= context._ast_allocator->construct<function_call_node>( context._string_table, *this );
+			for_each( args.begin(), args.end(), [&]
+			( ast_node_ptr arg )
+			{
+				new_node->children().push_back( *arg );
+			} );
+			return *new_node;
+		}
+		
+		virtual type_ref& return_type() { return *_entry._ret_type; }
+		virtual Function& function()
+		{
+			if( _entry._function == nullptr )
+				throw runtime_error( "global node needs first pass compilation" );
+			return *_entry._function;
+		}
+
+		virtual void compile_first_pass( compiler_context& context )
+		{
+			vector<Type*> fn_arg_types;
+			for_each( _entry._fn_type->_specializations.begin(), _entry._fn_type->_specializations.end()
+					, [&]
+					( type_ref_ptr t )
+			{
+				fn_arg_types.push_back( context.type_ref_type( *t ) );
+			} );
+			FunctionType* fn_type = FunctionType::get( context.type_ref_type( *_entry._ret_type ), fn_arg_types, false );
+			Function* fn_dev = Function::Create( fn_type, GlobalValue::ExternalLinkage
+													, _entry._fn_type->_name.c_str(), &context._module );
+			_entry._function = fn_dev;
+			context._eng.addGlobalMapping( _entry._function, _entry._fn_entry );
+		}
+		
+		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			throw runtime_error( "second pass compilation not supported" );
+		}
+	};
 
 	void do_register_binary_fn( register_function fn
 									, string_table_str node_name
@@ -1224,6 +1342,15 @@ ast_node& base_language_plugins::type_check_numeric_constant( reader_context& co
 }
 
 
+ast_node& base_language_plugins::create_global_function_node( 
+	slab_allocator_ptr alloc
+	, const global_function_entry& entry
+	, string_table_ptr st )
+{
+	return *alloc->construct<global_function_ast_node>( st, entry );
+}
+
+
 void base_language_plugins::register_base_compiler_plugins( string_table_ptr str_table
 											, string_plugin_map_ptr top_level_special_forms
 											, string_plugin_map_ptr special_forms )
@@ -1245,6 +1372,8 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 		, make_shared<for_loop_plugin>( str_table ) ) );
 	special_forms->insert( make_pair( str_table->register_str( "set" )
 		, make_shared<set_plugin>( str_table ) ) );
+	special_forms->insert( make_pair( str_table->register_str( "get" )
+		, make_shared<get_plugin>( str_table ) ) );
 	special_forms->insert( make_pair( str_table->register_str( "numeric-cast" )
 		, make_shared<numeric_cast_plugin>( str_table ) ) );
 

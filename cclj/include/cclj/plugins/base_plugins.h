@@ -27,6 +27,10 @@ namespace cclj { namespace plugins {
 		ast_node& type_check_apply( reader_context& context, lisp::cons_cell& cell );
 		ast_node& type_check_numeric_constant( reader_context& context, lisp::constant& cell );
 
+		ast_node& create_global_function_node( slab_allocator_ptr alloc
+												, const global_function_entry& entry
+												, string_table_ptr st );
+
 		static void initialize_function(compiler_context& context, llvm::Function& fn, data_buffer<lisp::symbol*> fn_args
 														, variable_context& var_context);
 

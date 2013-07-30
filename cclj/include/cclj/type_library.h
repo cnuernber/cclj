@@ -127,6 +127,34 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			return get_type_ref( string_table()->register_str( name ), _specializations );
 		}
 
+		type_ref& get_ptr_type( type_ref& type )
+		{
+			type_ref* type_ptr( &type );
+			type_ref_ptr_buffer specs( &type_ptr, 1 );
+			return get_type_ref( "ptr", specs );
+		}
+
+		//void ptr
+		type_ref& get_unqual_ptr_type()
+		{
+			return get_ptr_type( get_type_ref( "unqual" ) );
+		}
+
+		type_ref& get_ptr_type( base_numeric_types::_enum type )
+		{
+			type_ref* num_type = &get_type_ref( type );
+			type_ref_ptr_buffer specs( &num_type, 1 );
+			return get_type_ref( "ptr", specs );
+		}
+
+		type_ref& deref_ptr_type( type_ref& src_type )
+		{
+			if ( src_type._name == string_table()->register_str( "ptr" ) 
+				&& src_type._specializations[0] )
+				return *src_type._specializations[0];
+			throw runtime_error( "invalid ptr deref" );
+		}
+
 		virtual type_ref& get_type_ref( base_numeric_types::_enum type )
 		{
 			switch( type )

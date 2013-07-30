@@ -124,6 +124,7 @@ namespace cclj
 	{
 		llvm::Module&				_module;
 		llvm::FunctionPassManager&	_fpm;
+		llvm::ExecutionEngine&		_eng;
 		type_library_ptr			_type_library;
 		type_ast_node_map_ptr		_symbol_map;
 		llvm_builder				_builder;
@@ -131,7 +132,8 @@ namespace cclj
 		type_llvm_type_map			_type_map;
 
 		compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
-							, llvm::Module& m,  llvm::FunctionPassManager& fpm );
+							, llvm::Module& m,  llvm::FunctionPassManager& fpm
+							, llvm::ExecutionEngine& eng );
 
 
 		llvm_type_ptr type_ref_type( type_ref& type );
@@ -166,8 +168,8 @@ namespace cclj
 
 		//used by the system.
 		virtual type_ref& resolved_type() = 0;
-		virtual llvm_value_ptr load( compiler_context& context ) = 0;
-		virtual void store( compiler_context& context, llvm_value_ptr val ) = 0;
+		virtual llvm_value_ptr load( compiler_context& context, data_buffer<llvm_value_ptr> indexes ) = 0;
+		virtual void store( compiler_context& context, data_buffer<llvm_value_ptr> indexes, llvm_value_ptr val ) = 0;
 
 		static shared_ptr<symbol_resolution_context> create(string_table_str initial_symbol, type_ref& initial_type);
 	};
@@ -316,6 +318,30 @@ namespace cclj
 	};
 
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
+
+	
+	struct global_function_entry
+	{
+		void*			_fn_entry;
+		type_ref_ptr	_ret_type;
+		type_ref_ptr	_fn_type;
+		llvm::Function*		_function;
+		global_function_entry()
+			: _fn_entry( nullptr )
+			, _ret_type( nullptr )
+			, _fn_type( nullptr )
+			, _function( nullptr )
+		{
+		}
+
+		global_function_entry( void* fn, type_ref& ret_type, type_ref& fn_type )
+			: _fn_entry( fn )
+			, _ret_type( &ret_type )
+			, _fn_type( &fn_type )
+			, _function( nullptr )
+		{
+		}
+	};
 }
 
 #endif

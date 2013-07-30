@@ -34,9 +34,11 @@ using namespace cclj::lisp;
 using namespace llvm;
 
 compiler_context::compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
-					, llvm::Module& m,  llvm::FunctionPassManager& fpm )
+					, llvm::Module& m,  llvm::FunctionPassManager& fpm
+					, llvm::ExecutionEngine& eng )
 	: _module( m )
 	, _fpm( fpm )
+	, _eng( eng )
 	, _type_library( tl )
 	, _symbol_map( _type_node_map )
 	, _builder( getGlobalContext() )
@@ -188,14 +190,13 @@ namespace
 			return *_final_type;
 		}
 
-		virtual llvm_value_ptr load( compiler_context& context )
+		llvm_value_ptr load_to_ptr( compiler_context& context )
 		{
 			auto sym_iter = context._variables.find( _initial_symbol );
 			if ( sym_iter == context._variables.end() ) throw runtime_error( "failed to resolve initial symbol" );
 			if ( _data.size() == 0 )
 			{
-				llvm_value_ptr load_val = context._builder.CreateLoad( sym_iter->second.first );
-				return load_val;
+				return sym_iter->second.first;
 			}
 			if ( _data.size() > 1 || _data.back().type() != sym_res_types::gep )
 				throw runtime_error( "value accessors not supported yet" );
@@ -210,16 +211,39 @@ namespace
 			{
 				lookups.push_back( llvm::ConstantInt::get( int_type, idx ) );
 			} );
-			llvm_value_ptr addr = context._builder.CreateGEP( start_addr, lookups, "gep lookup" );
-			return context._builder.CreateLoad( addr );
+			return context._builder.CreateGEP( start_addr, lookups, "gep lookup" );
 		}
-		virtual void store( compiler_context& context, llvm_value_ptr val )
+
+		virtual llvm_value_ptr load( compiler_context& context, data_buffer<llvm_value_ptr> indexes )
+		{
+			auto addr = load_to_ptr( context );
+			auto loaded_item = context._builder.CreateLoad( addr );
+			if ( indexes.size() == 0 )
+				return loaded_item;
+			auto further_loaded = context._builder.CreateGEP( loaded_item
+																,  ArrayRef<llvm::Value*>( indexes.begin(), indexes.end() )
+																, "" );
+			return context._builder.CreateLoad( further_loaded );
+		}
+
+		virtual void store( compiler_context& context, data_buffer<llvm_value_ptr> indexes, llvm_value_ptr val )
 		{
 			auto sym_iter = context._variables.find( _initial_symbol );
 			if ( sym_iter == context._variables.end() ) throw runtime_error( "failed to resolve initial symbol" );
 			if ( _data.size() == 0 )
 			{
-				context._builder.CreateStore( val, sym_iter->second.first, false );
+				if ( indexes.size() == 0 )
+				{
+					context._builder.CreateStore( val, sym_iter->second.first, false );
+				}
+				else
+				{
+					auto addr = context._builder.CreateLoad( sym_iter->second.first );
+					auto further_loaded = context._builder.CreateGEP( addr
+																,  ArrayRef<llvm::Value*>( indexes.begin(), indexes.end() )
+																, "" );
+					context._builder.CreateStore( val, further_loaded, false );
+				}
 			}
 			else
 				throw runtime_error( "storing to complex accessor not supported yet" );
