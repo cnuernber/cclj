@@ -155,6 +155,11 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			throw runtime_error( "invalid ptr deref" );
 		}
 
+		bool is_pointer_type( type_ref& type )
+		{
+			return ( type._name == string_table()->register_str( "ptr" ) );
+		}
+
 		virtual type_ref& get_type_ref( base_numeric_types::_enum type )
 		{
 			switch( type )

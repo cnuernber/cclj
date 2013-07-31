@@ -86,19 +86,19 @@ namespace cclj
 	class compiler_plugin;
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
 	
-	typedef unordered_map<string_table_str, pair<llvm_alloca_ptr,type_ref_ptr> > string_alloca_type_map;
+	typedef unordered_map<string_table_str, pair<llvm_value_ptr,type_ref_ptr> > string_alloca_type_map;
 	typedef unordered_map<type_ref_ptr, ast_node_ptr> type_ast_node_map;
 	typedef shared_ptr<type_ast_node_map> type_ast_node_map_ptr;
 
 	struct variable_context
 	{
 		string_alloca_type_map&													_variables;
-		vector<pair<string_table_str, pair<llvm_alloca_ptr, type_ref_ptr> > >	_added_vars;
+		vector<pair<string_table_str, pair<llvm_value_ptr, type_ref_ptr> > >	_added_vars;
 		variable_context( string_alloca_type_map& vars ) : _variables( vars ) {}
 		~variable_context()
 		{
 			for_each( _variables.begin(), _variables.end(), [this]
-			( const pair<string_table_str, pair<llvm_alloca_ptr, type_ref_ptr> >& var )
+			( const pair<string_table_str, pair<llvm_value_ptr, type_ref_ptr> >& var )
 			{
 				if ( var.second.first )
 					_variables[var.first] = var.second;
@@ -110,7 +110,7 @@ namespace cclj
 		void add_variable( string_table_str name, llvm_alloca_ptr alloca, type_ref& type )
 		{
 			auto inserter = _variables.insert( make_pair( name, make_pair( alloca, &type ) ) );
-			pair<llvm_alloca_ptr, type_ref_ptr> old_value( nullptr, nullptr );
+			pair<llvm_value_ptr, type_ref_ptr> old_value( nullptr, nullptr );
 			if ( inserter.second == false )
 			{
 				old_value = inserter.first->second;

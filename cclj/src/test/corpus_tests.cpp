@@ -81,7 +81,7 @@ TEST(corpus_tests, ##name )									\
 	ASSERT_EQ( answer, test_result );						\
 }
 
-
+/*
 DEFINE_SIMPLE_CORPUS_TEST( basic1, 3.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic2, 8.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic3, 20.0f );
@@ -89,6 +89,8 @@ DEFINE_SIMPLE_CORPUS_TEST( basic4, -100.0f );
 DEFINE_SIMPLE_CORPUS_TEST( basic_struct, 15.0f );
 DEFINE_SIMPLE_CORPUS_TEST( for_loop, 125.0f );
 DEFINE_SIMPLE_CORPUS_TEST( numeric_cast, 30.0f );
+*/
+DEFINE_SIMPLE_CORPUS_TEST( dynamic_mem, 45.0f );
 
 
 

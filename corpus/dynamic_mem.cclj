@@ -2,24 +2,23 @@
   (let [retval 0|f32]
     (for [idx 0|u32]
 		 (< idx len)
-		 [(set idx (+ idx 1))]
-	  (+ retval (get data idx)))
+		 [(set idx (+ idx 1|u32))]
+	  (set retval (+ retval (get data idx))))
 	retval))
-	
 
 
 (defn inc-array|ptr[f32] [ len|u32 ]
   (let [new-data (ptr-cast|ptr[f32](malloc rt (* len 4|u32) 4|u8 ))]
     (for [idx 0|u32]
 	     (< idx len)
-		 [(set idx (+ idx 1))]
-	  (set new-data idx retval))
+		 [(set idx (+ idx 1|u32))]
+	  (set new-data idx (numeric-cast|f32 idx)))
 	new-data))
 	
 	
 
 (let [array-len 10|u32
 	  data-buffer (inc-array array-len)
-      result (sum data-buf array-len)
-	  ignored (free rt (ptr-cast|ptr[unqual] data-buf))]
+      result (sum data-buffer array-len)
+	  ignored (free rt (ptr-cast|ptr[unqual] data-buffer))]
   result)

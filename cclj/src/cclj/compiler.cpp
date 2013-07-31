@@ -416,6 +416,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 		shared_ptr<FunctionPassManager> _fpm;
 		vector<global_variable_entry>   _global_variables;
 		vector<global_function_entry>	_global_functions;
+		compiler_impl*					_this_ptr;
 
 		compiler_impl()
 			: _allocator( allocator::create_checking_allocator() )
@@ -434,10 +435,15 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				_top_level_symbols->insert( make_pair( &fn_type, &comp_node ) );
 			};
 			binary_low_level_ast_node::register_binary_functions( reg_fn, _type_library, _str_table, _ast_allocator );
-			type_ref& runtime_type = _type_library->get_type_ref( "cclj-runtime" );
+			type_ref& base_type = _type_library->get_type_ref( base_numeric_types::i32 );
+			type_ref& ptr_lvl1 = _type_library->get_ptr_type( base_type );
+			type_ref& runtime_type = ptr_lvl1;
 			_global_variables.push_back( global_variable_entry() );
 			_global_variables.back()._name = _str_table->register_str( "rt" );
-			_global_variables.back()._value = this;
+			_this_ptr = this;
+			//Our llvm bindings always dereferences variables, so in this case we need a ptr to ourselves
+			//instead of ourselves.  It will be this way until we update the variable system.
+			_global_variables.back()._value = &_this_ptr;
 			_global_variables.back()._type = &runtime_type;
 
 			{
@@ -453,8 +459,8 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			}
 			{
 				type_ref& ret_type = _type_library->get_type_ref( base_numeric_types::u32 );
-				type_ref* arg_ptr_type = &_type_library->get_unqual_ptr_type();
-				type_ref& fn_type = _type_library->get_type_ref( "free", type_ref_ptr_buffer( &arg_ptr_type, 1 ) );
+				type_ref* arg_types[2] = { &runtime_type, &_type_library->get_unqual_ptr_type() };
+				type_ref& fn_type = _type_library->get_type_ref( "free", type_ref_ptr_buffer( arg_types, 2 ) );
 				void* fn_ptr = &compiler_impl::rt_free;
 				_global_functions.push_back( global_function_entry( fn_ptr, ret_type, fn_type ) );
 			}
@@ -567,7 +573,10 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 														, GlobalValue::LinkageTypes::CommonLinkage
 														, NULL
 														, entry._name.c_str() );
+				comp_context._module.getGlobalList().push_back( entry._variable );
 				_exec_engine->addGlobalMapping( entry._variable, entry._value );
+				
+				comp_context._variables.insert( make_pair( entry._name, make_pair( entry._variable, entry._type ) ) );
 			} );
 
 			

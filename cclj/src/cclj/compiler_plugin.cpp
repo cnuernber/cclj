@@ -45,28 +45,51 @@ compiler_context::compiler_context( type_library_ptr tl, type_ast_node_map_ptr _
 {
 }
 
+namespace
+{
+
+	llvm_type_ptr do_get_type_ref( compiler_context& context, type_ref& type )
+	{
+		if ( context._type_library->is_pointer_type( type ) )
+		{
+
+			Type* llvm_ptr = context.type_ref_type( context._type_library->deref_ptr_type( type ) );
+			return PointerType::get( llvm_ptr, 0 );
+		}
+		else
+		{
+			if ( type._name == context._type_library->string_table()->register_str( "unqual" ) )
+			{
+				Type* intType = IntegerType::getInt32Ty( getGlobalContext() );
+				return PointerType::getUnqual( intType );
+			}
+			//else we inserted something, so we need to ensure it is valid.
+			base_numeric_types::_enum val = context._type_library->to_base_numeric_type( type );
+			llvm_type_ptr base_type = nullptr;
+			switch( val )
+			{
+		#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )					\
+			case base_numeric_types::name: base_type					\
+				= llvm_helper::llvm_constant_map<base_numeric_types::name>::type(); break;
+				CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+		#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+			default:
+				throw runtime_error( "unable to find type" );
+			}
+			if ( base_type == nullptr ) throw runtime_error( "unable to find type" );
+			return base_type;
+		}
+	}
+
+}
 
 llvm_type_ptr compiler_context::type_ref_type( type_ref& type )
 {
 	pair<type_llvm_type_map::iterator,bool> inserter = _type_map.insert( make_pair( &type, nullptr ) );
 	if ( inserter.second == false )
 		return inserter.first->second;
-	//else we inserted something, so we need to ensure it is valid.
-	base_numeric_types::_enum val = _type_library->to_base_numeric_type( type );
-	llvm_type_ptr base_type = nullptr;
-	switch( val )
-	{
-#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )					\
-	case base_numeric_types::name: base_type					\
-		= llvm_helper::llvm_constant_map<base_numeric_types::name>::type(); break;
-		CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
-#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
-	default:
-		throw runtime_error( "unable to find type" );
-	}
-	if ( base_type == nullptr ) throw runtime_error( "unable to find type" );
-	inserter.first->second = base_type;
-	return base_type;
+	inserter.first->second = do_get_type_ref( *this, type );
+	return inserter.first->second;
 }
 
 
