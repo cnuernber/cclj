@@ -24,6 +24,7 @@
 #include <vector>
 #include <regex>
 #include <cstdlib>
+#include <cstring>
 #include <atomic>
 
 namespace cclj

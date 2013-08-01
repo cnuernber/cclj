@@ -77,6 +77,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			case i16: case u16: return 16;
 			case i32: case u32: return 32;
 			case i64: case u64: return 64;
+			default: break;
 			}
 			throw runtime_error( "invalid value to count bits" );
 		}
@@ -167,6 +168,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 #define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name ) case base_numeric_types::name: return get_type_ref( #name );
 CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 #undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+			default: break;
 			}
 			throw runtime_error( "unrecognized base numeric type" );
 		}

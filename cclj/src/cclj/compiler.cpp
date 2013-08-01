@@ -275,11 +275,9 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			if ( current_char() == ']' )
 				return vector<type_ref_ptr>();
 
-			char test = current_char();
 			while( current_char() != ']' )
 			{
 				array_contents.push_back( parse_type() );
-				test = current_char();
 			}
 			++_cur_ptr;
 
@@ -454,14 +452,14 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 					, &_type_library->get_type_ref( base_numeric_types::u8 )
 				};
 				type_ref& fn_type = _type_library->get_type_ref( "malloc", type_ref_ptr_buffer( arg_types, 3 ) );
-				void* fn_ptr = &compiler_impl::rt_malloc;
+				void* fn_ptr = reinterpret_cast<void*>( &compiler_impl::rt_malloc );
 				_global_functions.push_back( global_function_entry( fn_ptr, ret_type, fn_type ) );
 			}
 			{
 				type_ref& ret_type = _type_library->get_type_ref( base_numeric_types::u32 );
 				type_ref* arg_types[2] = { &runtime_type, &_type_library->get_unqual_ptr_type() };
 				type_ref& fn_type = _type_library->get_type_ref( "free", type_ref_ptr_buffer( arg_types, 2 ) );
-				void* fn_ptr = &compiler_impl::rt_free;
+				void* fn_ptr = reinterpret_cast<void*>( &compiler_impl::rt_free );
 				_global_functions.push_back( global_function_entry( fn_ptr, ret_type, fn_type ) );
 			}
 		}

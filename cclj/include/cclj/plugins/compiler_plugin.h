@@ -44,7 +44,9 @@ namespace cclj
 	typedef unordered_map<string_table_str, type_ref_ptr> symbol_type_ref_map;
 	typedef unordered_map<type_ref_ptr, llvm_type_ptr> type_llvm_type_map;
 	//tool used during type checking.
+#ifdef _WIN32
 #pragma warning(disable:4512)
+#endif
 	struct symbol_type_context : noncopyable
 	{
 		symbol_type_ref_map&							_context_symbol_types;

@@ -61,7 +61,7 @@ namespace  {
 				return object_ptr_buffer();
 			object_ptr* new_data = reinterpret_cast<object_ptr*>( 
 				_allocator->allocate( size * sizeof( object_ptr* ), sizeof(void*), CCLJ_IMMEDIATE_FILE_INFO() ) );
-			memset( new_data, 0, size * sizeof( object_ptr* ) );
+			std::memset( new_data, 0, size * sizeof( object_ptr* ) );
 			_buffer_allocs.push_back( reinterpret_cast<uint8_t*>( new_data ) );
 			return object_ptr_buffer( new_data, size );
 		}

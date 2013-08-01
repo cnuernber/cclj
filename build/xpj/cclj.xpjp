@@ -69,6 +69,10 @@ sub artifact_name
 		  <enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
 		</if>
 	  </configuration>
+	  <if cond="lc($xpj->{platform}) =~ /win/">
+		<else/>
+		<cflags>-std=c++11 -D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1</cflags>
+	  </if>
 	</template>
 	
 	<template name="static_lib_t">
@@ -109,44 +113,77 @@ sub artifact_name
 	</template>
 	
 	<template name="cclj_link">
-	  <configuration name="Release">
-		<search type="linker">
-			../../../llvmbuild/lib/Release
-		</search>
-	  </configuration>
-	  <configuration name="Debug">
-		<search type="linker">
-			../../../llvmbuild/lib/Debug
-		</search>
-	  </configuration>
-	  <libraries>
-		LLVMJIT.lib
-		LLVMInterpreter.lib
-		LLVMX86CodeGen.lib
-		LLVMX86AsmParser.lib
-		LLVMX86Disassembler.lib
-		LLVMRuntimeDyld.lib
-		LLVMExecutionEngine.lib
-		LLVMAsmPrinter.lib
-		LLVMSelectionDAG.lib
-		LLVMX86Desc.lib
-		LLVMMCParser.lib
-		LLVMCodeGen.lib
-		LLVMX86AsmPrinter.lib
-		LLVMX86Info.lib
-		LLVMObjCARCOpts.lib
-		LLVMScalarOpts.lib
-		LLVMX86Utils.lib
-		LLVMInstCombine.lib
-		LLVMTransformUtils.lib
-		LLVMipa.lib
-		LLVMAnalysis.lib
-		LLVMTarget.lib
-		LLVMCore.lib
-		LLVMMC.lib
-		LLVMObject.lib
-		LLVMSupport.lib
-	  </libraries>
+
+
+	   <configuration name="Release">
+		 <search type="linker">
+		   ../../../llvmbuild/lib/Release
+		 </search>
+	   </configuration>
+	   <configuration name="Debug">
+		 <search type="linker">
+		   ../../../llvmbuild/lib/Debug
+		 </search>
+	   </configuration>
+	 <if cond="(lc($xpj->{platform}) =~ /win/)">
+	   <libraries>
+		 LLVMJIT.lib
+		 LLVMInterpreter.lib
+		 LLVMX86CodeGen.lib
+		 LLVMX86AsmParser.lib
+		 LLVMX86Disassembler.lib
+		 LLVMRuntimeDyld.lib
+		 LLVMExecutionEngine.lib
+		 LLVMAsmPrinter.lib
+		 LLVMSelectionDAG.lib
+		 LLVMX86Desc.lib
+		 LLVMMCParser.lib
+		 LLVMCodeGen.lib
+		 LLVMX86AsmPrinter.lib
+		 LLVMX86Info.lib
+		 LLVMObjCARCOpts.lib
+		 LLVMScalarOpts.lib
+		 LLVMX86Utils.lib
+		 LLVMInstCombine.lib
+		 LLVMTransformUtils.lib
+		 LLVMipa.lib
+		 LLVMAnalysis.lib
+		 LLVMTarget.lib
+		 LLVMCore.lib
+		 LLVMMC.lib
+		 LLVMObject.lib
+		 LLVMSupport.lib
+	   </libraries>
+	   <else/>
+	   <libraries>
+		 LLVMJIT.a
+		 LLVMInterpreter.a
+		 LLVMX86CodeGen.a
+		 LLVMX86AsmParser.a
+		 LLVMX86Disassembler.a
+		 LLVMRuntimeDyld.a
+		 LLVMExecutionEngine.a
+		 LLVMAsmPrinter.a
+		 LLVMSelectionDAG.a
+		 LLVMX86Desc.a
+		 LLVMMCParser.a
+		 LLVMCodeGen.a
+		 LLVMX86AsmPrinter.a
+		 LLVMX86Info.a
+		 LLVMObjCARCOpts.a
+		 LLVMScalarOpts.a
+		 LLVMX86Utils.a
+		 LLVMInstCombine.a
+		 LLVMTransformUtils.a
+		 LLVMipa.a
+		 LLVMAnalysis.a
+		 LLVMTarget.a
+		 LLVMCore.a
+		 LLVMMC.a
+		 LLVMObject.a
+		 LLVMSupport.a
+	   </libraries>
+	 </if>
 	</template>
 	
 	<project name="cclj">

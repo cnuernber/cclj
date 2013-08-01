@@ -161,13 +161,13 @@ namespace
 			{
 			case sym_res_types::gep: return v( *reinterpret_cast<uint32_list*>( data ) );
 			case sym_res_types::accessor: return v( *reinterpret_cast<value_accessor_ptr*>( data ) );
+			default: break;
 			}
 			throw runtime_error( "failed to visit type" );
 		}
 	};
 
 	typedef variant_traits_impl<sym_res_var_traits> sym_res_traits_type;
-
 
 
 	typedef variant<sym_res_traits_type> sym_res_var;
@@ -177,8 +177,9 @@ namespace
 	struct symbol_resolution_context_impl : public symbol_resolution_context
 	{
 		sym_res_var_list _data;
-		type_ref_ptr	 _final_type;
 		string_table_str _initial_symbol;
+		type_ref_ptr	 _final_type;
+		
 
 		symbol_resolution_context_impl( string_table_str sym, type_ref& initial_type )
 			: _initial_symbol( sym )

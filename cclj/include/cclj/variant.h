@@ -189,14 +189,14 @@ namespace cclj
 		template<typename trettype, typename tvisitor>
 		static trettype visit( char* data, typename tbasetype::id_type type, tvisitor visitor )
 		{
-			return do_visit<trettype>( data, type, visitor );
+			return tbasetype::template do_visit<trettype>( data, type, visitor );
 		}
 
 		//so base classes only have to define one visit type.
 		template<typename trettype, typename tvisitor>
 		static trettype visit( const char* data, typename tbasetype::id_type type, tvisitor visitor )
 		{
-			return do_visit<trettype>( const_cast<char*>(data), type, const_visitor<trettype,tvisitor>(visitor) );
+			return tbasetype::template do_visit<trettype>( const_cast<char*>(data), type, const_visitor<trettype,tvisitor>(visitor) );
 		}
 	};
 }

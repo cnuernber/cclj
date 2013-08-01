@@ -350,6 +350,7 @@ namespace
 					quote_array( context, arg_array );
 				}
 				break;
+			default: break; //leave item as is
 			}
 		}
 
@@ -497,6 +498,7 @@ namespace
 								, _constant._type );
 				CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 #undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+			default: break;
 			}
 			throw runtime_error( "bad numeric constant" );
 		}

@@ -248,17 +248,16 @@ sub eval_xpj_element {
 	  foreach my $ifchild (@$ifChildren) {
 		  if ( $ifchild->nodeType == XML_ELEMENT_NODE ) {
 			  my $ifChildName = $ifchild->nodeName;
+			  
 			  if ( $ifChildName eq "elseif" ) {
 				  if ( !$result ) {
 					  $condition = $ifchild->getAttribute( "cond" );
-					  my $result = eval( $condition );
+					  $result = eval( $condition );
 					  die "Execution of $condition failed: $@" if $@;
 				  }
 			  }
 			  elsif( $ifChildName eq "else" ) {
-				  if ( !$result ) {
-					  eval_xpj_copy_element( $ifchild, $dest_elem );
-				  }
+				  $result = !$result
 			  }
 			  else {
 				  if ( $result ) {

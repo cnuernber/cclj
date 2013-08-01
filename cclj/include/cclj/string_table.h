@@ -82,7 +82,7 @@ namespace std
 {
 	template<> struct hash<cclj::string_table_str> 
 	{
-		size_t operator()( const cclj::string_table_str& str ) 
+		size_t operator()( const cclj::string_table_str& str ) const
 		{ 
 			const char* strData = str;
 			return hash<size_t>()( reinterpret_cast<size_t>( strData ) );

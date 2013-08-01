@@ -98,21 +98,21 @@ namespace cclj { namespace lisp {
 			static obj_type* cast( object* obj )
 			{
 				if ( obj == nullptr ) return nullptr;
-				if ( obj->type() == obj_type::item_type ) return static_cast<obj_type*>( obj );
+				if ( (int)obj->type() == (int)obj_type::item_type ) return static_cast<obj_type*>( obj );
 				return nullptr;
 			}
 
 			template<typename obj_type>
 			static obj_type& cast( object& obj )
 			{
-				if ( obj.type() == obj_type::item_type ) return static_cast<obj_type&>( obj );
+				if ( (int)obj.type() == (int)obj_type::item_type ) return static_cast<obj_type&>( obj );
 				throw runtime_error( "invalid cast" );
 			}
 
 			template<typename obj_type>
 			static obj_type& cast_ref( object* obj )
 			{
-				if ( obj->type() == obj_type::item_type ) return *static_cast<obj_type*>( obj );
+				if ( (int)obj->type() == (int)obj_type::item_type ) return *static_cast<obj_type*>( obj );
 				throw runtime_error( "invalid cast" );
 			}
 		};
