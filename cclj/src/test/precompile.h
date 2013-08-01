@@ -10,9 +10,7 @@
 
 #include "gtest/gtest.h"
 #include "cclj/cclj.h"
-#include <filesystem>
 #include <fstream>
 
 using std::ifstream;
-using namespace std::tr2::sys;
 #endif

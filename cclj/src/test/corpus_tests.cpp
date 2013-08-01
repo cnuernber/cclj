@@ -8,8 +8,10 @@
 #include "precompile.h"
 #include "cclj/cclj.h"
 #include "cclj/compiler.h"
+#ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#endif
 
 using namespace cclj;
 
@@ -25,27 +27,56 @@ string executable_path()
 #endif
 }
 
-path corpus_dir()
+bool is_directory(const string& str )
 {
-	path exec_path( executable_path() );
-	path dir = exec_path.parent_path();
+#ifdef _WIN32
+	DWORD atts = GetFileAttributesA( str.c_str() );
+	return atts != INVALID_FILE_ATTRIBUTES && ( atts &  FILE_ATTRIBUTE_DIRECTORY );
+#else
+#endif
+}
+
+string parent_path( const string& str )
+{
+	if ( str.size() < 3 ) return "";
+	size_t pos = str.find_last_of( "\\/" );
+	if ( pos != string::npos )
+		return str.substr(0, pos );
+	return "";
+}
+
+string append_path( const string& base, const string& append )
+{
+	string retval = base;
+	if ( retval.size() == 0 ) return retval;
+
+	if ( retval.find_last_of( "\\/" ) != retval.size() - 1 )
+		retval.append( "/" );
+
+	retval.append( append );
+
+	return retval;
+}
+
+string corpus_dir()
+{
+	string exec_path( executable_path() );
+	string dir = parent_path( exec_path );
 	while( !dir.empty() )
 	{
-		path test = dir;
-		test /= "corpus";
+		string test = dir;
+		test = append_path( test, "corpus" );
 		if ( is_directory( test ) )
 			return test;
-		dir = dir.parent_path();
+		dir = parent_path( dir );
 	}
 	throw runtime_error( "Failed to find test dir" );
 }
 
-path corpus_file( const char* fname )
+string corpus_file( const char* fname )
 {
 	auto test_file = corpus_dir();
-	test_file /= fname;
-	if ( !is_regular( test_file ) )
-		throw runtime_error( "failed to find test file" );
+	test_file = append_path( test_file, fname );
 	return test_file;
 }
 

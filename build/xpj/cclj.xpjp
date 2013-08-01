@@ -218,6 +218,7 @@ sub artifact_name
 			</preprocessor>
 			<files name="include" root="../../cclj/include/cclj/">
 				*
+				plugins/*
 			</files>
 			<files name="src" root="../../cclj/src/cclj/">
 				*
