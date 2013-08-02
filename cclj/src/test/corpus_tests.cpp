@@ -16,6 +16,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#include "pcre.h"
 
 
 using namespace cclj;
@@ -79,7 +80,6 @@ string corpus_dir()
 	string dir = parent_path( exec_path );
 	while( !dir.empty() )
 	{
-		cout << "dir :" << dir << endl;
 		string test = dir;
 		test = append_path( test, "corpus" );
 		if ( is_directory( test ) )
@@ -100,7 +100,6 @@ string corpus_file_text( const char* fname )
 {
 	string nameExt( fname );
 	nameExt.append( ".cclj" );
-	cout << "opening file: " << nameExt << endl;
 	auto filename = corpus_file( nameExt.c_str() );
 	ifstream input;
 	input.open( filename, std::ios_base::in );
@@ -143,13 +142,34 @@ TEST(corpus_tests, dynamic_mem ) { ASSERT_TRUE( run_corpus_test( "dynamic_mem", 
 
 TEST(regex_tests, symbol_regex)
 {
-	regex symbol_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*", std::regex_constants::basic );
-	
-	smatch match;
-	regex_search( string( "+51" ), match, symbol_regex );
-	regex_search( string( "-51" ), match, symbol_regex );
-	regex_search( string( "+51.54" ), match, symbol_regex );
-	regex_search( string( "-51.54" ), match, symbol_regex );
-	regex_search( string( "51e10" ), match, symbol_regex );
-	regex_search( string( "51.54e10" ), match, symbol_regex );
+	const char* errorMsg;
+	int errOffset;
+	pcre *re = pcre_compile( "^[\\+-]?\\d+\\.?\\d*e?\\d*", 0, &errorMsg, &errOffset, NULL );
+	ASSERT_TRUE( re != NULL );
+
+	const char* testStrings[] = {
+		"+51",
+		"-51",
+		"+51.54",
+		"-51.54",
+		"51e10",
+		"51.54e10",
+	};
+	for ( int idx = 0; idx < 6; ++idx )
+	{
+		int rc = pcre_exec( re, NULL, testStrings[idx], strlen(testStrings[idx]), 0, 0, NULL, 0 );
+		ASSERT_TRUE( rc >= 0 );
+	}
+	const char* testNegativeStrings[] = {
+		"()",
+		"one32",
+	};
+	for ( int idx = 0; idx < 2; ++idx )
+	{
+		int rc = pcre_exec( re, NULL, testNegativeStrings[idx], strlen(testNegativeStrings[idx]), 0, 0, NULL, 0 );
+		ASSERT_TRUE( rc < 0 );
+	}
+
+	pcre_free( re );
+
 }

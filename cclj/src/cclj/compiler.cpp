@@ -8,6 +8,10 @@
 #include "precompile.h"
 #include "cclj/compiler.h"
 #include "cclj/plugins/base_plugins.h"
+extern "C"
+{
+#include "pcre.h"
+}
 #ifdef _WIN32
 #pragma warning(push,2)
 #endif
@@ -55,6 +59,30 @@ namespace {
 	template<> struct str_to_num<float> { static float parse( const string& val ) { return static_cast<float>( std::stof( val ) ); } };
 	template<> struct str_to_num<double> { static double parse( const string& val ) { return static_cast<double>( std::stod( val ) ); } };
 
+	struct pcre_simple_regex
+	{
+		pcre* _re;
+		const char* _errorMsg;
+		int _errOffset;
+		pcre_simple_regex( const char* pattern )
+		{
+			_re = pcre_compile( pattern, 0, &_errorMsg, &_errOffset, nullptr );
+			if (!_re )
+				throw runtime_error( "invalid regex" );
+		}
+		~pcre_simple_regex()
+		{
+			pcre_free( _re );
+		}
+
+		bool match( const char* str )
+		{
+			if ( str == nullptr ) return false;
+			int rc = pcre_exec( _re, nullptr, str, strlen(str), 0, 0, nullptr, 0 );
+			return rc >= 0;
+		}
+
+	};
 
 	struct reader
 	{
@@ -65,7 +93,7 @@ namespace {
 		string				_temp_str;
 		size_t				_cur_ptr;
 		size_t				_end_ptr;
-		regex				_number_regex;
+		pcre_simple_regex	_number_regex;
 
 		reader( string_table_ptr st, type_library_ptr tl, factory_ptr f, const string& data )
 			: _str_table( st )
@@ -168,11 +196,10 @@ namespace {
 		object_ptr parse_number_or_symbol(size_t token_start, size_t token_end)
 		{
 			substr( token_start, token_end );
-			smatch m;
-			regex_search( _temp_str, m, _number_regex );	
+			bool is_number = _number_regex.match( _temp_str.c_str() );
 
 			//Parse each token.
-			if ( m.empty() == false )
+			if ( is_number )
 			{
 				std::string number_string( _temp_str );
 				constant* new_constant = _factory->create_constant();

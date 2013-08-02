@@ -105,7 +105,7 @@ re = pcre_compile(
 
 /* Compilation failed: print the error message and exit */
 
-if (re == NULL)
+if (re == NULL)	
   {
   printf("PCRE compilation failed at offset %d: %s\n", erroffset, error);
   return 1;

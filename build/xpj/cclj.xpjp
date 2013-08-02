@@ -172,9 +172,6 @@ sub llvm_lib_name
 	   </apply-template>
 	 </if>
 	</template>
-
-	<project name="pcre">
-	</project>
 	
 	<project name="cclj">
 		<projdir>../{{["$xpj->{platform}"]}}</projdir>
@@ -183,6 +180,40 @@ sub llvm_lib_name
 		<libdir>../lib/{{[$xpj->{platform}]}}</libdir>
 		<bindir>../bin/{{[$xpj->{platform}]}}</bindir>
 		<builddir>../{{["$xpj->{platform}"]}}/build</builddir>
+		<target name="pcre">
+			<apply-template name="static_lib_t"/>
+			<search type="header">
+				../../pcre
+			</search>
+			<preprocessor>
+				HAVE_CONFIG_H
+				PCRE_STATIC
+			</preprocessor>
+			<files name="src" root="../../pcre">
+				*.h
+				pcre_byte_order.c
+				pcre_chartables.c
+				pcre_compile.c
+				pcre_config.c
+				pcre_dfa_exec.c
+				pcre_exec.c
+				pcre_fullinfo.c
+				pcre_get.c
+				pcre_globals.c
+				pcre_jit_compile.c
+				pcre_maketables.c
+				pcre_newline.c
+				pcre_ord2utf8.c
+				pcre_refcount.c
+				pcre_string_utils.c
+				pcre_study.c
+				pcre_tables.c
+				pcre_ucd.c
+				pcre_valid_utf8.c
+				pcre_version.c
+				pcre_xclass.c
+			</files>
+		</target>
 		<target name="gtest">
 			<apply-template name="static_lib_t"/>
 			<apply-template name="gtest_headers"/>
@@ -202,9 +233,11 @@ sub llvm_lib_name
 			<search type="header">
 				../../../llvm-3.3.src/include/
 				../../../llvmbuild/include/
+				../../pcre
 			</search>
 			<preprocessor>
 				_SCL_SECURE_NO_WARNINGS
+				PCRE_STATIC
 			</preprocessor>
 			<files name="include" root="../../cclj/include/cclj/">
 				*
@@ -220,9 +253,16 @@ sub llvm_lib_name
 			<apply-template name="gtest_headers"/>
 			<apply-template name="cclj_headers"/>
 			<apply-template name="cclj_link"/>
+			<search type="header">
+				../../pcre
+			</search>
+			<preprocessor>
+				PCRE_STATIC
+			</preprocessor>
 			<depends>
 				gtest
 				cclj
+				pcre
 			</depends>
 			<if cond="!(lc($xpj->{platform}) =~ /win/)">
 			  <libraries>
