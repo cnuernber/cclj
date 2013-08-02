@@ -78,7 +78,7 @@ sub llvm_lib_name
 	  <if cond="lc($xpj->{platform}) =~ /win/">
 		<else/>
 		<cflags>-std=c++11 -D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1 -stdlib=libc++ -DGTEST_HAS_TR1_TUPLE=0</cflags>
-		<lflags>-lstdc++</lflags>
+		<lflags>-lc++</lflags>
 	  </if>
 	</template>
 	

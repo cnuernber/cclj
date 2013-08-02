@@ -100,6 +100,7 @@ string corpus_file_text( const char* fname )
 {
 	string nameExt( fname );
 	nameExt.append( ".cclj" );
+	cout << "opening file: " << nameExt << endl;
 	auto filename = corpus_file( nameExt.c_str() );
 	ifstream input;
 	input.open( filename, std::ios_base::in );
@@ -142,8 +143,8 @@ TEST(corpus_tests, dynamic_mem ) { ASSERT_TRUE( run_corpus_test( "dynamic_mem", 
 
 TEST(regex_tests, symbol_regex)
 {
-	//regex symbol_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*", std::regex_constants::basic );
-	regex symbol_regex( "\\d+", std::regex_constants::basic );
+	regex symbol_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*", std::regex_constants::basic );
+	
 	smatch match;
 	regex_search( string( "+51" ), match, symbol_regex );
 	regex_search( string( "-51" ), match, symbol_regex );
