@@ -133,7 +133,11 @@ sub process_target_config_child {
 			}
 		}
 	}
-	elsif( $nodeName eq "cflags" || $nodeName eq "lflags" || $nodeName eq "preprocessor" || $nodeName eq "libraries" ) {
+	elsif( $nodeName eq "cflags" 
+		   || $nodeName eq "lflags" 
+		   || $nodeName eq "preprocessor" 
+		   || $nodeName eq "libraries" 
+		   || $nodeName eq "cppflags" ) {
 		my $resultArray = add_array_node( $parent, $nodeName );
 		my @lines = split( /\n/, elemText( $elem ) );
 		foreach my $line (@lines ) {

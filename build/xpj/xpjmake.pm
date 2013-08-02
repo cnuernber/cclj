@@ -51,40 +51,48 @@ sub add_project_config
 	$projectConfigs->{$config} = $existing;
 }
 
-my $compilation_maps = {
+my $compilation_maps_cflags = {
 	"warning-level" => { "0" => "-w", "1" => "", "2" => "", "3" => "", "4" => "-Wall", "5" => "-Wextra" },
 	"optimization" => { "disabled" => "-O0", "max-speed" => "-O3", "min-space" => "-Os", full=>"-O3" },
 	"generate-debug-information" => { "false" => "", "true" => "-g" },
 	"intrinsic-functions" => { "false" => "-fno-builtin", "true"=>"" },
-	"enable-rtti" => { "false" => "-fno-rtti", "true"=>"-frtti" },
-	"enable-exceptions" => { "false"=>"-fno-exceptions", "true"=>"-fexceptions" },
 	"buffer-security-check" => { "false"=>"-fno-stack-protector", "true"=>"-fstack-protector" },
 	"struct-member-alignment" => { "default"=>"", "1"=>"-fpack-struct=1", "2"=>"-fpack-struct=2"
 									   , "4"=>"-fpack-struct=4", "8"=>"-fpack-struct=8", "16"=>"-fpack-struct=16" },
 };
 
+my $compilation_maps_cppflags = {
+	"enable-exceptions" => { "false"=>"-fno-exceptions", "true"=>"-fexceptions" },
+	"enable-rtti" => { "false" => "-fno-rtti", "true"=>"-frtti" },
+};
+
 sub safe_lookup_and_append
 {
-	my ($target, $config, $varname, $file, $propname) = @_;
+	my ($target, $config, $varname, $file, $propname, $mapvar) = @_;
 	my $key = $om->get_target_property( $target, $config, $propname );
-	my $map = $compilation_maps->{$propname};
+	my $map = $mapvar->{$propname};
 	die "unable to find mapping for property $propname" if (!$map);
 	
 	
 	my $result = $map->{$key};
-	if ( !$result && !(exists $map->{$key} ) ) {
-		die "key $key doesn't exist in map $propname";
-	}
 	if ( $result ) {
 		print $file "$varname += $result\n";
 	}
 }
 
-sub translate_xpj_compilation_properties
+sub translate_xpj_compilation_properties_cflags
 {
 	my ($target, $config, $varname, $file) = @_;
-	foreach my $compKey (keys %$compilation_maps ) {
-		safe_lookup_and_append( $target, $config, $varname, $file, $compKey );
+	foreach my $compKey (keys %$compilation_maps_cflags ) {
+		safe_lookup_and_append( $target, $config, $varname, $file, $compKey, $compilation_maps_cflags  );
+	}
+}
+
+sub translate_xpj_compilation_properties_cppflags
+{
+	my ($target, $config, $varname, $file) = @_;
+	foreach my $compKey (keys %$compilation_maps_cppflags ) {
+		safe_lookup_and_append( $target, $config, $varname, $file, $compKey, $compilation_maps_cppflags );
 	}
 }
 
@@ -101,10 +109,10 @@ sub process
 		print $projfile "RM         = rm -rf\n";
 		print $projfile "MKDIR      = mkdir -p\n";
 		print $projfile "ECHO       = echo\n";
-		print $projfile "CCLD       = clang++\n";
+		print $projfile "CCLD       = gcc\n";
 		print $projfile "RANLIB     = ranlib\n";
-		print $projfile "CC         = clang\n";
-		print $projfile "CXX        = clang++\n";
+		print $projfile "CC         = gcc\n";
+		print $projfile "CXX        = g++\n";
 
 		print $projfile "\n-include Makedefs.$projname\n\n";
 		my $targets = $project->{targets};
@@ -172,9 +180,16 @@ sub process
 				my $out_dir = $om->get_target_out_dir( $target, $config );
 				my $cflagsVar = get_makefile_variable_name( $targetName, $config, "cflags" );
 				#output the nice-named build system cflags first
-				my $cflags = translate_xpj_compilation_properties( $target, $config, $cflagsVar, $targetMakefile );
+				my $cflags = translate_xpj_compilation_properties_cflags( $target, $config
+																   , $cflagsVar, $targetMakefile );
 				my $cflags = $cflags . build_makefile_variable_list_of_lists( 
 					$om->get_target_and_config_nodes_by_type( $target, $config, "cflags" ), $cflagsVar );
+
+				my $cppflagsVar = get_makefile_variable_name( $targetName, $config, "cppflags" );
+				my $cppflags = translate_xpj_compilation_properties_cppflags( $target, $config
+																	 , $cppflagsVar, $targetMakefile );
+				my $cppflags = $cppflags . build_makefile_variable_list_of_lists( 
+					$om->get_target_and_config_nodes_by_type( $target, $config, "cppflags" ), $cppflagsVar );
 				my $lflagsVar = get_makefile_variable_name( $targetName, $config, "lflags" );
 				my $lflags = build_makefile_variable_list_of_lists( 
 					$om->get_target_and_config_nodes_by_type( $target, $config, "lflags" ), $lflagsVar );
@@ -204,6 +219,7 @@ sub process
 				print $targetMakefile $linkPath;
 				print $targetMakefile $libraries;
 				print $targetMakefile $cflags;
+				print $targetMakefile $cppflags;
 				print $targetMakefile $lflags;
 				print $targetMakefile $preprocessor;
 				print $targetMakefile "$cflagsVar += \$(addprefix -D, \$($preprocessorVar))\n" if length($preprocessor);
@@ -230,13 +246,18 @@ sub process
 					my $header = $precompiledHeader->{header};
 					my($filename, $directories, $suffix) = fileparse($header, qr/\.[^.]*/);
 					my $dependsFile = "$builddir/$filename.d";
+					my $compiler = "CXX";
+					my $compileFlags = "\$($cflagsVar)";
+					if ( $compiler == "CXX" ) {
+						$compileFlags = $compileFlags . " \$($cppflagsVar)";
+					}
 					
 					print $targetMakefile "-include $dependsFile\n";
 					print $targetMakefile "\$($precompiledHeaderVar): $header\n";
 					print $targetMakefile "\t\$(MKDIR) $builddir\n";
 					print $targetMakefile "\tcp $header $builddir/$filename\n";
 					print $targetMakefile "\tchmod a+rw $builddir/$filename\n";
-					print $targetMakefile "\t\$(CXX) \$($cflagsVar) -MMD -MP -MF $dependsFile -x c++-header -c $header -o \$($precompiledHeaderVar)\n";
+					print $targetMakefile "\t\$($compiler) $compileFlags -MMD -MP -MF $dependsFile -x c++-header -c $header -o \$($precompiledHeaderVar)\n";
 				}
 
 				foreach my $compile_varname (keys %$compileGroups ) {
@@ -245,6 +266,11 @@ sub process
 					my $compiler = $compileGroup->{compiler};
 					my $extension = $compileGroup->{extension};
 					my $objs_varname = $compile_varname . "_o";
+
+					my $compileFlags = "\$($cflagsVar)";
+					if ( $compiler eq "CXX" ) {
+						$compileFlags = $compileFlags . " \$($cppflagsVar)";
+					}
 					if ( length( $allobjs ) ) { $allobjs = $allobjs . " "; }
 					$allobjs = $allobjs . "\$($objs_varname)";
 					#create objects variable for this compile group
@@ -256,7 +282,7 @@ sub process
 \$($objs_varname): $builddir/%.o: \$($precompiledHeaderVar)
 	\@\$(ECHO) $targetName: compiling Debug \$(filter %\$*,\$($compile_varname))...
 	\@\$(MKDIR) \$(dir \$(\@))
-	\$($compiler) \$($cflagsVar) $precompiledHeaderCflag -MMD -MP -MF \$(subst .$extension.o,.$extension.d,\$\@) -c \$(filter %\$*,\$($compile_varname)) -o \$\@
+	\$($compiler) $compileFlags $precompiledHeaderCflag -MMD -MP -MF \$(subst .$extension.o,.$extension.d,\$\@) -c \$(filter %\$*,\$($compile_varname)) -o \$\@
 END
 
 				}

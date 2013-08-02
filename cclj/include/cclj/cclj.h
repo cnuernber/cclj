@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <atomic>
+#include <stdexcept>
 
 namespace cclj
 {

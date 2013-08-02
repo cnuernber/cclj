@@ -1,25 +1,25 @@
 <?xml version="1" encoding="utf-8"?>
 <xpjp version="1.0">
   <project name="cclj">
-		<projdir>../Win32</projdir>
+		<projdir>../linux</projdir>
 
 		
-		<libdir>../lib/Win32</libdir>
-		<bindir>../bin/Win32</bindir>
-		<builddir>../Win32/build</builddir>
+		<libdir>../lib/linux</libdir>
+		<bindir>../bin/linux</bindir>
+		<builddir>../linux/build</builddir>
 		<target name="pcre">
 			<configuration name="Debug">
 		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>pcreDebug.lib</artifact-name>
+		  <artifact-name>libpcreDebug.a</artifact-name>
 		</configuration><configuration name="Release">
 		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>pcre.lib</artifact-name>
+		  <artifact-name>libpcre.a</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
-		<use-debug-libraries>false</use-debug-libraries><function-level-linking>true</function-level-linking><enable-comdat-folding>true</enable-comdat-folding><optimize-references>true</optimize-references><runtime-library>multi-threaded-DLL</runtime-library><enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
-	  </configuration>
+		
+	  </configuration><cflags>-D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1 -DGTEST_HAS_TR1_TUPLE=0</cflags><cppflags>-std=c++11</cppflags><lflags>-lstdc++</lflags>
 			<search type="header">
 				../../pcre
 			</search>
@@ -55,22 +55,20 @@
 		<target name="gtest">
 			<configuration name="Debug">
 		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>gtestDebug.lib</artifact-name>
+		  <artifact-name>libgtestDebug.a</artifact-name>
 		</configuration><configuration name="Release">
 		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>gtest.lib</artifact-name>
+		  <artifact-name>libgtest.a</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
-		<use-debug-libraries>false</use-debug-libraries><function-level-linking>true</function-level-linking><enable-comdat-folding>true</enable-comdat-folding><optimize-references>true</optimize-references><runtime-library>multi-threaded-DLL</runtime-library><enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
-	  </configuration>
+		
+	  </configuration><cflags>-D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1 -DGTEST_HAS_TR1_TUPLE=0</cflags><cppflags>-std=c++11</cppflags><lflags>-lstdc++</lflags>
 			<search type="header">
 			../../gtest
 			../../gtest/include
-		</search><preprocessor>
-			_VARIADIC_MAX=10
-		  </preprocessor>
+		</search>
 			<files name="include" root="../../gtest/include/gtest">
 			  *
 			  internal/*
@@ -84,16 +82,16 @@
 		<target name="cclj">
 			<configuration name="Debug">
 		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>ccljDebug.lib</artifact-name>
+		  <artifact-name>libccljDebug.a</artifact-name>
 		</configuration><configuration name="Release">
 		  <configuration-type>static-library</configuration-type>
-		  <artifact-name>cclj.lib</artifact-name>
+		  <artifact-name>libcclj.a</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
-		<use-debug-libraries>false</use-debug-libraries><function-level-linking>true</function-level-linking><enable-comdat-folding>true</enable-comdat-folding><optimize-references>true</optimize-references><runtime-library>multi-threaded-DLL</runtime-library><enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
-	  </configuration>
+		
+	  </configuration><cflags>-D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1 -DGTEST_HAS_TR1_TUPLE=0</cflags><cppflags>-std=c++11</cppflags><lflags>-lstdc++</lflags>
 			<search type="header">
 			../../cclj/include
 		</search>
@@ -118,22 +116,20 @@
 		<target name="cclj_tests">
 			<configuration name="Debug">
 		  <configuration-type>console-executable</configuration-type>
-		  <artifact-name>cclj_testsDebug.exe</artifact-name>
+		  <artifact-name>cclj_testsDebug</artifact-name>
 		</configuration><configuration name="Release">
 		  <configuration-type>console-executable</configuration-type>
-		  <artifact-name>cclj_tests.exe</artifact-name>
+		  <artifact-name>cclj_tests</artifact-name>
 		</configuration><configuration name="Release">
 		<optimization>max-speed</optimization>
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
-		<use-debug-libraries>false</use-debug-libraries><function-level-linking>true</function-level-linking><enable-comdat-folding>true</enable-comdat-folding><optimize-references>true</optimize-references><runtime-library>multi-threaded-DLL</runtime-library><enable-enhanced-instruction-set>streaming-SIMD-extensions-2</enable-enhanced-instruction-set>
-	  </configuration>
+		
+	  </configuration><cflags>-D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1 -DGTEST_HAS_TR1_TUPLE=0</cflags><cppflags>-std=c++11</cppflags><lflags>-lstdc++</lflags>
 			<search type="header">
 			../../gtest
 			../../gtest/include
-		</search><preprocessor>
-			_VARIADIC_MAX=10
-		  </preprocessor>
+		</search>
 			<search type="header">
 			../../cclj/include
 		</search>
@@ -146,32 +142,32 @@
 		   ../../../llvmbuild/lib/Debug
 		 </search>
 	   </configuration><libraries>
-		 LLVMJIT.lib
-		 LLVMInterpreter.lib
-		 LLVMX86CodeGen.lib
-		 LLVMX86AsmParser.lib
-		 LLVMX86Disassembler.lib
-		 LLVMRuntimeDyld.lib
-		 LLVMExecutionEngine.lib
-		 LLVMAsmPrinter.lib
-		 LLVMSelectionDAG.lib
-		 LLVMX86Desc.lib
-		 LLVMMCParser.lib
-		 LLVMCodeGen.lib
-		 LLVMX86AsmPrinter.lib
-		 LLVMX86Info.lib
-		 LLVMObjCARCOpts.lib
-		 LLVMScalarOpts.lib
-		 LLVMX86Utils.lib
-		 LLVMInstCombine.lib
-		 LLVMTransformUtils.lib
-		 LLVMipa.lib
-		 LLVMAnalysis.lib
-		 LLVMTarget.lib
-		 LLVMCore.lib
-		 LLVMMC.lib
-		 LLVMObject.lib
-		 LLVMSupport.lib
+		 LLVMJIT
+		 LLVMInterpreter
+		 LLVMX86CodeGen
+		 LLVMX86AsmParser
+		 LLVMX86Disassembler
+		 LLVMRuntimeDyld
+		 LLVMExecutionEngine
+		 LLVMAsmPrinter
+		 LLVMSelectionDAG
+		 LLVMX86Desc
+		 LLVMMCParser
+		 LLVMCodeGen
+		 LLVMX86AsmPrinter
+		 LLVMX86Info
+		 LLVMObjCARCOpts
+		 LLVMScalarOpts
+		 LLVMX86Utils
+		 LLVMInstCombine
+		 LLVMTransformUtils
+		 LLVMipa
+		 LLVMAnalysis
+		 LLVMTarget
+		 LLVMCore
+		 LLVMMC
+		 LLVMObject
+		 LLVMSupport
 	   </libraries>
 			<search type="header">
 				../../pcre
@@ -184,7 +180,11 @@
 				cclj
 				pcre
 			</depends>
-			
+			<libraries>
+				pthread
+				dl
+				m
+			  </libraries>
 			<files name="cclj_test" root="../../cclj/src/test/">
 				*
 			</files>
