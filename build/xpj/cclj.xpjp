@@ -150,8 +150,6 @@ sub llvm_lib_name
 	</template>
 	
 	<template name="cclj_link">
-
-
 	   <configuration name="Release">
 		 <search type="linker">
 		   ../../../llvmbuild/lib/Release
@@ -174,6 +172,9 @@ sub llvm_lib_name
 	   </apply-template>
 	 </if>
 	</template>
+
+	<project name="pcre">
+	</project>
 	
 	<project name="cclj">
 		<projdir>../{{["$xpj->{platform}"]}}</projdir>
