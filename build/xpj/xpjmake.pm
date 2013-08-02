@@ -54,7 +54,7 @@ sub add_project_config
 my $compilation_maps = {
 	"warning-level" => { "0" => "-w", "1" => "", "2" => "", "3" => "", "4" => "-Wall", "5" => "-Wextra" },
 	"optimization" => { "disabled" => "-O0", "max-speed" => "-O3", "min-space" => "-Os", full=>"-O3" },
-	"generate-debug-information" => { "false" => "", "true" => "-gstabs" },
+	"generate-debug-information" => { "false" => "", "true" => "-g" },
 	"intrinsic-functions" => { "false" => "-fno-builtin", "true"=>"" },
 	"enable-rtti" => { "false" => "-fno-rtti", "true"=>"-frtti" },
 	"enable-exceptions" => { "false"=>"-fno-exceptions", "true"=>"-fexceptions" },
@@ -62,9 +62,6 @@ my $compilation_maps = {
 	"struct-member-alignment" => { "default"=>"", "1"=>"-fpack-struct=1", "2"=>"-fpack-struct=2"
 									   , "4"=>"-fpack-struct=4", "8"=>"-fpack-struct=8", "16"=>"-fpack-struct=16" },
 };
-
-my $generate_debug_info_map = { "false" => "", "true" => "-gstabs" };
-
 
 sub safe_lookup_and_append
 {
@@ -104,10 +101,10 @@ sub process
 		print $projfile "RM         = rm -rf\n";
 		print $projfile "MKDIR      = mkdir -p\n";
 		print $projfile "ECHO       = echo\n";
-		print $projfile "CCLD       = g++\n";
+		print $projfile "CCLD       = clang++\n";
 		print $projfile "RANLIB     = ranlib\n";
-		print $projfile "CC         = gcc\n";
-		print $projfile "CXX        = g++\n";
+		print $projfile "CC         = clang\n";
+		print $projfile "CXX        = clang++\n";
 
 		print $projfile "\n-include Makedefs.$projname\n\n";
 		my $targets = $project->{targets};

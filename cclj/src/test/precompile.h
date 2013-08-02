@@ -11,6 +11,7 @@
 #include "gtest/gtest.h"
 #include "cclj/cclj.h"
 #include <fstream>
+#include <ostream>
 
 using std::ifstream;
 #endif

@@ -19,7 +19,7 @@
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
 		
-	  </configuration><cflags>-std=c++11 -D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1</cflags>
+	  </configuration><cflags>-std=c++11 -D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1 -stdlib=libc++ -DGTEST_HAS_TR1_TUPLE=0</cflags><lflags>-lstdc++</lflags>
 			<search type="header">
 			../../gtest
 			../../gtest/include
@@ -46,7 +46,7 @@
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
 		
-	  </configuration><cflags>-std=c++11 -D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1</cflags>
+	  </configuration><cflags>-std=c++11 -D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1 -stdlib=libc++ -DGTEST_HAS_TR1_TUPLE=0</cflags><lflags>-lstdc++</lflags>
 			<search type="header">
 			../../cclj/include
 		</search>
@@ -78,7 +78,7 @@
 		<intrinsic-functions>true</intrinsic-functions>
 		<buffer-security-check>false</buffer-security-check>
 		
-	  </configuration><cflags>-std=c++11 -D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1</cflags>
+	  </configuration><cflags>-std=c++11 -D__STDC_LIMIT_MACROS=1 -D__STDC_CONSTANT_MACROS=1 -stdlib=libc++ -DGTEST_HAS_TR1_TUPLE=0</cflags><lflags>-lstdc++</lflags>
 			<search type="header">
 			../../gtest
 			../../gtest/include
@@ -129,6 +129,7 @@
 			<libraries>
 				pthread
 				dl
+				m
 			  </libraries>
 			<files name="cclj_test" root="../../cclj/src/test/">
 				*

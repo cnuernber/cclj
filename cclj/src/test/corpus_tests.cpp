@@ -19,6 +19,8 @@
 
 
 using namespace cclj;
+using std::cout;
+using std::endl;
 
 namespace 
 {
@@ -31,7 +33,7 @@ string executable_path()
 	return temp_buf;
 #else
 	char buf[1024];
-	readlink( "/proc/self.exe", buf, 1024 );
+	readlink( "/proc/self/exe", buf, 1024 );
 	return buf;
 #endif
 }
@@ -77,6 +79,7 @@ string corpus_dir()
 	string dir = parent_path( exec_path );
 	while( !dir.empty() )
 	{
+		cout << "dir :" << dir << endl;
 		string test = dir;
 		test = append_path( test, "corpus" );
 		if ( is_directory( test ) )
@@ -139,7 +142,8 @@ TEST(corpus_tests, dynamic_mem ) { ASSERT_TRUE( run_corpus_test( "dynamic_mem", 
 
 TEST(regex_tests, symbol_regex)
 {
-	regex symbol_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*" );
+	//regex symbol_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*", std::regex_constants::basic );
+	regex symbol_regex( "\\d+", std::regex_constants::basic );
 	smatch match;
 	regex_search( string( "+51" ), match, symbol_regex );
 	regex_search( string( "-51" ), match, symbol_regex );
