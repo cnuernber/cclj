@@ -125,7 +125,7 @@ sub parse_xpj_templates_doc {
 sub eval_xpj_string_data {
   my $strdata = shift;
   my $retval = "";
-  print( "strdata - $strdata\n" );
+
 
   #iterate through the string and produce a new string
   #performing the required substitutions for the variables
@@ -133,7 +133,7 @@ sub eval_xpj_string_data {
   while( my ($strmatch) = $strdata =~ m/\{\{\[(.*?)\]\}\}/m ) {
 	$any_match = 1;
 	$strdata = $';
-    print( "before $` match $strmatch after $'\n" );
+
 	my $result = eval( $strmatch );
 	die "Execution of $strmatch failed: $@" if $@;
 	$retval = $retval . $` . $result;

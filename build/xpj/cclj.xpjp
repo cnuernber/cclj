@@ -168,8 +168,8 @@ sub llvm_lib_name
 	   </apply-template>
 	   <else/>
 	   <apply-template name="llvm_libs">
-		 <define key="lib_prefix" value="lib"/>
-		 <define key="lib_suffix" value=".a"/>
+		 <define key="lib_prefix" value=""/>
+		 <define key="lib_suffix" value=""/>
 	   </apply-template>
 	 </if>
 	</template>
@@ -225,6 +225,7 @@ sub llvm_lib_name
 			<if cond="!(lc($xpj->{platform}) =~ /win/)">
 			  <libraries>
 				pthread
+				dl
 			  </libraries>
 			</if>
 			<files name="cclj_test" root="../../cclj/src/test/">

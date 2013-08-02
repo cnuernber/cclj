@@ -95,32 +95,32 @@
 		   ../../../llvmbuild/lib/Debug
 		 </search>
 	   </configuration><libraries>
-		 libLLVMJIT.a
-		 libLLVMInterpreter.a
-		 libLLVMX86CodeGen.a
-		 libLLVMX86AsmParser.a
-		 libLLVMX86Disassembler.a
-		 libLLVMRuntimeDyld.a
-		 libLLVMExecutionEngine.a
-		 libLLVMAsmPrinter.a
-		 libLLVMSelectionDAG.a
-		 libLLVMX86Desc.a
-		 libLLVMMCParser.a
-		 libLLVMCodeGen.a
-		 libLLVMX86AsmPrinter.a
-		 libLLVMX86Info.a
-		 libLLVMObjCARCOpts.a
-		 libLLVMScalarOpts.a
-		 libLLVMX86Utils.a
-		 libLLVMInstCombine.a
-		 libLLVMTransformUtils.a
-		 libLLVMipa.a
-		 libLLVMAnalysis.a
-		 libLLVMTarget.a
-		 libLLVMCore.a
-		 libLLVMMC.a
-		 libLLVMObject.a
-		 libLLVMSupport.a
+		 LLVMJIT
+		 LLVMInterpreter
+		 LLVMX86CodeGen
+		 LLVMX86AsmParser
+		 LLVMX86Disassembler
+		 LLVMRuntimeDyld
+		 LLVMExecutionEngine
+		 LLVMAsmPrinter
+		 LLVMSelectionDAG
+		 LLVMX86Desc
+		 LLVMMCParser
+		 LLVMCodeGen
+		 LLVMX86AsmPrinter
+		 LLVMX86Info
+		 LLVMObjCARCOpts
+		 LLVMScalarOpts
+		 LLVMX86Utils
+		 LLVMInstCombine
+		 LLVMTransformUtils
+		 LLVMipa
+		 LLVMAnalysis
+		 LLVMTarget
+		 LLVMCore
+		 LLVMMC
+		 LLVMObject
+		 LLVMSupport
 	   </libraries>
 			<depends>
 				gtest
@@ -128,6 +128,7 @@
 			</depends>
 			<libraries>
 				pthread
+				dl
 			  </libraries>
 			<files name="cclj_test" root="../../cclj/src/test/">
 				*
