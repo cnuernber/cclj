@@ -124,26 +124,21 @@ sub parse_xpj_templates_doc {
 
 sub eval_xpj_string_data {
   my $strdata = shift;
-  my $last_match_end = 0;
-  my $str_end = length($strdata);
   my $retval = "";
-  my $strmatch = "";
-  
+  print( "strdata - $strdata\n" );
+
   #iterate through the string and produce a new string
   #performing the required substitutions for the variables
-  while( ($strmatch) = $strdata =~ m/\{\{\[(.*?)\]\}\}/g ) {
-    my $match_end_pos = $+[0];
-	my $match_start_pos = $-[0];
-	my $match_len = $match_end_pos - $match_start_pos;
-	my $nonmatched = substr( $strdata, 0, $match_start_pos );
-	$strdata = substr( $strdata, $match_end_pos );
+  my $any_match;
+  while( my ($strmatch) = $strdata =~ m/\{\{\[(.*?)\]\}\}/m ) {
+	$any_match = 1;
+	$strdata = $';
+    print( "before $` match $strmatch after $'\n" );
 	my $result = eval( $strmatch );
 	die "Execution of $strmatch failed: $@" if $@;
-	$retval = $retval . $nonmatched . $result;
+	$retval = $retval . $` . $result;
   }
-  if ( $last_match_end != $str_end ) {
-	$retval = $retval . substr( $strdata, $last_match_end, $str_end - $last_match_end );
-  }
+  $retval = $retval . $strdata;
   return $retval;
 }
 
@@ -261,7 +256,7 @@ sub eval_xpj_element {
 			  }
 			  else {
 				  if ( $result ) {
-					  eval_xpj_copy_element( $ifchild, $dest_elem );
+					  eval_xpj_element( $ifchild, $dest_elem );
 				  }
 			  }
 		  }

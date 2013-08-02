@@ -30,6 +30,12 @@ sub artifact_name
 	}
 	return $base_name;
 }
+
+sub llvm_lib_name
+{
+   my $stem = shift;
+   return "$tempvar->{lib_prefix}".$stem."$tempvar->{lib_suffix}";
+}
 	</perl>
 	<template name="base_config_t">
 		<!-- config name is anything you want.  Config type is static-library, dynamic-library, executable, console-executable -->
@@ -111,6 +117,36 @@ sub artifact_name
 			../../cclj/include
 		</search>
 	</template>
+	<template name="llvm_libs">
+	   <libraries>
+		 {{[llvm_lib_name("LLVMJIT")]}}
+		 {{[llvm_lib_name("LLVMInterpreter")]}}
+		 {{[llvm_lib_name("LLVMX86CodeGen")]}}
+		 {{[llvm_lib_name("LLVMX86AsmParser")]}}
+		 {{[llvm_lib_name("LLVMX86Disassembler")]}}
+		 {{[llvm_lib_name("LLVMRuntimeDyld")]}}
+		 {{[llvm_lib_name("LLVMExecutionEngine")]}}
+		 {{[llvm_lib_name("LLVMAsmPrinter")]}}
+		 {{[llvm_lib_name("LLVMSelectionDAG")]}}
+		 {{[llvm_lib_name("LLVMX86Desc")]}}
+		 {{[llvm_lib_name("LLVMMCParser")]}}
+		 {{[llvm_lib_name("LLVMCodeGen")]}}
+		 {{[llvm_lib_name("LLVMX86AsmPrinter")]}}
+		 {{[llvm_lib_name("LLVMX86Info")]}}
+		 {{[llvm_lib_name("LLVMObjCARCOpts")]}}
+		 {{[llvm_lib_name("LLVMScalarOpts")]}}
+		 {{[llvm_lib_name("LLVMX86Utils")]}}
+		 {{[llvm_lib_name("LLVMInstCombine")]}}
+		 {{[llvm_lib_name("LLVMTransformUtils")]}}
+		 {{[llvm_lib_name("LLVMipa")]}}
+		 {{[llvm_lib_name("LLVMAnalysis")]}}
+		 {{[llvm_lib_name("LLVMTarget")]}}
+		 {{[llvm_lib_name("LLVMCore")]}}
+		 {{[llvm_lib_name("LLVMMC")]}}
+		 {{[llvm_lib_name("LLVMObject")]}}
+		 {{[llvm_lib_name("LLVMSupport")]}}
+	   </libraries>
+	</template>
 	
 	<template name="cclj_link">
 
@@ -126,63 +162,15 @@ sub artifact_name
 		 </search>
 	   </configuration>
 	 <if cond="(lc($xpj->{platform}) =~ /win/)">
-	   <libraries>
-		 LLVMJIT.lib
-		 LLVMInterpreter.lib
-		 LLVMX86CodeGen.lib
-		 LLVMX86AsmParser.lib
-		 LLVMX86Disassembler.lib
-		 LLVMRuntimeDyld.lib
-		 LLVMExecutionEngine.lib
-		 LLVMAsmPrinter.lib
-		 LLVMSelectionDAG.lib
-		 LLVMX86Desc.lib
-		 LLVMMCParser.lib
-		 LLVMCodeGen.lib
-		 LLVMX86AsmPrinter.lib
-		 LLVMX86Info.lib
-		 LLVMObjCARCOpts.lib
-		 LLVMScalarOpts.lib
-		 LLVMX86Utils.lib
-		 LLVMInstCombine.lib
-		 LLVMTransformUtils.lib
-		 LLVMipa.lib
-		 LLVMAnalysis.lib
-		 LLVMTarget.lib
-		 LLVMCore.lib
-		 LLVMMC.lib
-		 LLVMObject.lib
-		 LLVMSupport.lib
-	   </libraries>
+	   <apply-template name="llvm_libs">
+		 <define key="lib_prefix" value=""/>
+		 <define key="lib_suffix" value=".lib"/>
+	   </apply-template>
 	   <else/>
-	   <libraries>
-		 LLVMJIT.a
-		 LLVMInterpreter.a
-		 LLVMX86CodeGen.a
-		 LLVMX86AsmParser.a
-		 LLVMX86Disassembler.a
-		 LLVMRuntimeDyld.a
-		 LLVMExecutionEngine.a
-		 LLVMAsmPrinter.a
-		 LLVMSelectionDAG.a
-		 LLVMX86Desc.a
-		 LLVMMCParser.a
-		 LLVMCodeGen.a
-		 LLVMX86AsmPrinter.a
-		 LLVMX86Info.a
-		 LLVMObjCARCOpts.a
-		 LLVMScalarOpts.a
-		 LLVMX86Utils.a
-		 LLVMInstCombine.a
-		 LLVMTransformUtils.a
-		 LLVMipa.a
-		 LLVMAnalysis.a
-		 LLVMTarget.a
-		 LLVMCore.a
-		 LLVMMC.a
-		 LLVMObject.a
-		 LLVMSupport.a
-	   </libraries>
+	   <apply-template name="llvm_libs">
+		 <define key="lib_prefix" value="lib"/>
+		 <define key="lib_suffix" value=".a"/>
+	   </apply-template>
 	 </if>
 	</template>
 	

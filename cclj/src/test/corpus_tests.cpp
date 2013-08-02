@@ -11,7 +11,12 @@
 #ifdef _WIN32
 #define NOMINMAX
 #include <windows.h>
+#else       
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 #endif
+
 
 using namespace cclj;
 
@@ -24,6 +29,10 @@ string executable_path()
 	char temp_buf[1024];
 	GetModuleFileNameA ( NULL, temp_buf, 1024 );
 	return temp_buf;
+#else
+	char buf[1024];
+	readlink( "/proc/self.exe", buf, 1024 );
+	return buf;
 #endif
 }
 
@@ -33,6 +42,10 @@ bool is_directory(const string& str )
 	DWORD atts = GetFileAttributesA( str.c_str() );
 	return atts != INVALID_FILE_ATTRIBUTES && ( atts &  FILE_ATTRIBUTE_DIRECTORY );
 #else
+	struct stat st;
+	std::memset( &st, 0, sizeof( st ) );
+	stat( str.c_str(), &st );
+	return S_ISDIR(st.st_mode);
 #endif
 }
 
@@ -82,7 +95,9 @@ string corpus_file( const char* fname )
 
 string corpus_file_text( const char* fname )
 {
-	auto filename = corpus_file( fname );
+	string nameExt( fname );
+	nameExt.append( ".cclj" );
+	auto filename = corpus_file( nameExt.c_str() );
 	ifstream input;
 	input.open( filename, std::ios_base::in );
 	char temp_buf[2056];
@@ -100,28 +115,25 @@ string corpus_file_text( const char* fname )
 	return retval;
 }
 
+bool run_corpus_test( const char* name, float answer )
+{
+	auto test_data = corpus_file_text( name );
+	auto compiler_ptr = compiler::create();
+	float test_result = compiler_ptr->execute( test_data );
+	return test_result == answer;
+}
+
 }
 
 
-#define DEFINE_SIMPLE_CORPUS_TEST( name, answer )			\
-TEST(corpus_tests, ##name )									\
-{															\
-	auto test_data = corpus_file_text( #name ".cclj" );		\
-	auto compiler_ptr = compiler::create();					\
-	float test_result = compiler_ptr->execute( test_data );	\
-	ASSERT_EQ( answer, test_result );						\
-}
-
-/*
-DEFINE_SIMPLE_CORPUS_TEST( basic1, 3.0f );
-DEFINE_SIMPLE_CORPUS_TEST( basic2, 8.0f );
-DEFINE_SIMPLE_CORPUS_TEST( basic3, 20.0f );
-DEFINE_SIMPLE_CORPUS_TEST( basic4, -100.0f );
-DEFINE_SIMPLE_CORPUS_TEST( basic_struct, 15.0f );
-DEFINE_SIMPLE_CORPUS_TEST( for_loop, 125.0f );
-DEFINE_SIMPLE_CORPUS_TEST( numeric_cast, 30.0f );
-*/
-DEFINE_SIMPLE_CORPUS_TEST( dynamic_mem, 45.0f );
+TEST(corpus_tests, basic1 ) { ASSERT_TRUE( run_corpus_test( "basic1", 3.0f ) ); }
+TEST(corpus_tests, basic2 ) { ASSERT_TRUE( run_corpus_test( "basic2", 8.0f ) ); }
+TEST(corpus_tests, basic3 ) { ASSERT_TRUE( run_corpus_test( "basic3", 20.0f ) ); }
+TEST(corpus_tests, basic4 ) { ASSERT_TRUE( run_corpus_test( "basic4", -100.0f ) ); }
+TEST(corpus_tests, basic_struct ) { ASSERT_TRUE( run_corpus_test( "basic_struct", 15.0f ) ); }
+TEST(corpus_tests, for_loop ) { ASSERT_TRUE( run_corpus_test( "for_loop", 125.0f ) ); }
+TEST(corpus_tests, numeric_cast ) { ASSERT_TRUE( run_corpus_test( "numeric_cast", 30.0f ) ); }
+TEST(corpus_tests, dynamic_mem ) { ASSERT_TRUE( run_corpus_test( "dynamic_mem", 45.0f ) ); }
 
 
 
