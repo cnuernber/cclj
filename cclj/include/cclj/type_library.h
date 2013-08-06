@@ -108,6 +108,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 	public:
 		string_table_str			_name;
 		type_ref_ptr_buffer			_specializations;
+		string to_string();
 	};
 
 	class type_library

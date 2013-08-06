@@ -188,14 +188,19 @@ namespace
 		void compile_first_pass(compiler_context& context)
 		{
 			vector<llvm_type_ptr> arg_types;
+			vector<type_ref_ptr> cclj_arg_types;
 			for_each( _arguments.begin(), _arguments.end(), [&]
 			(symbol* sym )
 			{
 				arg_types.push_back( context.type_ref_type( *sym->_type ) );
+				cclj_arg_types.push_back( sym->_type );
 			} );
+			type_ref& cclj_fn_type = context._type_library->get_type_ref( _name._name, cclj_arg_types );
 			llvm_type_ptr rettype = context.type_ref_type( *_name._type );
 			FunctionType* fn_type = FunctionType::get(rettype, arg_types, false);
-			_function = Function::Create( fn_type, Function::ExternalLinkage, _name._name.c_str(), &context._module );
+			string name_mangle( cclj_fn_type.to_string() );
+			
+			_function = Function::Create( fn_type, Function::ExternalLinkage, name_mangle.c_str(), &context._module );
 		}
 
 		pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
@@ -304,8 +309,13 @@ namespace
 			}
 			if ( &last_body_eval->type() != fn_name._type ) 
 				throw runtime_error( "function return type does not equal last statement" );
-			bool inserted = context._symbol_map->insert( make_pair( &fn_type, new_node ) ).second;
-			if ( !inserted ) throw runtime_error( "duplicate symbol" );
+			auto inserter = context._symbol_map->insert( make_pair( &fn_type, new_node ) );
+			if ( inserter.second == false  ) 
+			{
+				if ( inserter.first->second )
+					throw runtime_error( "duplicate symbol" );
+				inserter.first->second = new_node;
+			}
 			return *new_node;
 		}
 	};
@@ -464,15 +474,272 @@ namespace
 
 	};
 
-#if 0
-
-	struct template_fn_preprocessor : public preprocessor
+	struct template_fn
 	{
-		
-		template_fn_preprocessor( string_table_ptr st ) : preprocessor( st->register_str( "template fn" ) ){}
-		virtual lisp::object_ptr preprocess( reader_context& context, cons_cell& callsite )
-		{
+		string_table_str			_name;
+		type_ref_ptr				_rettype;
+		object_ptr_buffer			_template_args;
+		object_ptr_buffer			_fn_args;
+		cons_cell*					_fn_body;
 
+		template_fn() : _rettype( nullptr),  _fn_body( nullptr ) {}
+		
+
+		string_table_str get_generic_argument_name_from_arg_idx( size_t arg_idx )
+		{
+			if ( arg_idx >= _fn_args.size() )
+				throw runtime_error( "invalid argument index" );
+
+			symbol& fn_arg = object_traits::cast_ref<symbol>( _fn_args[arg_idx] );
+			if ( fn_arg._type == nullptr )
+				throw runtime_error( "invalid argument type" );
+			type_ref& fn_arg_type( *fn_arg._type );
+			if ( fn_arg_type._specializations.size() ) 
+				return string_table_str();
+			auto iter = find_if( _template_args.begin(), _template_args.end(), [&]
+			( object_ptr item )
+			{
+				symbol* item_sym = object_traits::cast<symbol>( item );
+				if ( item_sym )
+					return item_sym->_name == fn_arg_type._name;
+				return false;
+			} );
+			if ( iter != _template_args.end() )
+				return object_traits::cast_ref<symbol>( *iter )._name;
+			return string_table_str();
+		}
+
+		bool is_generic_argument( size_t arg_idx )
+		{
+			return get_generic_argument_name_from_arg_idx( arg_idx ).empty() == false;
+		}
+		
+		uint32_t weight( data_buffer<type_ref_ptr> arg_types )
+		{
+			if ( arg_types.size() != _fn_args.size() )
+				return 0;
+
+			uint32_t generic_arg_count = 0;
+			for( size_t idx = 0, end = arg_types.size(); idx < end; ++idx )
+			{
+				if ( is_generic_argument( idx ) )
+					++generic_arg_count;
+				else
+				{
+					symbol& arg_def = object_traits::cast_ref<symbol>( _fn_args[idx] );
+					//non-generic types do not match, so this function cannot match
+					if ( arg_types[idx] != arg_def._type )
+						return 0;
+				}
+			}
+			//attempt to match the fewest generic arguments.
+			uint32_t inverse_generic_arg_count = _fn_args.size() - generic_arg_count;
+			return inverse_generic_arg_count;
+		}
+	};
+
+	struct template_fn_preprocessor : public compiler_plugin
+	{
+		template_fn							_base_fn;
+		vector<template_fn>					_specializations;
+		static const char* static_type() { return "template fn instance"; }
+		template_fn_preprocessor( string_table_ptr st, template_fn base_fn ) 
+			: compiler_plugin( st->register_str( static_type() ) )
+			, _base_fn( base_fn ) 
+		{}
+
+		symbol& create_symbol( reader_context& context, const char* st, type_ref_ptr t = nullptr )
+		{
+			symbol* retval = context._factory->create_symbol();
+			retval->_name = context._string_table->register_str( st );
+			retval->_type = t;
+			return *retval;
+		}
+		cons_cell* append_cell(reader_context& context, cons_cell& last_cell )
+		{
+			auto c = context._factory->create_cell();
+			last_cell._next = c;
+			return c;
+		}
+		
+		typedef unordered_map<string_table_str, type_ref_ptr> string_type_map;
+		type_ref& subst_type( type_ref& src_type, string_type_map& map )
+		{
+			if ( src_type._specializations.size() )
+				return src_type;
+			auto subst_iter = map.find( src_type._name );
+			if ( subst_iter != map.end() )
+				return *subst_iter->second;
+			return src_type;
+		}
+
+		symbol& convert_symbol( reader_context& context, string_type_map& map, symbol& src_symbol )
+		{
+			type_ref_ptr dst_type = src_symbol._type ? &subst_type( *src_symbol._type, map ) : nullptr;
+			return create_symbol( context, src_symbol._name.c_str(), dst_type );
+		}
+
+		cons_cell& convert_cell( reader_context& context, string_type_map& template_arg_vals, cons_cell& src_cell )
+		{
+			cons_cell* retval = context._factory->create_cell();
+			retval->_value = convert_value( context, template_arg_vals, src_cell._value );
+			if ( src_cell._next )
+				retval->_next = convert_value( context, template_arg_vals, src_cell._next );
+			return *retval;
+		}
+
+		array& convert_array( reader_context& context, string_type_map& template_arg_vals, array& src_cell )
+		{
+			array* retval = context._factory->create_array();
+			retval->_data = context._factory->allocate_obj_buffer( src_cell._data.size() );
+			for( size_t idx = 0, end = src_cell._data.size(); idx < end; ++idx )
+			{
+				retval->_data[idx] = convert_value( context, template_arg_vals, src_cell._data[idx] );
+			}
+			return *retval;
+		}
+
+		object_ptr convert_value( reader_context& context, string_type_map& template_arg_vals, object_ptr src )
+		{
+			if ( !src ) return nullptr;
+			switch( src->type() )
+			{
+			case types::symbol:
+				return &convert_symbol( context, template_arg_vals, object_traits::cast_ref<symbol>( src ) );
+			case types::constant:
+				return src;
+			case types::cons_cell:
+				return &convert_cell( context, template_arg_vals, object_traits::cast_ref<cons_cell>( src ) );
+			case types::array:
+				return &convert_array( context, template_arg_vals, object_traits::cast_ref<array>( src ) );
+			default: break;
+			}
+			throw runtime_error( "Unrecognized object in template specialization::convert value" );
+		}
+
+		pair<string, string_type_map> generate_template_fn_name( reader_context& /*context*/, symbol& fn_name
+													, vector<ast_node_ptr>& arg_nodes, template_fn& spec )
+		{
+			//First, figure out the 
+			string_type_map template_arg_vals;
+			//TODO - use specializations indicated at callsite via fn name in addition to argument types
+			//w/ argument types taking precedence.
+			for( size_t arg_idx = 0, arg_end = arg_nodes.size(); arg_idx < arg_end; ++arg_idx )
+			{
+				ast_node_ptr arg = arg_nodes[arg_idx];
+				auto arg_name = spec.get_generic_argument_name_from_arg_idx( arg_idx );
+				if ( arg_name.empty() == false )
+				{
+					auto inserter = template_arg_vals.insert( make_pair( arg_name, &arg->type() ) );
+					if ( inserter.second == false )
+					{
+						if ( inserter.first->second != &arg->type() )
+							throw runtime_error( "invalid template instantiation; argument types do not match" );
+					}
+				}} 
+			if ( template_arg_vals.size() != spec._template_args.size() )
+				throw runtime_error( "incomplete template specialization; not enough args provided" );
+			
+			string name_mangle(fn_name._name.c_str());
+			//We have to append the various types and such to the name
+			//because not all of the template argument types are going to be
+			//represented in the arguments to the instantiation.
+			if ( spec._template_args.size() )
+			{
+				name_mangle.append( "|[" );
+				bool first = true;
+				for_each( spec._template_args.begin(), spec._template_args.end(), [&]
+				(object_ptr arg )
+				{
+					if ( !first )
+						name_mangle.append( " " );
+					symbol& arg_sym = object_traits::cast_ref<symbol>( arg );
+					name_mangle.append( template_arg_vals.find( arg_sym._name )->second->to_string() );
+				} );
+				name_mangle.append( "]" );
+			}
+			return make_pair( name_mangle, template_arg_vals );
+		}
+
+		virtual ast_node& handle_template_fn( reader_context& context, pair<string, string_type_map>& name_info, template_fn& spec )
+		{
+			string& name_mangle = name_info.first;
+			string_type_map& template_arg_vals = name_info.second;
+			cons_cell* cell = context._factory->create_cell();
+			cons_cell* first_cell = cell;
+			cell->_value = &create_symbol( context, "defn" );
+			cell = append_cell( context, *cell );
+			string_table_str name = context._string_table->register_str( name_mangle.c_str() );
+			cell->_value = &create_symbol( context, name_mangle.c_str(), &subst_type( *spec._rettype, template_arg_vals ) );
+			cell = append_cell( context, *cell );
+			array& array_data = *context._factory->create_array();
+			cell->_value = &array_data;
+			array_data._data = context._factory->allocate_obj_buffer( spec._fn_args.size() );
+			{
+				size_t arg_idx = 0;
+				for_each( spec._fn_args.begin(), spec._fn_args.end(), [&]
+				( object_ptr spec_arg )
+				{
+					symbol& old_symbol = object_traits::cast_ref<symbol>( spec_arg );
+					array_data._data[arg_idx] = &convert_symbol( context, template_arg_vals, old_symbol );
+					++arg_idx;
+				} );
+			}
+			cell->_next = &convert_cell( context, template_arg_vals, *spec._fn_body );
+			auto iter = context._top_level_special_forms->find( context._string_table->register_str( "defn" ) );
+			if ( iter == context._top_level_special_forms->end() )
+				throw runtime_error( "odd error, no defn special form" );
+			return iter->second->type_check( context, *first_cell );
+		}
+
+		virtual ast_node& type_check( reader_context& context, cons_cell& callsite )
+		{
+			symbol& fn_name = object_traits::cast_ref<symbol>( callsite._value );
+			cons_cell& first_arg = object_traits::cast_ref<cons_cell>( callsite._next );
+			vector<type_ref_ptr> arg_types;
+			vector<ast_node_ptr> arg_nodes;
+			
+			// TODO - use combination of arguments passed in via function name type/type specializations
+			// and arg nodes to figure out type substitions.
+			for ( cons_cell* arg = &first_arg; arg; arg = object_traits::cast<cons_cell>( arg->_next ) )
+			{
+				ast_node& theNode = context._type_checker( arg->_value );
+				arg_types.push_back( &theNode.type() );
+				arg_nodes.push_back( &theNode );
+			}
+			type_ref& fn_type = context._type_library->get_type_ref( fn_name._name, arg_types );
+			//Check for existing function overload
+			auto node_iter = context._symbol_map->find( &fn_type );
+			if ( node_iter != context._symbol_map->end() ) 
+				return node_iter->second->apply( context, arg_nodes );
+
+			template_fn*	best_spec = nullptr;
+			uint32_t		spec_weight = 0;
+			//How to weight these specializations
+			for_each( _specializations.begin(), _specializations.end(), [&]
+			( template_fn& spec )
+			{
+				auto item_weight = spec.weight( arg_types );
+				if ( item_weight > spec_weight ) {
+					best_spec = &spec;
+					spec_weight = item_weight;
+				}
+			} );
+			template_fn chosen_item = best_spec != nullptr ? *best_spec: _base_fn;
+
+			pair<string,string_type_map> template_fn_name = generate_template_fn_name( context, fn_name, arg_nodes, chosen_item );
+			type_ref& template_fn_type = context._type_library->get_type_ref( context._string_table->register_str( template_fn_name.first.c_str() ), arg_types );
+
+			node_iter = context._symbol_map->find( &template_fn_type );
+			if ( node_iter != context._symbol_map->end() )
+				return node_iter->second->apply( context, arg_nodes );
+
+			ast_node& provider_node = handle_template_fn( context, template_fn_name, chosen_item );
+			//This should have been done by the generation of the function, but we have to be sure.
+			context._symbol_map->insert( make_pair( &template_fn_type, &provider_node ) );
+			context._additional_top_level_nodes.push_back( &provider_node );
+
+			return provider_node.apply( context, arg_nodes );
 		}
 	};
 
@@ -482,19 +749,48 @@ namespace
 		const char* static_plugin_name() { return "template function definition"; }
 		template_fn_plugin( string_table_ptr st ) : compiler_plugin( st->register_str( static_plugin_name() ) ) {}
 
+		template_fn type_check_function( reader_context& /*context*/, cons_cell& cell )
+		{
+			cons_cell& template_arg_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			object_ptr_buffer template_args = object_traits::cast_ref<array>( template_arg_cell._value )._data;
+			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( template_arg_cell._next );
+			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
+			cons_cell& function_arg_cell = object_traits::cast_ref<cons_cell>( name_cell._next );
+			object_ptr_buffer function_args = object_traits::cast_ref<array>( function_arg_cell._value )._data;
+			cons_cell& body_cell = object_traits::cast_ref<cons_cell>( function_arg_cell._next );
+			template_fn retval;
+			if ( name._type == nullptr ) throw runtime_error( "polymorphic function missing return type" );
+			retval._rettype = name._type;
+			retval._template_args = template_args;
+			retval._fn_args = function_args;
+			retval._fn_body = &body_cell;
+			retval._name = name._name;
+			return retval;
+		}
+
 		void type_check_def( reader_context& context, cons_cell& cell )
 		{
+			template_fn new_fn = type_check_function( context, cell );
+			compiler_plugin_ptr plugin = make_shared<template_fn_preprocessor>( context._string_table, new_fn );
+			context._special_forms->insert( make_pair( new_fn._name, plugin ) );
 		}
 
 		void type_check_specialization( reader_context& context, cons_cell& cell )
 		{
-
+			template_fn new_fn = type_check_function( context, cell );
+			auto iter = context._special_forms->find( new_fn._name );
+			if ( iter == context._special_forms->end() ) throw runtime_error( "unable to find template to specialize" );
+			if ( iter->second->plugin_name() 
+				!= context._string_table->register_str( template_fn_preprocessor::static_type() ) )
+				throw runtime_error( "invalid template specialization" );
+			auto item_ptr = static_cast<template_fn_preprocessor*>( iter->second.get() );
+			item_ptr->_specializations.push_back( new_fn );
 		}
 		
 		ast_node& type_check( reader_context& context, cons_cell& cell )
 		{
 			symbol& command = object_traits::cast_ref<symbol>( cell._value );
-			if ( command._name == context._string_table->register_str( "def-template-function" ) )
+			if ( command._name == context._string_table->register_str( "define-template-fn" ) )
 			{
 				type_check_def( context, cell );
 			}
@@ -505,8 +801,6 @@ namespace
 			return *context._ast_allocator->construct<fake_ast_node>( context._string_table, context._type_library );
 		}
 	};
-
-#endif
 
 	struct symbol_ast_node : public ast_node
 	{
@@ -1478,6 +1772,12 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 		, make_shared<macro_def_plugin>( str_table ) ) );
 	top_level_special_forms->insert( make_pair( str_table->register_str( "def-pod" )
 		, make_shared<pod_def_compiler_plugin>( str_table ) ) );
+
+	compiler_plugin_ptr plugin = make_shared<template_fn_plugin>( str_table );
+	top_level_special_forms->insert( make_pair( str_table->register_str( "define-template-fn" )
+		, plugin ) );
+	top_level_special_forms->insert( make_pair( str_table->register_str( "specialize-template-fn" )
+		, plugin ) );
 
 
 	special_forms->insert( make_pair( str_table->register_str( "if" )

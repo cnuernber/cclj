@@ -111,3 +111,24 @@ type_library_ptr type_library::create_type_library( allocator_ptr allocator, str
 {
 	return make_shared<type_library_impl>( allocator, s );
 }
+
+string type_ref::to_string()
+{
+	string retval;
+	retval.append( _name.c_str() );
+	if ( _specializations.size() )
+	{
+		retval.append( "[" );
+
+		bool first = true;
+		for_each( _specializations.begin(), _specializations.end(), [&]
+		( type_ref_ptr ref )
+		{
+				retval.append( " " );
+			first = false;
+			retval.append( ref->to_string() ); 
+		} );
+		retval.append( "]" );
+	}
+	return retval;
+}

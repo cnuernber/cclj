@@ -543,6 +543,9 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				else
 					throw runtime_error( "invalid program, top level item is not a list" );
 			} );
+			type_check_results.insert( type_check_results.end() 
+										, checker._context->_additional_top_level_nodes.begin()
+										, checker._context->_additional_top_level_nodes.end() );
 			return type_check_results;
 		}
 

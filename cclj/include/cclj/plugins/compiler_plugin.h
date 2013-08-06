@@ -286,6 +286,7 @@ namespace cclj
 		string_plugin_map_ptr		_special_forms;
 		string_plugin_map_ptr		_top_level_special_forms;
 		string_obj_ptr_map			_preprocessor_symbols;
+		vector<ast_node_ptr>		_additional_top_level_nodes;
 
 		reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
 							, string_table_ptr st, type_check_function tc
