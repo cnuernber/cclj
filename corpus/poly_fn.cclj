@@ -1,9 +1,20 @@
 (defmacro combine [a b]
 	(quote(+ (unquote a) (unquote b))))
 
-(defn [num-type] add|num-type [a|num-type b|num-type]
-		(combine (+ a b) (static-cast|num-type 5|i8)))
-		
-		
-(add 8|f32 10|f32)
+;define polymorphic function that has one compile time argument,
+;num-type
+(def-template-fn [num-type] add|num-type [a|num-type b|num-type]
+		(combine (+ a b) (numeric-cast|num-type 5|i8)))
+
+;Define specialization of the template fn.  First array is array of new
+;template variables, second array is completely filled in array of old 
+;template variables.
+
+(specialize-template-fn [] [|f32] add|f32 [a|f32 b|f32 c|f32]
+		(+ (+ a b) c))
+
+;another direction is to force call to a specific specialization at the 
+;callsite using the type argument of the function call symbol. 
+	
+(add 8|f32 10|f32 (numeric-cast|f32 (add 10|i32 20|i32))) ;43
  

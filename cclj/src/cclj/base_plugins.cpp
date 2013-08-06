@@ -81,6 +81,26 @@ namespace
 		return res_context;
 	}
 
+	ast_node& type_check_function_application( reader_context& context, lisp::cons_cell& cell )
+	{
+		symbol& fn_name = object_traits::cast_ref<symbol>( cell._value );
+		vector<type_ref_ptr> arg_types;
+		vector<ast_node_ptr> resolved_args;
+		//ensure we can find the function definition.
+		for ( cons_cell* arg = object_traits::cast<cons_cell>( cell._next )
+			; arg; arg = object_traits::cast<cons_cell>( arg->_next ) )
+		{
+			ast_node& eval_result = context._type_checker( arg->_value );
+			arg_types.push_back( &eval_result.type() );
+			resolved_args.push_back( &eval_result );
+		}
+		type_ref& fn_type = context._type_library->get_type_ref( fn_name._name, arg_types );
+		auto context_node_iter = context._symbol_map->find( &fn_type );
+		if ( context_node_iter == context._symbol_map->end() ) throw runtime_error( "unable to resolve function" );
+		ast_node& new_node = context_node_iter->second->apply( context, resolved_args );
+		return new_node;
+	}
+
 
 	template<typename data_type, typename allocator>
 	data_buffer<data_type> allocate_buffer( allocator& alloc, data_buffer<data_type> buf )
@@ -304,16 +324,19 @@ namespace
 		}
 	};
 	//todo - create plugin system for the macro language.
-	struct macro_preprocessor : public preprocessor
+	struct macro_preprocessor : public compiler_plugin
 	{
 		const symbol&			_name;
 		data_buffer<object_ptr> _arguments;
 		cons_cell&				_body;
 		string_table_str		_quote;
 		string_table_str		_unquote;
+
+		static const char* static_type() { return "macro_preprocessor"; }
 		
 		macro_preprocessor( const symbol& name, data_buffer<object_ptr> args, const cons_cell& body, string_table_ptr st )
-			: _name( name )
+			: compiler_plugin( st->register_str( static_type() ) )
+			, _name( name )
 			, _arguments( args )
 			, _body( const_cast<cons_cell&>( body ) )
 			, _quote( st->register_str( "quote" ) )
@@ -388,7 +411,7 @@ namespace
 				throw runtime_error( "failed to handle preprocessor symbol" );
 		}
 		
-		virtual lisp::object_ptr preprocess( reader_context& context, cons_cell& callsite )
+		virtual ast_node& type_check( reader_context& context, cons_cell& callsite )
 		{
 			string_obj_ptr_map old_symbols( context._preprocessor_symbols );
 			context._preprocessor_symbols.clear();
@@ -409,7 +432,7 @@ namespace
 				retval = lisp_apply( context, object_traits::cast_ref<cons_cell>( body_cell->_value ) );
 			}
 			context._preprocessor_symbols = old_symbols;
-			return retval;
+			return context._type_checker( retval );
 		}
 	};
 
@@ -432,14 +455,58 @@ namespace
 			cons_cell& third_cell = object_traits::cast_ref<cons_cell>( second_cell._next );
 			cons_cell& fourth_cell = object_traits::cast_ref<cons_cell>( third_cell._next );
 			data_buffer<object_ptr> arg_array = object_traits::cast_ref<array>( third_cell._value )._data;
-			macro_preprocessor* preprocess 
-				= context._ast_allocator->construct<macro_preprocessor>( macro_name, arg_array, fourth_cell
+			compiler_plugin_ptr preprocess 
+				= make_shared<macro_preprocessor>( macro_name, arg_array, fourth_cell
 																			, context._string_table );
-			context._preprocess_objects[macro_name._name] = preprocess;
+			(*context._special_forms)[macro_name._name] = preprocess;
 			return *context._ast_allocator->construct<fake_ast_node>( context._string_table, context._type_library );
 		}
 
 	};
+
+#if 0
+
+	struct template_fn_preprocessor : public preprocessor
+	{
+		
+		template_fn_preprocessor( string_table_ptr st ) : preprocessor( st->register_str( "template fn" ) ){}
+		virtual lisp::object_ptr preprocess( reader_context& context, cons_cell& callsite )
+		{
+
+		}
+	};
+
+	class template_fn_plugin : public compiler_plugin
+	{
+	public:
+		const char* static_plugin_name() { return "template function definition"; }
+		template_fn_plugin( string_table_ptr st ) : compiler_plugin( st->register_str( static_plugin_name() ) ) {}
+
+		void type_check_def( reader_context& context, cons_cell& cell )
+		{
+		}
+
+		void type_check_specialization( reader_context& context, cons_cell& cell )
+		{
+
+		}
+		
+		ast_node& type_check( reader_context& context, cons_cell& cell )
+		{
+			symbol& command = object_traits::cast_ref<symbol>( cell._value );
+			if ( command._name == context._string_table->register_str( "def-template-function" ) )
+			{
+				type_check_def( context, cell );
+			}
+			else
+			{
+				type_check_specialization( context, cell );
+			}
+			return *context._ast_allocator->construct<fake_ast_node>( context._string_table, context._type_library );
+		}
+	};
+
+#endif
 
 	struct symbol_ast_node : public ast_node
 	{
@@ -1352,35 +1419,13 @@ namespace
 ast_node& base_language_plugins::type_check_apply( reader_context& context, lisp::cons_cell& cell )
 {
 	symbol& fn_name = object_traits::cast_ref<symbol>( cell._value );
-	auto preprocess_iter = context._preprocess_objects.find( fn_name._name );
-	if ( preprocess_iter != context._preprocess_objects.end() )
-	{
-		object_ptr replacement = preprocess_iter->second->preprocess( context, cell );
-		return context._type_checker( replacement );
-	}
-
 
 	auto plugin_ptr_iter = context._special_forms->find( fn_name._name );
 	if ( plugin_ptr_iter !=  context._special_forms->end() )
 	{
 		return plugin_ptr_iter->second->type_check( context, cell );
 	}
-	
-	vector<type_ref_ptr> arg_types;
-	vector<ast_node_ptr> resolved_args;
-	//ensure we can find the function definition.
-	for ( cons_cell* arg = object_traits::cast<cons_cell>( cell._next )
-		; arg; arg = object_traits::cast<cons_cell>( arg->_next ) )
-	{
-		ast_node& eval_result = context._type_checker( arg->_value );
-		arg_types.push_back( &eval_result.type() );
-		resolved_args.push_back( &eval_result );
-	}
-	type_ref& fn_type = context._type_library->get_type_ref( fn_name._name, arg_types );
-	auto context_node_iter = context._symbol_map->find( &fn_type );
-	if ( context_node_iter == context._symbol_map->end() ) throw runtime_error( "unable to resolve function" );
-	ast_node& new_node = context_node_iter->second->apply( context, resolved_args );
-	return new_node;
+	return type_check_function_application( context, cell );
 }
 
 ast_node& base_language_plugins::type_check_symbol( reader_context& context, lisp::symbol& sym )

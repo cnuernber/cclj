@@ -272,8 +272,10 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			array* retval = _factory->create_array();
 			++_cur_ptr;
 			if ( atend() ) throw runtime_error( "fail" );
-			if ( current_char() == ']' )
+			if ( current_char() == ']' ) {
+				++_cur_ptr;
 				return retval;
+			}
 
 			vector<object_ptr> array_contents;
 			eatwhite();
