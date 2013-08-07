@@ -18,9 +18,8 @@
 ;the macro has computed its result.
 
 (defmacro compile-time-recurse-add[a b]
-  (let [added (recurse-add-macro a)
-       type-var (type b)]
-    (quote (numeric-cast|(unquote type-var) (unquote added)))))
+  (let [added (recurse-add-macro a)] ;a is evaluated in the lisp context
+    (quote (numeric-cast|(unquote b) (unquote added)))))
 
 ;macro should produce
 ;(numeric-cast|f32 45|f64)

@@ -72,8 +72,10 @@ namespace cclj { namespace lisp {
 		{
 		public:
 			string_table_str	_name;
-			type_ref*			_type;
-			symbol() : _type( nullptr ) {}
+			type_ref*			_evaled_type;
+			//the type is evaluated at type check time.
+			cons_cell*			_unevaled_type;
+			symbol() : _evaled_type( nullptr ), _unevaled_type(nullptr) {}
 
 			enum { item_type = types::symbol };
 			virtual types::_enum type() const { return types::symbol; }
@@ -83,9 +85,9 @@ namespace cclj { namespace lisp {
 		class constant : public object
 		{
 		public:
-			type_ref*		_type;
-			uint8_t*		_value; 
-			constant() : _type( nullptr ), _value( nullptr ) {}
+			string_table_str _unparsed_number;
+			cons_cell*		_unevaled_type;
+			constant() : _unevaled_type( nullptr ) {}
 
 			enum { item_type = types::constant };
 			virtual types::_enum type() const { return types::constant; }

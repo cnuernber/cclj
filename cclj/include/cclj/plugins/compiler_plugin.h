@@ -234,6 +234,7 @@ namespace cclj
 	typedef shared_ptr<slab_allocator<> > slab_allocator_ptr;
 
 	typedef function<ast_node& (lisp::object_ptr)> type_check_function;
+	typedef function<type_ref& (lisp::cons_cell&)> type_eval_function;
 	class compiler_plugin;
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
 
@@ -283,6 +284,7 @@ namespace cclj
 		symbol_type_ref_map			_context_symbol_types;
 		type_ast_node_map_ptr		_symbol_map;
 		type_check_function			_type_checker;
+		type_eval_function			_type_evaluator;
 		string_plugin_map_ptr		_special_forms;
 		string_plugin_map_ptr		_top_level_special_forms;
 		string_obj_ptr_map			_preprocessor_symbols;
@@ -290,10 +292,13 @@ namespace cclj
 
 		reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
 							, string_table_ptr st, type_check_function tc
+							, type_eval_function te
 							, string_plugin_map_ptr special_forms
 							, string_plugin_map_ptr top_level_special_forms
 							, type_ast_node_map_ptr top_level_symbols
 							, slab_allocator_ptr ast_alloc );
+
+		type_ref& symbol_type( lisp::symbol& symbol );
 	};
 
 	//Compiler plugins process special forms.

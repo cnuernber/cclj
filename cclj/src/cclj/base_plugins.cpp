@@ -164,7 +164,7 @@ namespace
 
 		function_def_node( string_table_ptr str_table, const lisp::symbol& name
 							, const type_ref& mt, data_buffer<lisp::symbol*> arguments )
-			: ast_node( str_table->register_str( static_node_type() ), *name._type )
+			: ast_node( str_table->register_str( static_node_type() ), *name._evaled_type )
 			, _name( const_cast<lisp::symbol&>( name ) )
 			, _my_type( const_cast<type_ref&>( mt ) )
 			, _arguments( arguments )
@@ -192,11 +192,11 @@ namespace
 			for_each( _arguments.begin(), _arguments.end(), [&]
 			(symbol* sym )
 			{
-				arg_types.push_back( context.type_ref_type( *sym->_type ) );
-				cclj_arg_types.push_back( sym->_type );
+				arg_types.push_back( context.type_ref_type( *sym->_evaled_type ) );
+				cclj_arg_types.push_back( sym->_evaled_type );
 			} );
 			type_ref& cclj_fn_type = context._type_library->get_type_ref( _name._name, cclj_arg_types );
-			llvm_type_ptr rettype = context.type_ref_type( *_name._type );
+			llvm_type_ptr rettype = context.type_ref_type( *_name._evaled_type );
 			FunctionType* fn_type = FunctionType::get(rettype, arg_types, false);
 			string name_mangle( cclj_fn_type.to_string() );
 			
@@ -216,14 +216,14 @@ namespace
 			Value* retVal = context._builder.CreateRet( last_statement.first );
 			verifyFunction(*_function );
 			context._fpm.run( *_function );
-			return make_pair( retVal, _name._type );
+			return make_pair( retVal, _name._evaled_type );
 		}
 
 		
 		virtual type_ref& return_type() 
 		{
-			if ( _name._type == nullptr ) throw runtime_error( "Invalid function return type" );
-			return *_name._type; 
+			if ( _name._evaled_type == nullptr ) throw runtime_error( "Invalid function return type" );
+			return *_name._evaled_type; 
 		}
 
 		virtual Function& function() 
@@ -254,13 +254,13 @@ namespace
 			for (unsigned Idx = 0, e = fn_args.size(); Idx != e; ++Idx, ++AI) {
 				symbol& arg_def( *fn_args[Idx] );
 				// Create an alloca for this variable.
-				if ( arg_def._type == nullptr ) throw runtime_error( "Invalid function argument" );
-				AllocaInst *Alloca = entry_block_builder.CreateAlloca(context.type_ref_type( *arg_def._type ), 0,
+				if ( arg_def._evaled_type == nullptr ) throw runtime_error( "Invalid function argument" );
+				AllocaInst *Alloca = entry_block_builder.CreateAlloca(context.type_ref_type( *arg_def._evaled_type ), 0,
 						arg_def._name.c_str());
 
 				// Store the initial value into the alloca.
 				context._builder.CreateStore(AI, Alloca);
-				var_context.add_variable( arg_def._name, Alloca, *arg_def._type );
+				var_context.add_variable( arg_def._name, Alloca, *arg_def._evaled_type );
 			}
 		}
 	};
@@ -282,7 +282,7 @@ namespace
 		{
 			cons_cell& fn_name_cell = object_traits::cast_ref<cons_cell>( cell._next );
 			symbol& fn_name = object_traits::cast_ref<symbol>( fn_name_cell._value );
-			if ( fn_name._type == nullptr ) throw runtime_error( "function return type not specified" );
+			context.symbol_type( fn_name );
 			cons_cell& arg_array_cell = object_traits::cast_ref<cons_cell>( fn_name_cell._next );
 			array&  arg_array = object_traits::cast_ref<array>( arg_array_cell._value );
 			cons_cell& body = object_traits::cast_ref<cons_cell>( arg_array_cell._next );
@@ -292,10 +292,10 @@ namespace
 			for ( size_t idx = 0, end = arg_array._data.size(); idx < end; ++idx )
 			{
 				symbol& arg_symbol = object_traits::cast_ref<symbol>( arg_array._data[idx] );
-				if ( arg_symbol._type == nullptr ) throw runtime_error( "function arguments must have types" );
-				type_array.push_back( arg_symbol._type );
+				type_ref& arg_type = context.symbol_type( arg_symbol );
+				type_array.push_back( &arg_type );
 				symbol_array.push_back( &arg_symbol );
-				symbol_context.add_symbol( arg_symbol._name, *arg_symbol._type );
+				symbol_context.add_symbol( arg_symbol._name, arg_type );
 			}
 			type_ref& fn_type = context._type_library->get_type_ref( fn_name._name, type_array );
 			data_buffer<symbol*> args = allocate_buffer<symbol*>( *context._ast_allocator, symbol_array );
@@ -307,7 +307,7 @@ namespace
 				last_body_eval = &context._type_checker( body_cell->_value );
 				new_node->children().push_back( *last_body_eval );
 			}
-			if ( &last_body_eval->type() != fn_name._type ) 
+			if ( &last_body_eval->type() != fn_name._evaled_type ) 
 				throw runtime_error( "function return type does not equal last statement" );
 			auto inserter = context._symbol_map->insert( make_pair( &fn_type, new_node ) );
 			if ( inserter.second == false  ) 
@@ -491,9 +491,9 @@ namespace
 				throw runtime_error( "invalid argument index" );
 
 			symbol& fn_arg = object_traits::cast_ref<symbol>( _fn_args[arg_idx] );
-			if ( fn_arg._type == nullptr )
+			if ( fn_arg._evaled_type == nullptr )
 				throw runtime_error( "invalid argument type" );
-			type_ref& fn_arg_type( *fn_arg._type );
+			type_ref& fn_arg_type( *fn_arg._evaled_type );
 			if ( fn_arg_type._specializations.size() ) 
 				return string_table_str();
 			auto iter = find_if( _template_args.begin(), _template_args.end(), [&]
@@ -528,7 +528,7 @@ namespace
 				{
 					symbol& arg_def = object_traits::cast_ref<symbol>( _fn_args[idx] );
 					//non-generic types do not match, so this function cannot match
-					if ( arg_types[idx] != arg_def._type )
+					if ( arg_types[idx] != arg_def._evaled_type )
 						return 0;
 				}
 			}
@@ -548,11 +548,11 @@ namespace
 			, _base_fn( base_fn ) 
 		{}
 
-		symbol& create_symbol( reader_context& context, const char* st, type_ref_ptr t = nullptr )
+		symbol& create_symbol( reader_context& context, const char* st, cons_cell* t = nullptr )
 		{
 			symbol* retval = context._factory->create_symbol();
 			retval->_name = context._string_table->register_str( st );
-			retval->_type = t;
+			retval->_unevaled_type = t;
 			return *retval;
 		}
 		cons_cell* append_cell(reader_context& context, cons_cell& last_cell )
@@ -562,12 +562,13 @@ namespace
 			return c;
 		}
 		
-		typedef unordered_map<string_table_str, type_ref_ptr> string_type_map;
-		type_ref& subst_type( type_ref& src_type, string_type_map& map )
+		typedef unordered_map<string_table_str, cons_cell*> string_type_map;
+		cons_cell& subst_type( reader_context& context, cons_cell& src_type, string_type_map& map )
 		{
-			if ( src_type._specializations.size() )
+			type_ref& evaled_src = context._type_evaluator( src_type );
+			if ( evaled_src._specializations.size() )
 				return src_type;
-			auto subst_iter = map.find( src_type._name );
+			auto subst_iter = map.find( evaled_src._name );
 			if ( subst_iter != map.end() )
 				return *subst_iter->second;
 			return src_type;
@@ -575,7 +576,7 @@ namespace
 
 		symbol& convert_symbol( reader_context& context, string_type_map& map, symbol& src_symbol )
 		{
-			type_ref_ptr dst_type = src_symbol._type ? &subst_type( *src_symbol._type, map ) : nullptr;
+			cons_cell* dst_type = src_symbol._unevaled_type ? &subst_type( context, *src_symbol._unevaled_type, map ) : nullptr;
 			return create_symbol( context, src_symbol._name.c_str(), dst_type );
 		}
 
@@ -617,7 +618,29 @@ namespace
 			throw runtime_error( "Unrecognized object in template specialization::convert value" );
 		}
 
-		pair<string, string_type_map> generate_template_fn_name( reader_context& /*context*/, symbol& fn_name
+		cons_cell* uneval_type( reader_context& context, type_ref& type )
+		{
+			cons_cell* retval = context._factory->create_cell();
+			symbol* type_name = context._factory->create_symbol();
+			type_name->_name = type._name;
+			retval->_value = type_name;
+			vector<cons_cell*> specializations;
+			for_each( type._specializations.begin(), type._specializations.end(), [&]
+			( type_ref_ptr spec )
+			{
+				specializations.push_back( uneval_type( context, *spec ) );
+			} );
+			if ( specializations.size() )
+			{
+				array* specs = context._factory->create_array();
+				retval->_next = specs;
+				specs->_data = context._factory->allocate_obj_buffer( specializations.size() );
+				memcpy( specs->_data.begin(), &specializations[0], specializations.size() * sizeof( cons_cell* ) );
+			}
+			return retval;
+		}
+
+		pair<string, string_type_map> generate_template_fn_name( reader_context& context, symbol& fn_name
 													, vector<ast_node_ptr>& arg_nodes, template_fn& spec )
 		{
 			//First, figure out the 
@@ -630,10 +653,10 @@ namespace
 				auto arg_name = spec.get_generic_argument_name_from_arg_idx( arg_idx );
 				if ( arg_name.empty() == false )
 				{
-					auto inserter = template_arg_vals.insert( make_pair( arg_name, &arg->type() ) );
+					auto inserter = template_arg_vals.insert( make_pair( arg_name, uneval_type( context, arg->type() ) ) );
 					if ( inserter.second == false )
 					{
-						if ( inserter.first->second != &arg->type() )
+						if ( &context._type_evaluator(*inserter.first->second)  != &arg->type() )
 							throw runtime_error( "invalid template instantiation; argument types do not match" );
 					}
 				}} 
@@ -654,7 +677,7 @@ namespace
 					if ( !first )
 						name_mangle.append( " " );
 					symbol& arg_sym = object_traits::cast_ref<symbol>( arg );
-					name_mangle.append( template_arg_vals.find( arg_sym._name )->second->to_string() );
+					name_mangle.append( context._type_evaluator(*template_arg_vals.find( arg_sym._name )->second).to_string() );
 				} );
 				name_mangle.append( "]" );
 			}
@@ -670,7 +693,7 @@ namespace
 			cell->_value = &create_symbol( context, "defn" );
 			cell = append_cell( context, *cell );
 			string_table_str name = context._string_table->register_str( name_mangle.c_str() );
-			cell->_value = &create_symbol( context, name_mangle.c_str(), &subst_type( *spec._rettype, template_arg_vals ) );
+			cell->_value = &create_symbol( context, name_mangle.c_str(), &subst_type( context, *uneval_type( context, *spec._rettype ), template_arg_vals ) );
 			cell = append_cell( context, *cell );
 			array& array_data = *context._factory->create_array();
 			cell->_value = &array_data;
@@ -749,7 +772,7 @@ namespace
 		const char* static_plugin_name() { return "template function definition"; }
 		template_fn_plugin( string_table_ptr st ) : compiler_plugin( st->register_str( static_plugin_name() ) ) {}
 
-		template_fn type_check_function( reader_context& /*context*/, cons_cell& cell )
+		template_fn type_check_function( reader_context& context, cons_cell& cell )
 		{
 			cons_cell& template_arg_cell = object_traits::cast_ref<cons_cell>( cell._next );
 			object_ptr_buffer template_args = object_traits::cast_ref<array>( template_arg_cell._value )._data;
@@ -759,8 +782,13 @@ namespace
 			object_ptr_buffer function_args = object_traits::cast_ref<array>( function_arg_cell._value )._data;
 			cons_cell& body_cell = object_traits::cast_ref<cons_cell>( function_arg_cell._next );
 			template_fn retval;
-			if ( name._type == nullptr ) throw runtime_error( "polymorphic function missing return type" );
-			retval._rettype = name._type;
+			retval._rettype = &context.symbol_type( name );
+			for_each( function_args.begin(), function_args.end(), [&]
+			(object_ptr arg )
+			{
+				symbol& arg_sym = object_traits::cast_ref<symbol>( arg );
+				context.symbol_type( arg_sym );
+			} );
 			retval._template_args = template_args;
 			retval._fn_args = function_args;
 			retval._fn_body = &body_cell;
@@ -840,10 +868,10 @@ namespace
 
 	struct numeric_constant_ast_node : public ast_node
 	{
-		constant& _constant;
-		numeric_constant_ast_node( string_table_ptr st, const constant& s )
-			: ast_node( st->register_str( "numeric constant" ), *s._type )
-			, _constant( const_cast<constant&>( s ) )
+		uint8_t*	_data;
+		numeric_constant_ast_node( string_table_ptr st, uint8_t* data, const type_ref& dtype )
+			: ast_node( st->register_str( "numeric constant" ), dtype )
+			, _data( data )
 		{
 		}
 		
@@ -855,8 +883,8 @@ namespace
 			{
 #define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )		\
 			case base_numeric_types::name:			\
-				return make_pair( llvm_helper::llvm_constant_map<base_numeric_types::name>::parse( _constant._value )	\
-								, _constant._type );
+				return make_pair( llvm_helper::llvm_constant_map<base_numeric_types::name>::parse( _data )	\
+								, &type() );
 				CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 #undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
 			default: break;
@@ -1056,7 +1084,7 @@ namespace
 			( symbol* sym ) { return sym->_name == split_symbol; } );
 			if ( find_result == _fields.end() ) throw runtime_error( "enable to result symbol" );
 			uint32_t find_idx = static_cast<uint32_t>( find_result - _fields.begin() );
-			resolution_context.add_GEP_index( find_idx, *(*find_result)->_type );
+			resolution_context.add_GEP_index( find_idx, *(*find_result)->_evaled_type );
 		}
 
 		//compiler-created constructor
@@ -1078,7 +1106,7 @@ namespace
 			for_each( _fields.begin(), _fields.end(), [&]
 			( symbol* field )
 			{
-				arg_types.push_back( context.type_ref_type( *field->_type ) );
+				arg_types.push_back( context.type_ref_type( *field->_evaled_type ) );
 			} );
 			//Create struct type definition to llvm.
 			llvm_type_ptr struct_type = StructType::create( getGlobalContext(), arg_types );
@@ -1137,9 +1165,7 @@ namespace
 				; field_cell = object_traits::cast<cons_cell>( field_cell->_next ) )
 			{
 				fields.push_back( &object_traits::cast_ref<symbol>( field_cell->_value ) );
-				if ( fields.back()->_type == nullptr )
-					throw runtime_error( "pod fields must have a type" );
-				fn_arg_type.push_back( fields.back()->_type );
+				fn_arg_type.push_back( &context.symbol_type( *fields.back() ) );
 			}
 			//type assigned to pod.
 			type_ref& struct_type = context._type_library->get_type_ref( name._name );
@@ -1469,12 +1495,11 @@ namespace
 		{
 			symbol& my_name = object_traits::cast_ref<symbol>( cell._value );
 			cons_cell& body_start = object_traits::cast_ref<cons_cell>( cell._next );
-
-			if ( my_name._type== nullptr ) throw runtime_error( "numeric cast must have type" );
-			auto num_type = context._type_library->to_base_numeric_type( *my_name._type );
+			type_ref& name_type = context.symbol_type( my_name );
+			auto num_type = context._type_library->to_base_numeric_type( name_type );
 			check_valid_numeric_type( num_type );
 			numeric_cast_node* num_node 
-				= context._ast_allocator->construct<numeric_cast_node>( context._string_table, *my_name._type );
+				= context._ast_allocator->construct<numeric_cast_node>( context._string_table, name_type );
 			ast_node_ptr last_node( nullptr );
 			for ( cons_cell* body = &body_start; body; body = object_traits::cast<cons_cell>( body->_next ) )
 			{
@@ -1514,12 +1539,9 @@ namespace
 		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell )
 		{
 			symbol& my_name = object_traits::cast_ref<symbol>( cell._value );
-			if ( my_name._type == nullptr )
-				throw runtime_error( "ptr cast lacks target" );
-
+			type_ref& dest_type = context.symbol_type( my_name );
 			cons_cell& expr = object_traits::cast_ref<cons_cell>( cell._next );
 			ast_node& src_data = context._type_checker( expr._value );
-			type_ref& dest_type( *my_name._type );
 			type_ref& src_type( src_data.type() );
 			if ( context._type_library->is_pointer_type( dest_type ) == false
 				|| context._type_library->is_pointer_type( src_type ) == false )
@@ -1743,12 +1765,69 @@ ast_node& base_language_plugins::type_check_symbol( reader_context& context, lis
 	}
 }
 
+namespace
+{
+	template<typename num_type>
+	struct str_to_num
+	{
+	};
+
+	//Lots of things to do here.  First would be to allow compile time expressions as constants and not just numbers.
+	//Second would be to allow number of different bases
+	//third would be to have careful checking of ranges.
+	template<> struct str_to_num<bool> { static bool parse( const string& val ) { return std::stol( val ) ? true : false; } };
+	template<> struct str_to_num<uint8_t> { static uint8_t parse( const string& val ) { return static_cast<uint8_t>( std::stol( val ) ); } };
+	template<> struct str_to_num<int8_t> { static int8_t parse( const string& val ) { return static_cast<int8_t>( std::stol( val ) ); } };
+	template<> struct str_to_num<uint16_t> { static uint16_t parse( const string& val ) { return static_cast<uint16_t>( std::stol( val ) ); } };
+	template<> struct str_to_num<int16_t> { static int16_t parse( const string& val ) { return static_cast<int16_t>( std::stol( val ) ); } };
+	template<> struct str_to_num<uint32_t> { static uint32_t parse( const string& val ) { return static_cast<uint32_t>( std::stoll( val ) ); } };
+	template<> struct str_to_num<int32_t> { static int32_t parse( const string& val ) { return static_cast<int32_t>( std::stoll( val ) ); } };
+	template<> struct str_to_num<uint64_t> { static uint64_t parse( const string& val ) { return static_cast<uint64_t>( std::stoll( val ) ); } };
+	template<> struct str_to_num<int64_t> { static int64_t parse( const string& val ) { return static_cast<int64_t>( std::stoll( val ) ); } };
+	template<> struct str_to_num<float> { static float parse( const string& val ) { return static_cast<float>( std::stof( val ) ); } };
+	template<> struct str_to_num<double> { static double parse( const string& val ) { return static_cast<double>( std::stod( val ) ); } };
+
+	
+	template<typename number_type>
+	uint8_t* parse_constant_value( reader_context& context, const std::string& val )
+	{
+		number_type parse_val = str_to_num<number_type>::parse( val );
+		uint8_t* retval = context._factory->allocate_data( sizeof( number_type ), sizeof( number_type ) );
+		memcpy( retval, &parse_val, sizeof( number_type ) );
+		return retval;
+	}
+}
+
 ast_node& base_language_plugins::type_check_numeric_constant( reader_context& context, lisp::constant& cell )
 {
 	constant& cell_constant = cell;
-	if ( context._type_library->to_base_numeric_type( *cell_constant._type ) 
+	type_ref_ptr constant_type = nullptr;
+	string number_string( cell_constant._unparsed_number.c_str() );
+	if ( cell_constant._unevaled_type )
+		constant_type = &context._type_evaluator( *cell_constant._unevaled_type );
+	else
+	{
+		if ( number_string.find( '.' ) )
+			constant_type = &context._type_library->get_type_ref( base_numeric_types::f64 );
+		else
+			constant_type = &context._type_library->get_type_ref( base_numeric_types::i64 );
+	}
+	uint8_t* num_value(nullptr);
+	switch( context._type_library->to_base_numeric_type( *constant_type ) )
+	{
+#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )	\
+	case base_numeric_types::name:	\
+		num_value			\
+			= parse_constant_value<numeric_type_to_c_type_map<base_numeric_types::name>::numeric_type>( context, number_string );	\
+		break;
+CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
+#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
+	default:
+		throw runtime_error( "Invalid constant type" );
+	}
+	if ( context._type_library->to_base_numeric_type( *constant_type ) 
 		== base_numeric_types::no_known_type ) throw runtime_error( "invalid base numeric type" );
-	return *context._ast_allocator->construct<numeric_constant_ast_node>( context._string_table, cell_constant );
+	return *context._ast_allocator->construct<numeric_constant_ast_node>( context._string_table, num_value, *constant_type );
 }
 
 

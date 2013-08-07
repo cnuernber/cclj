@@ -95,6 +95,7 @@ llvm_type_ptr compiler_context::type_ref_type( type_ref& type )
 
 reader_context::reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
 					, string_table_ptr st, type_check_function tc
+						, type_eval_function te
 						, string_plugin_map_ptr special_forms
 						, string_plugin_map_ptr top_level_special_forms
 						, type_ast_node_map_ptr top_level_symbols
@@ -105,12 +106,22 @@ reader_context::reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_l
 	, _ast_allocator( ast_alloc )
 	, _symbol_map( top_level_symbols )
 	, _type_checker( tc )
+	, _type_evaluator( te )
 	, _special_forms( special_forms )
 	, _top_level_special_forms( top_level_special_forms )
 {
 }
 
 
+type_ref& reader_context::symbol_type( symbol& symbol )
+{
+	if ( symbol._evaled_type != nullptr )
+		return *symbol._evaled_type;
+	if ( symbol._unevaled_type == nullptr )
+		throw runtime_error( "symbol has no type" );
+	symbol._evaled_type = &_type_evaluator( *symbol._unevaled_type );
+	return *symbol._evaled_type;
+}
 
 namespace cclj
 {

@@ -17,7 +17,7 @@ namespace  {
 	class factory_impl : public factory
 	{
 		allocator_ptr			_allocator;
-		pool<sizeof(type_ref)>	_object_pool;
+		pool<sizeof(symbol)>	_object_pool;
 		const cons_cell&		_empty_cell;
 		vector<uint8_t*>		_buffer_allocs;
 

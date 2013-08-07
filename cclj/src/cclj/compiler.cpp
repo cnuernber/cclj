@@ -39,25 +39,6 @@ using namespace llvm;
 
 namespace {
 
-	template<typename num_type>
-	struct str_to_num
-	{
-	};
-
-	//Lots of things to do here.  First would be to allow compile time expressions as constants and not just numbers.
-	//Second would be to allow number of different bases
-	//third would be to have careful checking of ranges.
-	template<> struct str_to_num<bool> { static bool parse( const string& val ) { return std::stol( val ) ? true : false; } };
-	template<> struct str_to_num<uint8_t> { static uint8_t parse( const string& val ) { return static_cast<uint8_t>( std::stol( val ) ); } };
-	template<> struct str_to_num<int8_t> { static int8_t parse( const string& val ) { return static_cast<int8_t>( std::stol( val ) ); } };
-	template<> struct str_to_num<uint16_t> { static uint16_t parse( const string& val ) { return static_cast<uint16_t>( std::stol( val ) ); } };
-	template<> struct str_to_num<int16_t> { static int16_t parse( const string& val ) { return static_cast<int16_t>( std::stol( val ) ); } };
-	template<> struct str_to_num<uint32_t> { static uint32_t parse( const string& val ) { return static_cast<uint32_t>( std::stoll( val ) ); } };
-	template<> struct str_to_num<int32_t> { static int32_t parse( const string& val ) { return static_cast<int32_t>( std::stoll( val ) ); } };
-	template<> struct str_to_num<uint64_t> { static uint64_t parse( const string& val ) { return static_cast<uint64_t>( std::stoll( val ) ); } };
-	template<> struct str_to_num<int64_t> { static int64_t parse( const string& val ) { return static_cast<int64_t>( std::stoll( val ) ); } };
-	template<> struct str_to_num<float> { static float parse( const string& val ) { return static_cast<float>( std::stof( val ) ); } };
-	template<> struct str_to_num<double> { static double parse( const string& val ) { return static_cast<double>( std::stod( val ) ); } };
 
 	struct pcre_simple_regex
 	{
@@ -171,26 +152,28 @@ namespace {
 			return _temp_str.c_str();
 		}
 
-		type_ref* parse_type()
+		cons_cell* parse_type()
 		{
 			size_t token_start = _cur_ptr;
 			find_delimiter();
 			size_t token_end = _cur_ptr;
-			auto type_name = _str_table->register_str( substr( token_start, token_end ) );
-			vector<type_ref_ptr> specializations;
+			cons_cell* retval = _factory->create_cell();
+			symbol* item_name = _factory->create_symbol();
+			item_name->_name = _str_table->register_str( substr( token_start, token_end ) );
+			retval->_value = item_name;
+			vector<cons_cell*> specializations;
 			if ( current_char() == '[' )
 				specializations = parse_type_array();
-			return &_type_library->get_type_ref( type_name, specializations );
-		}
-
-		template<typename number_type>
-		uint8_t* parse_constant_value( const std::string& val )
-		{
-			number_type parse_val = str_to_num<number_type>::parse( val );
-			uint8_t* retval = _factory->allocate_data( sizeof( number_type ), sizeof( number_type ) );
-			memcpy( retval, &parse_val, sizeof( number_type ) );
+			array* specs = _factory->create_array();
+			if ( specializations.size() )
+			{
+				specs->_data = _factory->allocate_obj_buffer( specializations.size());
+				memcpy( specs->_data.begin(), &specializations[0], specializations.size() * sizeof( cons_cell* ) );
+			}
+			retval->_next = specs;
 			return retval;
 		}
+
 
 		
 		object_ptr parse_number_or_symbol(size_t token_start, size_t token_end)
@@ -206,28 +189,9 @@ namespace {
 				//Define the type.  If the data is suffixed, then we have it.
 				if( current_char() == '|' )
 				{
-
+					new_constant->_unparsed_number = _str_table->register_str( number_string.c_str() );
 					++_cur_ptr;
-					new_constant->_type = parse_type();
-				}
-				else 
-				{
-					if ( _temp_str.find( '.' ) )
-						new_constant->_type = &_type_library->get_type_ref( base_numeric_types::f64 );
-					else
-						new_constant->_type = &_type_library->get_type_ref( base_numeric_types::i64 );
-				}
-				switch( _type_library->to_base_numeric_type( *new_constant->_type ) )
-				{
-#define CCLJ_HANDLE_LIST_NUMERIC_TYPE( name )	\
-				case base_numeric_types::name:	\
-					new_constant->_value			\
-						= parse_constant_value<numeric_type_to_c_type_map<base_numeric_types::name>::numeric_type>( number_string );	\
-					break;
-CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
-#undef CCLJ_HANDLE_LIST_NUMERIC_TYPE
-				default:
-					throw runtime_error( "Invalid constant type" );
+					new_constant->_unevaled_type = parse_type();
 				}
 				return new_constant;
 			}
@@ -237,7 +201,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				//symbols are far harder to parse.
 				auto symbol_name = _str_table->register_str( _temp_str.c_str() );
 
-				type_ref* type_info = nullptr;
+				cons_cell* type_info = nullptr;
 				if ( !atend() && current_char() == '|' )
 				{
 					++_cur_ptr;
@@ -245,7 +209,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 				}
 				symbol* retval = _factory->create_symbol();
 				retval->_name = symbol_name;
-				retval->_type = type_info;
+				retval->_unevaled_type = type_info;
 				return retval;
 			}
 
@@ -295,14 +259,14 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			return retval; 
 		}
 
-		vector<type_ref_ptr> parse_type_array()
+		vector<cons_cell*> parse_type_array()
 		{
 			++_cur_ptr;
-			vector<type_ref*> array_contents;
+			vector<cons_cell*> array_contents;
 			eatwhite();
 			if ( atend() ) throw runtime_error( "fail" );
 			if ( current_char() == ']' )
-				return vector<type_ref_ptr>();
+				return vector<cons_cell*>();
 
 			while( current_char() != ']' )
 			{
@@ -380,7 +344,11 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			{ 
 				return type_check_cell( cc ); 
 			};
-			_context = shared_ptr<reader_context>( new reader_context( alloc, f, l, st, tc, special_forms
+			type_eval_function te = [this](cons_cell& c) -> type_ref&
+			{
+				return eval_cell_to_type( c );
+			};
+			_context = shared_ptr<reader_context>( new reader_context( alloc, f, l, st, tc, te, special_forms
 											, top_level_special_forms, top_level_symbols
 											, ast_alloc ) );
 		}
@@ -400,6 +368,30 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			default:
 				throw runtime_error( "unable to type check at this time" );
 			}
+		}
+
+		type_ref& eval_cell_to_type( cons_cell& cell )
+		{
+			//One of two cases.  Either the cell points to a type object
+			//or we can evaluate it as a type directly.
+			if ( cell._value == nullptr ) throw runtime_error( "invalid cell value" );
+			if ( cell._value->type() == types::symbol )
+			{
+				vector<type_ref_ptr> specializations;
+				if ( cell._next )
+				{
+					array& next_data = object_traits::cast_ref<array>( cell._next );
+					for_each( next_data._data.begin(), next_data._data.end(), [&]
+					( object_ptr item )
+					{
+						specializations.push_back( &eval_cell_to_type( object_traits::cast_ref<cons_cell>( item ) ) );
+					} );
+				}
+				symbol& cell_name = object_traits::cast_ref<symbol>( cell._value );
+				return _context->_type_library->get_type_ref( cell_name._name, specializations );
+			}
+			else
+				throw runtime_error( "invalid type in cell" );
 		}
 	};
 
