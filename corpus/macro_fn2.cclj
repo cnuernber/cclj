@@ -23,5 +23,7 @@
 
 ;macro should produce
 ;45.0|f32
-
+;note this is runtime plus as opposed to compile time plus used above.
+;probably the assembly optimizes all of this straight out of the program, and
+;we get a function that returns a simple constant
 (+ (compile-time-recurse-add (+ 5 4) |f32) 10|f32)
