@@ -36,7 +36,8 @@ namespace cclj { namespace plugins {
 
 		static void register_base_compiler_plugins( string_table_ptr str_table
 													, string_plugin_map_ptr top_level_special_forms
-													, string_plugin_map_ptr special_forms );
+													, string_plugin_map_ptr special_forms
+													, string_lisp_evaluator_map& lisp_evaluators );
 	};
 	
 	typedef function<void( type_ref& fn_type, ast_node& comp_node )> register_function;

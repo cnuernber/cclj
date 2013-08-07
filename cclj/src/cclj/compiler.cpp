@@ -83,7 +83,7 @@ namespace {
 			, _str( data )
 			, _cur_ptr( 0 )
 			, _end_ptr( data.size() )
-			, _number_regex( "[\\+-]?\\d+\\.?\\d*e?\\d*" ) 
+			, _number_regex( "^[\\+-]?\\d+\\.?\\d*e?\\d*" ) 
 		{
 		}
 		
@@ -154,24 +154,28 @@ namespace {
 
 		cons_cell* parse_type()
 		{
-			size_t token_start = _cur_ptr;
-			find_delimiter();
-			size_t token_end = _cur_ptr;
-			cons_cell* retval = _factory->create_cell();
-			symbol* item_name = _factory->create_symbol();
-			item_name->_name = _str_table->register_str( substr( token_start, token_end ) );
-			retval->_value = item_name;
-			vector<cons_cell*> specializations;
-			if ( current_char() == '[' )
-				specializations = parse_type_array();
-			array* specs = _factory->create_array();
-			if ( specializations.size() )
+			object_ptr item = parse_next_item();
+			if ( item->type() == types::symbol )
 			{
-				specs->_data = _factory->allocate_obj_buffer( specializations.size());
-				memcpy( specs->_data.begin(), &specializations[0], specializations.size() * sizeof( cons_cell* ) );
+				cons_cell* retval = _factory->create_cell();
+				retval->_value = item;
+				if ( current_char() == '[' )
+				{
+					cons_cell* next_cell = _factory->create_cell();
+					retval->_next = next_cell;
+					next_cell->_value = parse_next_item();
+				}
+				return retval;
 			}
-			retval->_next = specs;
-			return retval;
+			else if ( item->type() == types::array )
+			{
+				cons_cell* retval = _factory->create_cell();
+				cons_cell* next_cell = _factory->create_cell();
+				retval->_next = next_cell;
+				next_cell->_value = item;
+				return retval;
+			}
+			return &object_traits::cast_ref<cons_cell>( item );
 		}
 
 
@@ -184,15 +188,26 @@ namespace {
 			//Parse each token.
 			if ( is_number )
 			{
-				std::string number_string( _temp_str );
+				string number_string( _temp_str );
 				constant* new_constant = _factory->create_constant();
+				new_constant->_unparsed_number = _str_table->register_str( number_string.c_str() );
 				//Define the type.  If the data is suffixed, then we have it.
 				if( current_char() == '|' )
 				{
-					new_constant->_unparsed_number = _str_table->register_str( number_string.c_str() );
 					++_cur_ptr;
 					new_constant->_unevaled_type = parse_type();
 				}
+				else
+				{
+					new_constant->_unevaled_type = _factory->create_cell();
+					symbol* type_name = _factory->create_symbol();
+					if ( number_string.find( "." ) != string::npos )
+						type_name->_name = _str_table->register_str( "f64" );
+					else
+						type_name->_name = _str_table->register_str( "i64" );
+					new_constant->_unevaled_type->_value = type_name;
+				}
+
 				return new_constant;
 			}
 			//symbol
@@ -259,24 +274,6 @@ namespace {
 			return retval; 
 		}
 
-		vector<cons_cell*> parse_type_array()
-		{
-			++_cur_ptr;
-			vector<cons_cell*> array_contents;
-			eatwhite();
-			if ( atend() ) throw runtime_error( "fail" );
-			if ( current_char() == ']' )
-				return vector<cons_cell*>();
-
-			while( current_char() != ']' )
-			{
-				array_contents.push_back( parse_type() );
-			}
-			++_cur_ptr;
-
-			return array_contents;
-		}
-
 		object_ptr parse_list()
 		{
 			if ( current_char() != '(' ) throw runtime_error( "fail" );
@@ -337,7 +334,8 @@ namespace {
 							, string_plugin_map_ptr special_forms
 							, string_plugin_map_ptr top_level_special_forms
 							, type_ast_node_map_ptr top_level_symbols
-							, slab_allocator_ptr ast_alloc )
+							, slab_allocator_ptr ast_alloc
+							, string_lisp_evaluator_map& lisp_evals )
 							: _applier()
 		{
 			type_check_function tc = [this]( object_ptr cc ) -> ast_node&
@@ -350,7 +348,7 @@ namespace {
 			};
 			_context = shared_ptr<reader_context>( new reader_context( alloc, f, l, st, tc, te, special_forms
 											, top_level_special_forms, top_level_symbols
-											, ast_alloc ) );
+											, ast_alloc, lisp_evals ) );
 		}
 
 		ast_node& type_check_cell( object_ptr value )
@@ -370,6 +368,25 @@ namespace {
 			}
 		}
 
+		type_ref& eval_symbol_array_to_type( symbol& name, array* vals )
+		{
+			vector<type_ref_ptr> val_types;
+			if ( vals )
+			{
+				for ( size_t idx = 0, end = vals->_data.size(); idx < end; ++idx )
+				{
+					symbol& sub_type = object_traits::cast_ref<symbol>( vals->_data[idx] );
+					array* sub_specializations( nullptr );
+					if ( idx < end - 1 )
+						sub_specializations = object_traits::cast<array>( vals->_data[idx+1] );
+					if ( sub_specializations )
+						++idx;
+					val_types.push_back( &eval_symbol_array_to_type( sub_type, sub_specializations ) );
+				}
+			}
+			return _context->_type_library->get_type_ref( name._name, val_types );
+		}
+
 		type_ref& eval_cell_to_type( cons_cell& cell )
 		{
 			//One of two cases.  Either the cell points to a type object
@@ -377,18 +394,14 @@ namespace {
 			if ( cell._value == nullptr ) throw runtime_error( "invalid cell value" );
 			if ( cell._value->type() == types::symbol )
 			{
-				vector<type_ref_ptr> specializations;
+				symbol& type_name = object_traits::cast_ref<symbol>( cell._value );
+				array* specs( nullptr );
 				if ( cell._next )
 				{
-					array& next_data = object_traits::cast_ref<array>( cell._next );
-					for_each( next_data._data.begin(), next_data._data.end(), [&]
-					( object_ptr item )
-					{
-						specializations.push_back( &eval_cell_to_type( object_traits::cast_ref<cons_cell>( item ) ) );
-					} );
+					cons_cell& spec_cell = object_traits::cast_ref<cons_cell>( cell._next );
+					specs = &object_traits::cast_ref<array>( spec_cell._value );
 				}
-				symbol& cell_name = object_traits::cast_ref<symbol>( cell._value );
-				return _context->_type_library->get_type_ref( cell_name._name, specializations );
+				return eval_symbol_array_to_type( type_name, specs );
 			}
 			else
 				throw runtime_error( "invalid type in cell" );
@@ -436,6 +449,7 @@ namespace {
 		vector<global_variable_entry>   _global_variables;
 		vector<global_function_entry>	_global_functions;
 		compiler_impl*					_this_ptr;
+		string_lisp_evaluator_map		_evaluators;
 
 		compiler_impl()
 			: _allocator( allocator::create_checking_allocator() )
@@ -448,7 +462,7 @@ namespace {
 			, _ast_allocator( make_shared<slab_allocator<> >( _allocator ) )
 			, _module( nullptr )
 		{
-			base_language_plugins::register_base_compiler_plugins( _str_table, _top_level_special_forms, _special_forms );
+			base_language_plugins::register_base_compiler_plugins( _str_table, _top_level_special_forms, _special_forms, _evaluators );
 			register_function reg_fn = [this]( type_ref& fn_type, ast_node& comp_node )
 			{
 				_top_level_symbols->insert( make_pair( &fn_type, &comp_node ) );
@@ -497,7 +511,8 @@ namespace {
 		{
 			type_checker checker( _allocator, _factory, _type_library
 								, _str_table, _special_forms
-								, _top_level_special_forms, _top_level_symbols, _ast_allocator );
+								, _top_level_special_forms, _top_level_symbols, _ast_allocator
+								, _evaluators );
 
 			for_each( _global_variables.begin(), _global_variables.end(), [&,this]
 			( global_variable_entry& entry )

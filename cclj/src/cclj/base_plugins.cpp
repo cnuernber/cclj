@@ -339,8 +339,6 @@ namespace
 		const symbol&			_name;
 		data_buffer<object_ptr> _arguments;
 		cons_cell&				_body;
-		string_table_str		_quote;
-		string_table_str		_unquote;
 
 		static const char* static_type() { return "macro_preprocessor"; }
 		
@@ -349,12 +347,10 @@ namespace
 			, _name( name )
 			, _arguments( args )
 			, _body( const_cast<cons_cell&>( body ) )
-			, _quote( st->register_str( "quote" ) )
-			, _unquote( st->register_str( "unquote" ) )
 		{
 		}
 
-		void quote_lisp_object( reader_context& context, object_ptr& item )
+		static void quote_lisp_object( reader_context& context, object_ptr& item )
 		{
 			switch( item->type() )
 			{
@@ -362,7 +358,7 @@ namespace
 				{
 					cons_cell& arg_cell = object_traits::cast_ref<cons_cell>( item );
 					symbol& fn_name = object_traits::cast_ref<symbol>( arg_cell._value );
-					if ( fn_name._name == _unquote )
+					if ( fn_name._name == context._string_table->register_str( "unquote" ) )
 					{
 						cons_cell& uq_arg = object_traits::cast_ref<cons_cell>( arg_cell._next );
 						symbol& uq_arg_sym = object_traits::cast_ref<symbol>( uq_arg._value );
@@ -383,11 +379,25 @@ namespace
 					quote_array( context, arg_array );
 				}
 				break;
+			case types::symbol:
+				{
+					symbol& sym = object_traits::cast_ref<symbol>( item );
+					if ( sym._unevaled_type )
+						quote_list( context, *sym._unevaled_type );
+				}
+				break;
+			case types::constant:
+				{
+					constant& cons = object_traits::cast_ref<constant>( item );
+					if ( cons._unevaled_type )
+						quote_list( context, *cons._unevaled_type );
+				}
+				break;
 			default: break; //leave item as is
 			}
 		}
 
-		void quote_list( reader_context& context, cons_cell& item )
+		static void quote_list( reader_context& context, cons_cell& item )
 		{
 			for ( cons_cell* next_arg = object_traits::cast<cons_cell>( &item );
 				next_arg; next_arg = object_traits::cast<cons_cell>( next_arg->_next ) )
@@ -396,7 +406,7 @@ namespace
 			}
 		}
 
-		void quote_array( reader_context& context, array& item )
+		static void quote_array( reader_context& context, array& item )
 		{
 			for ( size_t idx = 0, end = item._data.size(); idx < end; ++idx )
 			{
@@ -404,7 +414,7 @@ namespace
 			}
 		}
 
-		object_ptr quote( reader_context& context, cons_cell& first_arg )
+		static object_ptr quote( reader_context& context, cons_cell& first_arg )
 		{
 			cons_cell& arg_val = object_traits::cast_ref<cons_cell>( first_arg._value );
 			object_ptr retval = &arg_val;
@@ -412,13 +422,71 @@ namespace
 			return retval;
 		}
 
-		object_ptr lisp_apply( reader_context& context, cons_cell& cell )
+		static object_ptr lisp_apply( reader_context& context, cons_cell& cell )
 		{
 			symbol& app_name = object_traits::cast_ref<symbol>( cell._value );
-			if ( app_name._name == _quote )
+			if ( app_name._name == context._string_table->register_str( "quote" ) )
 				return quote( context, object_traits::cast_ref<cons_cell>( cell._next ) );
 			else
-				throw runtime_error( "failed to handle preprocessor symbol" );
+			{
+				auto iter = context._preprocessor_evaluators.find( app_name._name );
+				if ( iter != context._preprocessor_evaluators.end() )
+				{
+					return iter->second->eval( context, cell );
+				}
+				throw runtime_error( "unable to eval lisp preprocessor symbol" );
+			}
+		}
+
+		static double eval_constant( reader_context& /*context*/, constant& src )
+		{
+			return std::stod( src._unparsed_number.c_str() );
+		}
+
+		static object_ptr double_to_constant( reader_context& context, double& val )
+		{
+			constant* retval = context._factory->create_constant();
+			cons_cell* typeval = context._factory->create_cell();
+			symbol* type_name = context._factory->create_symbol();
+			char data_buf[1024];
+			sprintf( data_buf, "%f", val );
+			retval->_unparsed_number = context._string_table->register_str( data_buf );
+			retval->_unevaled_type = typeval;
+			typeval->_value = type_name;
+			type_name->_name = context._string_table->register_str( "f64" );
+			return retval;
+		}
+
+		static object_ptr eval_symbol( reader_context& context, symbol& src )
+		{
+			auto iter = context._preprocessor_symbols.find( src._name );
+			if ( iter == context._preprocessor_symbols.end() )
+				throw runtime_error( "Error evaulating symbol" );
+			return iter->second;
+		}
+
+		static object_ptr lisp_eval( reader_context& context, object_ptr src )
+		{
+			if ( src == nullptr )
+				throw runtime_error( "invalid lisp evaluation" );
+			switch( src->type() )
+			{
+			case types::array: throw runtime_error( "unable to eval an array" );
+			case types::symbol: return eval_symbol( context, object_traits::cast_ref<symbol>( src ) );
+			case types::constant: return src;
+			case types::cons_cell: return lisp_apply( context, object_traits::cast_ref<cons_cell>( src ) );
+			default: break;
+			}
+			throw runtime_error( "unable to evaluate lisp symbol" );
+		}
+
+		static vector<object_ptr> eval_fn_arguments( reader_context& context, cons_cell& callsite )
+		{
+			vector<object_ptr> arg_list;
+			for ( cons_cell* arg_cell = object_traits::cast<cons_cell>( callsite._next ); arg_cell
+				; arg_cell = object_traits::cast<cons_cell>( arg_cell->_next ) )
+				arg_list.push_back( lisp_eval( context, arg_cell->_value ) );
+			return arg_list;
 		}
 		
 		virtual ast_node& type_check( reader_context& context, cons_cell& callsite )
@@ -446,9 +514,6 @@ namespace
 		}
 	};
 
-
-
-
 	class macro_def_plugin : public compiler_plugin
 	{
 	public:
@@ -472,6 +537,280 @@ namespace
 			return *context._ast_allocator->construct<fake_ast_node>( context._string_table, context._type_library );
 		}
 
+	};
+
+	typedef function<object_ptr(reader_context&, cons_cell&)> generic_lisp_special_form_function;
+	struct generic_lisp_special_form : public lisp_evaluator
+	{
+		generic_lisp_special_form_function _fn;
+		generic_lisp_special_form( generic_lisp_special_form_function fn ) : _fn( fn ) {}
+		
+		virtual lisp::object_ptr eval( reader_context& context, cons_cell& cell )
+		{
+			return _fn( context, cell );
+		}
+		static object_ptr let_eval( reader_context& context, cons_cell& cell )
+		{
+			cons_cell& assign_array = object_traits::cast_ref<cons_cell>( cell._next );
+			object_ptr_buffer assign_data = object_traits::cast_ref<array>( assign_array._value )._data;
+			cons_cell& body_start = object_traits::cast_ref<cons_cell>( assign_array._next );
+			preprocess_symbol_context preprocess( context._preprocessor_symbols );
+			for( size_t idx = 0, end = assign_data.size(); idx < end; idx += 2 )
+			{
+				symbol& var_name = object_traits::cast_ref<symbol>( assign_data[idx] );
+				object_ptr expr = macro_preprocessor::lisp_eval( context, assign_data[idx+1] );
+				preprocess.add_symbol( var_name._name, *expr );
+			}
+			object_ptr retval( nullptr );
+			for ( cons_cell* body = &body_start; body; body = object_traits::cast<cons_cell>( body->_next ) )
+				retval = macro_preprocessor::lisp_eval( context, body->_value );
+			if ( retval == nullptr )
+				throw runtime_error( "Let return value is null" );
+			return retval;
+		}
+		static object_ptr if_eval( reader_context& context, cons_cell& cell )
+		{
+			//what evaluates to true?
+			cons_cell& compare_cell = object_traits::cast_ref<cons_cell>( cell._next );
+			cons_cell& true_cell  = object_traits::cast_ref<cons_cell>( compare_cell._next );
+			cons_cell& false_cell = object_traits::cast_ref<cons_cell>( true_cell._next );
+			object_ptr result = macro_preprocessor::lisp_eval( context, compare_cell._value );
+			bool test_value = false;
+			if ( result )
+			{
+				if ( result->type() == types::constant )
+					test_value = macro_preprocessor::eval_constant( context, object_traits::cast_ref<constant>( result ) ) != 0.0;
+				else if ( result->type() == types::cons_cell )
+				{
+					cons_cell& cell = object_traits::cast_ref<cons_cell>( result );
+					if ( cell._next || cell._value )
+						test_value = true;
+				}
+			}
+			if ( test_value )
+				return macro_preprocessor::lisp_eval( context, true_cell._value );
+			else
+				return macro_preprocessor::lisp_eval( context, false_cell._value );
+		}
+
+		static void register_functions( string_table_ptr st, string_lisp_evaluator_map& map )
+		{
+			map.insert( make_pair( st->register_str( "let" ), make_shared<generic_lisp_special_form> (
+					[]( reader_context& ctx, cons_cell& cell ) { return let_eval( ctx, cell ); } ) ) );
+			map.insert( make_pair( st->register_str( "if" ), make_shared<generic_lisp_special_form> (
+					[]( reader_context& ctx, cons_cell& cell ) { return if_eval( ctx, cell ); } ) ) );
+		}
+	};
+
+	//a generic function is just passed the body.  The arguments have already been evaluated
+	//and added to the symbol table.
+	typedef function<object_ptr(reader_context&, vector<object_ptr>&)> generic_lisp_function;
+	struct generic_preprocessor_function : public lisp_evaluator
+	{
+		generic_lisp_function _function;
+		generic_preprocessor_function( generic_lisp_function fn )
+			: _function( fn )
+		{
+		}
+		virtual lisp::object_ptr eval( reader_context& context, cons_cell& cell )
+		{
+			vector<object_ptr> arg_vals = macro_preprocessor::eval_fn_arguments( context, cell );
+			return _function( context, arg_vals );
+		}
+
+		static object_ptr plus( reader_context& context, vector<object_ptr>& args )
+		{
+			double total = 0;
+			for_each( args.begin(), args.end(), [&] 
+			(object_ptr arg )
+			{
+				constant& cons = object_traits::cast_ref<constant>( arg );
+				total += macro_preprocessor::eval_constant( context, cons );
+			} );
+			return macro_preprocessor::double_to_constant( context, total );
+		}
+
+		static object_ptr minus( reader_context& context, vector<object_ptr>& args )
+		{
+			double total = 0;
+			bool first = true;
+			for_each( args.begin(), args.end(), [&] 
+			(object_ptr arg )
+			{
+				constant& cons = object_traits::cast_ref<constant>( arg );
+				auto val = macro_preprocessor::eval_constant( context, cons );
+				if ( first )
+				{
+					first = false;
+					total = val;
+				}
+				else
+				{
+					total -= val;
+				}
+			} );
+			return macro_preprocessor::double_to_constant( context, total );
+		}
+		static object_ptr less_than( reader_context& context, vector<object_ptr>& args )
+		{
+			double total = 0;
+			if ( args.size() != 2 ) 
+				throw runtime_error( "invalid < arguments, must be two" );
+			double lhs = macro_preprocessor::eval_constant( context, object_traits::cast_ref<constant>( args[0] ) );
+			double rhs = macro_preprocessor::eval_constant( context, object_traits::cast_ref<constant>( args[1] ) );
+			if ( lhs < rhs ) total = 1;
+			return macro_preprocessor::double_to_constant( context, total );
+		}
+
+		static object_ptr greater_than( reader_context& context, vector<object_ptr>& args )
+		{
+			double total = 0;
+			if ( args.size() != 2 ) 
+				throw runtime_error( "invalid > arguments, must be two" );
+			double lhs = macro_preprocessor::eval_constant( context, object_traits::cast_ref<constant>( args[0] ) );
+			double rhs = macro_preprocessor::eval_constant( context, object_traits::cast_ref<constant>( args[1] ) );
+			if ( lhs > rhs ) total = 1;
+			return macro_preprocessor::double_to_constant( context, total );
+		}
+
+		static object_ptr get_type( reader_context& /*context*/, vector<object_ptr>& args )
+		{
+			if ( args.size() != 1 ) throw runtime_error( "invalid number of args for type function" );
+			if ( args[0]->type() == types::symbol )
+			{
+				symbol& value = object_traits::cast_ref<symbol>( args[0] );
+				if( value._unevaled_type == nullptr ) throw runtime_error( "invalid type request, no type on symbol" );
+				return value._unevaled_type;
+			}
+			else if ( args[0]->type() == types::constant )
+			{
+				constant& value = object_traits::cast_ref<constant>( args[0] );
+				if ( value._unevaled_type == nullptr ) throw runtime_error( "constant provided with no type" );
+				return value._unevaled_type;
+			}
+			throw runtime_error( "cannot grab type from anything but symbol or constant" );
+		}
+
+		static object_ptr set_type( reader_context& /*context*/, vector<object_ptr>& args )
+		{
+			if ( args.size() != 2 ) throw runtime_error( "invalid number of args for set type function" );
+			cons_cell& new_type = object_traits::cast_ref<cons_cell>( args[1] );
+			if ( args[0]->type() == types::symbol )
+			{
+				symbol& target = object_traits::cast_ref<symbol>( args[0] );
+				target._unevaled_type = &new_type;
+				target._evaled_type = nullptr;
+			}
+			else if ( args[0]->type() == types::constant )
+			{
+				constant& target = object_traits::cast_ref<constant>( args[0] );
+				target._unevaled_type = &new_type;
+			}
+			else
+				throw runtime_error( "cannot set type on anything but symbol or constant" );
+			return args[0];
+		}
+		//what this really should do is:
+		//1. parse the constant to what it will be when actually evaluated
+		//2. static cast the constant to the desired final type.
+		//3. write out the new constant to a string
+		//4. create a new constant object with new string.
+		static object_ptr create_constant( reader_context& context, vector<object_ptr>& args )
+		{
+			if ( args.size() != 2 ) throw runtime_error( "invalid number of args for create-constant" );
+			constant& existing = object_traits::cast_ref<constant>( args[0] );
+			cons_cell& request_type = object_traits::cast_ref<cons_cell>( args[1] );
+			constant* retval = context._factory->create_constant();
+			retval->_unparsed_number = existing._unparsed_number;
+			retval->_unevaled_type = &request_type;
+			return retval;
+		}
+		
+
+		static object_ptr eval( reader_context& context, vector<object_ptr> args )
+		{
+			if ( args.size() != 1 ) throw runtime_error( "invalid number of args for eval" );
+			return macro_preprocessor::lisp_eval( context, args[0] );
+		}
+
+		static void register_functions( string_table_ptr st, string_lisp_evaluator_map& map )
+		{
+			map.insert( make_pair( st->register_str( "+" ), make_shared<generic_preprocessor_function>( 
+				[] ( reader_context& context, vector<object_ptr>& args ) { return plus( context, args ); } ) ) );
+			map.insert( make_pair( st->register_str( "-" ), make_shared<generic_preprocessor_function>( 
+				[] ( reader_context& context, vector<object_ptr>& args ) { return minus( context, args ); } ) ) );
+			map.insert( make_pair( st->register_str( "<" ), make_shared<generic_preprocessor_function>( 
+				[] ( reader_context& context, vector<object_ptr>& args ) { return less_than( context, args ); } ) ) );
+			map.insert( make_pair( st->register_str( ">" ), make_shared<generic_preprocessor_function>( 
+				[] ( reader_context& context, vector<object_ptr>& args ) { return greater_than( context, args ); } ) ) );
+			map.insert( make_pair( st->register_str( "get-type" ), make_shared<generic_preprocessor_function>( 
+				[] ( reader_context& context, vector<object_ptr>& args ) { return get_type( context, args ); } ) ) );
+			map.insert( make_pair( st->register_str( "set-type" ), make_shared<generic_preprocessor_function>( 
+				[] ( reader_context& context, vector<object_ptr>& args ) { return set_type( context, args ); } ) ) );
+			map.insert( make_pair( st->register_str( "create-constant" ), make_shared<generic_preprocessor_function>( 
+				[] ( reader_context& context, vector<object_ptr>& args ) { return create_constant( context, args ); } ) ) );
+			map.insert( make_pair( st->register_str( "eval" ), make_shared<generic_preprocessor_function>( 
+				[] ( reader_context& context, vector<object_ptr>& args ) { return eval( context, args ); } ) ) );
+		}
+	};
+
+	struct macro_function : public lisp_evaluator
+	{
+		object_ptr_buffer	_arg_decls;
+		cons_cell&			_body;
+		macro_function( object_ptr_buffer decls, const cons_cell& b )
+			: _arg_decls( decls )
+			, _body( const_cast< cons_cell& >( b ) )
+		{
+		}
+
+		virtual lisp::object_ptr eval( reader_context& context, cons_cell& cell )
+		{
+			vector<object_ptr> arg_vals = macro_preprocessor::eval_fn_arguments( context, cell );
+			string_obj_ptr_map old_symbols( context._preprocessor_symbols );
+			context._preprocessor_symbols.clear();
+			preprocess_symbol_context preprocess( context._preprocessor_symbols );
+			uint32_t arg_idx = 0;
+			for_each( _arg_decls.begin(), _arg_decls.end(), [&]
+			( object_ptr decl )
+			{
+				if ( arg_idx < arg_vals.size() )
+				{
+					auto arg_value = arg_vals[arg_idx];
+					symbol& decl_name = object_traits::cast_ref<symbol>( decl );
+					preprocess.add_symbol( decl_name._name, *arg_value );
+				}
+				++arg_idx;
+			} );
+			object_ptr retval( nullptr );
+			for( cons_cell* body_cell = &_body; body_cell
+				; body_cell = object_traits::cast<cons_cell>( body_cell->_next ) )
+			{
+				retval = macro_preprocessor::lisp_eval( context, body_cell->_value );
+			}
+			context._preprocessor_symbols = old_symbols;
+			return retval;
+		}
+	};
+
+	struct macro_function_plugin : public compiler_plugin
+	{
+		macro_function_plugin( string_table_ptr st )
+			: compiler_plugin( st->register_str( "define macro function" ) )
+		{
+		}
+
+		virtual ast_node& type_check( reader_context& context, cons_cell& callsite )
+		{
+			cons_cell& name_cell = object_traits::cast_ref<cons_cell>( callsite._next );
+			cons_cell& args_cell = object_traits::cast_ref<cons_cell>( name_cell._next );
+			cons_cell& body_cell = object_traits::cast_ref<cons_cell>( args_cell._next );
+			symbol& name = object_traits::cast_ref<symbol>( name_cell._value );
+			object_ptr_buffer arg_list = object_traits::cast_ref<array>( args_cell._value )._data;
+			lisp_evaluator_ptr eval_ptr = make_shared<macro_function>( arg_list, body_cell );
+			context._preprocessor_evaluators.insert( make_pair( name._name, eval_ptr ) );
+			return *context._ast_allocator->construct<fake_ast_node>( context._string_table, context._type_library );
+		}
 	};
 
 	struct template_fn
@@ -618,24 +957,39 @@ namespace
 			throw runtime_error( "Unrecognized object in template specialization::convert value" );
 		}
 
-		cons_cell* uneval_type( reader_context& context, type_ref& type )
+		pair<symbol*,array*> uneval_type_to_parts( reader_context& context, type_ref& type )
 		{
-			cons_cell* retval = context._factory->create_cell();
 			symbol* type_name = context._factory->create_symbol();
 			type_name->_name = type._name;
-			retval->_value = type_name;
-			vector<cons_cell*> specializations;
-			for_each( type._specializations.begin(), type._specializations.end(), [&]
-			( type_ref_ptr spec )
+			array* specs = nullptr;
+			if ( type._specializations.size() )
 			{
-				specializations.push_back( uneval_type( context, *spec ) );
-			} );
-			if ( specializations.size() )
+				vector<object_ptr> spec_data;
+				specs = context._factory->create_array();
+				for_each( type._specializations.begin(), type._specializations.end(), [&]
+				( type_ref_ptr tr )
+				{
+					auto unevaled_data = uneval_type_to_parts( context, *tr );
+					spec_data.push_back( unevaled_data.first );
+					if ( unevaled_data.second )
+						spec_data.push_back( unevaled_data.second );
+				} );
+				specs->_data = context._factory->allocate_obj_buffer( spec_data.size() );
+				memcpy( specs->_data.begin(), &spec_data[0], spec_data.size() * sizeof( object_ptr ) );
+			}
+			return make_pair( type_name, specs );
+		}
+
+		cons_cell* uneval_type( reader_context& context, type_ref& type )
+		{
+			auto parts = uneval_type_to_parts( context, type );
+			cons_cell* retval = context._factory->create_cell();
+			retval->_value = parts.first;
+			if ( parts.second )
 			{
-				array* specs = context._factory->create_array();
-				retval->_next = specs;
-				specs->_data = context._factory->allocate_obj_buffer( specializations.size() );
-				memcpy( specs->_data.begin(), &specializations[0], specializations.size() * sizeof( cons_cell* ) );
+				cons_cell* next_cell = context._factory->create_cell();
+				retval->_next = next_cell;
+				next_cell->_value = parts.second;
 			}
 			return retval;
 		}
@@ -677,7 +1031,9 @@ namespace
 					if ( !first )
 						name_mangle.append( " " );
 					symbol& arg_sym = object_traits::cast_ref<symbol>( arg );
-					name_mangle.append( context._type_evaluator(*template_arg_vals.find( arg_sym._name )->second).to_string() );
+					auto runtime_type = template_arg_vals.find( arg_sym._name );
+					if ( runtime_type == template_arg_vals.end() ) throw runtime_error( "invalid template type" );
+					name_mangle.append( context._type_evaluator(*runtime_type->second).to_string() );
 				} );
 				name_mangle.append( "]" );
 			}
@@ -1842,7 +2198,8 @@ ast_node& base_language_plugins::create_global_function_node(
 
 void base_language_plugins::register_base_compiler_plugins( string_table_ptr str_table
 											, string_plugin_map_ptr top_level_special_forms
-											, string_plugin_map_ptr special_forms )
+											, string_plugin_map_ptr special_forms
+											, string_lisp_evaluator_map& lisp_evaluators )
 {
 	
 	top_level_special_forms->insert( make_pair( str_table->register_str( "defn" )
@@ -1857,6 +2214,9 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 		, plugin ) );
 	top_level_special_forms->insert( make_pair( str_table->register_str( "specialize-template-fn" )
 		, plugin ) );
+
+	top_level_special_forms->insert( make_pair( str_table->register_str( "def-macro-fn" )
+		, make_shared<macro_function_plugin>( str_table ) ) );
 
 
 	special_forms->insert( make_pair( str_table->register_str( "if" )
@@ -1873,6 +2233,9 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 		, make_shared<numeric_cast_plugin>( str_table ) ) );
 	special_forms->insert( make_pair( str_table->register_str( "ptr-cast" )
 		, make_shared<ptr_cast_plugin>( str_table ) ) );
+
+	generic_lisp_special_form::register_functions( str_table, lisp_evaluators );
+	generic_preprocessor_function::register_functions( str_table, lisp_evaluators );
 
 }
 

@@ -274,6 +274,19 @@ namespace cclj
 			}
 		}
 	};
+
+	class lisp_evaluator
+	{
+	protected:
+		virtual ~lisp_evaluator(){}
+	public:
+		friend class shared_ptr<lisp_evaluator>;
+		virtual lisp::object_ptr eval( reader_context& context, lisp::cons_cell& callsite ) = 0;
+	};
+
+	typedef shared_ptr<lisp_evaluator> lisp_evaluator_ptr;
+
+	typedef unordered_map<string_table_str,lisp_evaluator_ptr> string_lisp_evaluator_map; 
 	 
 	struct reader_context
 	{
@@ -289,6 +302,7 @@ namespace cclj
 		string_plugin_map_ptr		_top_level_special_forms;
 		string_obj_ptr_map			_preprocessor_symbols;
 		vector<ast_node_ptr>		_additional_top_level_nodes;
+		string_lisp_evaluator_map	_preprocessor_evaluators;
 
 		reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
 							, string_table_ptr st, type_check_function tc
@@ -296,7 +310,8 @@ namespace cclj
 							, string_plugin_map_ptr special_forms
 							, string_plugin_map_ptr top_level_special_forms
 							, type_ast_node_map_ptr top_level_symbols
-							, slab_allocator_ptr ast_alloc );
+							, slab_allocator_ptr ast_alloc
+							, string_lisp_evaluator_map& lisp_evals );
 
 		type_ref& symbol_type( lisp::symbol& symbol );
 	};
@@ -312,6 +327,8 @@ namespace cclj
 		compiler_plugin( string_table_str pname ) : _plugin_name( pname ) {}
 		friend class shared_ptr<compiler_plugin>;
 		virtual string_table_str plugin_name() { return _plugin_name; }
+		//vast majority of compiler plugins operate at this level, transforming the lisp
+		//ast into the compiler ast.
 		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell ) = 0;
 	};
 

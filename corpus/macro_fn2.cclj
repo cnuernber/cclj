@@ -1,10 +1,9 @@
-
 ;macro functions are normal lisp functions that run at compile time.
 ;thus their arguments are evaluated at call time just like the normal
 ;functions.  Numbers are stripped of their types during lisp computation
 ;so all lisp computations at compile time produce doubles (for now).
 (def-macro-fn recurse-add-macro [a]
-  (if (> a 0 )
+  (if (> a 0)
     (+ a (recurse-add-macro (- a 1)))
     0))
 
@@ -18,10 +17,11 @@
 ;the macro has computed its result.
 
 (defmacro compile-time-recurse-add[a b]
-  (let [added (recurse-add-macro a)] ;a is evaluated in the lisp context
-    (quote (numeric-cast|(unquote b) (unquote added)))))
+  (let [added (recurse-add-macro (eval a)) ;a is evaluated in the lisp context
+		type-data (get-type b)]
+    (create-constant added type-data )))
 
 ;macro should produce
-;(numeric-cast|f32 45|f64)
+;45.0|f32
 
-(compile-time-recurse-add (+ 5 4) |f32)
+(+ (compile-time-recurse-add (+ 5 4) |f32) 10|f32)
