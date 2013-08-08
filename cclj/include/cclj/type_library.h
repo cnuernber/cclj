@@ -162,7 +162,12 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			return ( type._name == string_table()->register_str( "ptr" ) );
 		}
 
-		virtual type_ref& get_type_ref( base_numeric_types::_enum type )
+		type_ref& get_void_type()
+		{
+			return get_type_ref( "void" );
+		}
+
+		type_ref& get_type_ref( base_numeric_types::_enum type )
 		{
 			switch( type )
 			{
@@ -173,6 +178,8 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			}
 			throw runtime_error( "unrecognized base numeric type" );
 		}
+
+		
 
 		base_numeric_types::_enum to_base_numeric_type( type_ref& dtype )
 		{

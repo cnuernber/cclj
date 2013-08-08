@@ -3,7 +3,34 @@
 ;about construction/assignment/deconstruction.  Everything
 ;else you can do with functions and PODS, but the object invariants
 ;you cannot do with such objects.
+;in addition, they provide context for variable lookups.
 
-(def-object array-type
-  (field a|ptr[f32])
-  (field b|f32))
+(define-object float-array
+  (field data|ptr[f32])
+  (field len|u32))
+
+(define-trivial-constructor float-array
+  [data (nil|f32)
+   len 0|u32])
+
+(define-destructor float-array
+  (release-data))
+
+(define-member-function float-array release-data|u32 []
+  (free rt (ptr-cast|unqual data))
+  (set data (nil|f32))
+  (set len 0|u32))
+
+(define-member-function float-array set-len|u32 [new-len|u32]
+  (let [old-len len
+        old-data data]
+    (set data (if (> new-len 0|u32)
+    	   	  (ptr-cast|f32 (malloc rt (* new-len 4|u32) 4|u8))
+		  (nil|f32)))
+    (set len new-len)
+    (when (> old-len 0)
+      (when (> new-len 0)
+        (memcpy (ptr-cast|ptr[u8] new-data) (ptr-cast|ptr[u8] old-data) (* old-len 4|u32)))
+	(free rt (ptr-cast|ptr[unqual] old-data))))
+  0|u32)
+

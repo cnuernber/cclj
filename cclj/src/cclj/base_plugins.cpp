@@ -1358,10 +1358,15 @@ namespace
 			( pair<symbol*, ast_node*>& var_dec )
 			{
 				auto var_eval = var_dec.second->compile_second_pass( context );
-				auto alloca = entryBuilder.CreateAlloca( context.type_ref_type( *var_eval.second )
-																, 0, var_dec.first->_name.c_str() );
-				context._builder.CreateStore( var_eval.first, alloca );
-				let_vars.add_variable( var_dec.first->_name, alloca, *var_eval.second );
+				if( var_eval.first )
+				{
+					auto alloca = entryBuilder.CreateAlloca( context.type_ref_type( *var_eval.second )
+																	, 0, var_dec.first->_name.c_str() );
+					context._builder.CreateStore( var_eval.first, alloca );
+					let_vars.add_variable( var_dec.first->_name, alloca, *var_eval.second );
+				}
+				else
+					let_vars.add_variable( var_dec.first->_name, nullptr, context._type_library->get_void_type() );
 			} );
 		}
 		
@@ -1542,7 +1547,7 @@ namespace
 		ast_node_ptr						_cond_node;
 
 		for_loop_ast_node( string_table_ptr st, type_library_ptr lt )
-			: ast_node( st->register_str( "for loop" ), lt->get_type_ref( base_numeric_types::i32 ) )
+			: ast_node( st->register_str( "for loop" ), lt->get_void_type() )
 		{
 		}
 		
@@ -1571,8 +1576,7 @@ namespace
 			}
 			context._builder.CreateBr( cond_block );
 			context._builder.SetInsertPoint( exit_block );
-			return make_pair( ConstantInt::get( Type::getInt32Ty( getGlobalContext() ), 0 )
-								, &context._type_library->get_type_ref( base_numeric_types::i32 ) );
+			return pair<llvm_value_ptr, type_ref_ptr>( nullptr, &context._type_library->get_void_type() );
 		}
 	};
 	
