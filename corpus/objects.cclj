@@ -1,0 +1,9 @@
+;objects are different than PODS (plain old datatype)
+;in that the compiler will attempt to preserve invariants
+;about construction/assignment/deconstruction.  Everything
+;else you can do with functions and PODS, but the object invariants
+;you cannot do with such objects.
+
+(def-object array-type
+  (field a|ptr[f32])
+  (field b|f32))
