@@ -25,7 +25,10 @@
      new-data))
 	
 	
-
+; note that void can be assigned to a variable and can be
+; returned and used in function arguments.  Treating void like
+; a normal value makes a lot of sense when you get to complex
+; template systems and visitor patterns.
 (let [array-len 10|u32
        data-buffer (inc-array array-len)
        _ (update-array data-buffer array-len)

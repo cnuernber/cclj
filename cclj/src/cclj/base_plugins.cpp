@@ -217,12 +217,17 @@ namespace
 
 		pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
-			variable_context fn_context( context._variables );
-			initialize_function( context, *_function, _arguments, fn_context );
+
 			pair<llvm_value_ptr_opt, type_ref_ptr> last_statement( nullptr, nullptr );
-			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 			{
-				last_statement = iter->compile_second_pass( context );
+				compiler_scope_watcher _fn_scope( context );
+				variable_context fn_context( context._variables );
+				initialize_function( context, *_function, _arguments, fn_context );
+			
+				for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
+				{
+					last_statement = iter->compile_second_pass( context );
+				}
 			}
 			Value* retval = nullptr;
 			if ( last_statement.first.valid() )
@@ -1397,6 +1402,7 @@ namespace
 		
 		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
+			compiler_scope_watcher _let_scoping( context );
 			variable_context let_vars( context._variables );
 			initialize_assign_block( context, _let_vars, let_vars );
 
@@ -1588,6 +1594,7 @@ namespace
 		
 		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
+			compiler_scope_watcher _for_scoping( context );
 			variable_context let_vars( context._variables );
 			let_ast_node::initialize_assign_block( context, _for_vars, let_vars ); 
 			Function* theFunction = context._builder.GetInsertBlock()->getParent();
@@ -1955,8 +1962,61 @@ namespace
 		}
 
 	};
-
 	
+
+	struct scope_ast_node : public ast_node
+	{
+		string_table_str scope_var_name;
+		scope_ast_node( string_table_ptr st, const type_ref& t )
+			: ast_node( st->register_str( "scope ast node" ), t )
+			, scope_var_name( st->register_str( "scope-value" ) )
+		{
+		}
+
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			ast_node& init_node = *children().begin();
+			ast_node& clean_node = *init_node.next_node();
+			auto retval = init_node.compile_second_pass( context );
+			variable_context _scope_ctx( context._variables );
+			if ( retval.second != &context._type_library->get_void_type() )
+			{
+				//Store the value on the stack.
+				Function* theFunction = context._builder.GetInsertBlock()->getParent();
+				IRBuilder<> entryBuilder( &theFunction->getEntryBlock(), theFunction->getEntryBlock().begin() );
+				type_ref& var_type( *retval.second );
+				auto alloca = entryBuilder.CreateAlloca( context.type_ref_type( var_type ).get(), 0, "scopeval" );
+				context._builder.CreateStore( retval.first.get(), alloca ); 
+				_scope_ctx.add_variable( scope_var_name, alloca, var_type );
+			}
+			BasicBlock* cur_point = context._builder.GetInsertBlock();
+			BasicBlock* new_block = BasicBlock::Create( getGlobalContext() );
+			context._builder.SetInsertPoint( new_block );
+			clean_node.compile_second_pass( context );
+			context.add_exit_block( *new_block );
+			context._builder.SetInsertPoint( cur_point );
+			return retval;
+		}
+	};
+
+	struct scope_plugin : public compiler_plugin
+	{
+		scope_plugin( string_table_ptr st ) : compiler_plugin( st->register_str( "scope plugin" ) ) {}
+		ast_node& type_check( reader_context& context, cons_cell& callsite )
+		{
+			cons_cell& init_cell = object_traits::cast_ref<cons_cell>( callsite._next );
+			cons_cell& cleanup_cell = object_traits::cast_ref<cons_cell>( init_cell._next );
+			ast_node& init_node = context._type_checker( init_cell._value );
+			type_ref& rettype = init_node.type();
+			symbol_type_context _temp_context( context._context_symbol_types );
+			_temp_context.add_symbol( context._string_table->register_str( "scope-value" ), rettype );
+			ast_node& cleanup_node = context._type_checker( cleanup_cell._value );
+			scope_ast_node* retval = context._ast_allocator->construct<scope_ast_node>( context._string_table, rettype );
+			retval->children().push_back( init_node );
+			retval->children().push_back( cleanup_node );
+			return *retval;
+		}
+	};
 
 	typedef function<llvm_value_ptr (IRBuilder<>& builder, Value* lhs, Value* rhs )> builder_binary_function;
 
@@ -2281,6 +2341,8 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 		, make_shared<numeric_cast_plugin>( str_table ) ) );
 	special_forms->insert( make_pair( str_table->register_str( "ptr-cast" )
 		, make_shared<ptr_cast_plugin>( str_table ) ) );
+	special_forms->insert( make_pair( str_table->register_str( "scope" )
+		, make_shared<scope_plugin>( str_table ) ) );
 
 	generic_lisp_special_form::register_functions( str_table, lisp_evaluators );
 	generic_preprocessor_function::register_functions( str_table, lisp_evaluators );

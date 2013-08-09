@@ -34,6 +34,7 @@ namespace llvm
 	class Module;
 	class FunctionPassManager;
 	class ExecutionEngine;
+	class BasicBlock;
 }
 
 namespace cclj
@@ -125,6 +126,18 @@ namespace cclj
 		}
 	};
 
+	struct compiler_scope
+	{
+		vector<llvm::BasicBlock*> _blocks;
+		void add_block( llvm::BasicBlock& block )
+		{
+			_blocks.push_back( &block );
+		}
+	};
+
+
+	typedef vector<compiler_scope> compiler_scope_list;
+
 	struct compiler_context
 	{
 		llvm::Module&				_module;
@@ -135,6 +148,7 @@ namespace cclj
 		llvm_builder				_builder;
 		string_alloca_type_map		_variables;
 		type_llvm_type_map			_type_map;
+		compiler_scope_list			_scopes;
 
 		compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
 							, llvm::Module& m,  llvm::FunctionPassManager& fpm
@@ -142,6 +156,23 @@ namespace cclj
 
 
 		llvm_type_ptr_opt type_ref_type( type_ref& type );
+		void enter_scope();
+		void add_exit_block( llvm::BasicBlock& block );
+		void exit_scope();
+	};
+	
+	struct compiler_scope_watcher
+	{
+		compiler_context& _context;
+		compiler_scope_watcher( compiler_context& ctx )
+			: _context( ctx )
+		{
+			_context.enter_scope();
+		}
+		~compiler_scope_watcher()
+		{
+			_context.exit_scope();
+		}
 	};
 
 	struct reader_context;

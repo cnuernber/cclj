@@ -45,6 +45,35 @@ compiler_context::compiler_context( type_library_ptr tl, type_ast_node_map_ptr _
 {
 }
 
+void compiler_context::enter_scope()
+{
+	_scopes.push_back( compiler_scope() );
+}
+void compiler_context::add_exit_block( llvm::BasicBlock& block )
+{
+	if ( _scopes.empty() ) throw runtime_error( "no scope to add block" );
+	_scopes.back().add_block( block );
+}
+
+void compiler_context::exit_scope()
+{
+	if ( _scopes.empty() ) throw runtime_error( "no scope to exit" );
+	compiler_scope& scope = _scopes.back();
+	//Get current function
+	if ( scope._blocks.size() )
+	{
+		Function* function = _builder.GetInsertBlock()->getParent();
+		for_each( scope._blocks.rbegin(), scope._blocks.rend(), [&,this]
+		( BasicBlock* block )
+		{
+			function->getBasicBlockList().push_back( block );
+			_builder.CreateBr( block );
+			_builder.SetInsertPoint( block );
+		} );
+	}
+	_scopes.pop_back();
+}
+
 namespace
 {
 
