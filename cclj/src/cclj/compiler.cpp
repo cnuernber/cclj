@@ -605,15 +605,19 @@ namespace {
 			for_each( _global_variables.begin(), _global_variables.end(), [&,this]
 			( global_variable_entry& entry )
 			{
-				entry._variable = new GlobalVariable( comp_context.type_ref_type( *entry._type )
-														, true
-														, GlobalValue::LinkageTypes::CommonLinkage
-														, NULL
-														, entry._name.c_str() );
-				comp_context._module.getGlobalList().push_back( entry._variable );
-				_exec_engine->addGlobalMapping( entry._variable, entry._value );
+				auto llvm_type = comp_context.type_ref_type( *entry._type );
+				if ( llvm_type )
+				{
+					entry._variable = new GlobalVariable( llvm_type.get()
+															, true
+															, GlobalValue::LinkageTypes::CommonLinkage
+															, NULL
+															, entry._name.c_str() );
+					comp_context._module.getGlobalList().push_back( entry._variable );
+					_exec_engine->addGlobalMapping( entry._variable, entry._value );
 				
-				comp_context._variables.insert( make_pair( entry._name, make_pair( entry._variable, entry._type ) ) );
+					comp_context._variables.insert( make_pair( entry._name, make_pair( entry._variable, entry._type ) ) );
+				}
 			} );
 
 			
@@ -637,20 +641,24 @@ namespace {
 			if ( rettype == nullptr )
 				return pair<void*,type_ref_ptr>( nullptr, nullptr );
 
-			FunctionType* fn_type = FunctionType::get( comp_context.type_ref_type( *rettype ), false );
+
+
+			FunctionType* fn_type = FunctionType::get( comp_context.type_ref_type( *rettype ).get(), false );
 			Function* retfn = Function::Create( fn_type, GlobalValue::ExternalLinkage, "", _module );
 			variable_context var_context( comp_context._variables );
 			base_language_plugins::initialize_function( comp_context, *retfn, data_buffer<symbol*>(), var_context );
 			
-			llvm_value_ptr last_value = nullptr;
+			llvm_value_ptr_opt last_value = nullptr;
 			for_each( ast.begin(), ast.end(), [&]
 			( ast_node_ptr node )
 			{
 				if ( node->executable_statement() == true )
 					last_value = node->compile_second_pass( comp_context ).first;
 			} );
-			if ( last_value == nullptr ) throw runtime_error( "unexpected compile result" );
-			comp_context._builder.CreateRet( last_value );
+			if ( last_value )
+				comp_context._builder.CreateRet( last_value.get() );
+			else
+				comp_context._builder.CreateRetVoid();
 			
 			verifyFunction(*retfn );
 			_fpm->run( *retfn );

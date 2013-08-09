@@ -15,6 +15,7 @@
 #include "cclj/lisp_types.h"
 #include "cclj/slab_allocator.h"
 #include "cclj/invasive_list.h"
+#include "cclj/option.h"
 
 #ifdef _WIN32
 #pragma warning(push,2)
@@ -38,9 +39,11 @@ namespace llvm
 namespace cclj
 {
 	typedef llvm::Value* llvm_value_ptr;
+	typedef ptr_option<llvm::Value> llvm_value_ptr_opt;
 	typedef llvm::AllocaInst* llvm_alloca_ptr;
 	typedef llvm::IRBuilder<> llvm_builder;
 	typedef llvm::Type* llvm_type_ptr;
+	typedef ptr_option<llvm::Type> llvm_type_ptr_opt;
 	typedef unordered_map<string_table_str, type_ref_ptr> symbol_type_ref_map;
 	typedef unordered_map<type_ref_ptr, llvm_type_ptr> type_llvm_type_map;
 	//tool used during type checking.
@@ -88,19 +91,19 @@ namespace cclj
 	class compiler_plugin;
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
 	
-	typedef unordered_map<string_table_str, pair<llvm_value_ptr,type_ref_ptr> > string_alloca_type_map;
+	typedef unordered_map<string_table_str, pair<llvm_value_ptr_opt,type_ref_ptr> > string_alloca_type_map;
 	typedef unordered_map<type_ref_ptr, ast_node_ptr> type_ast_node_map;
 	typedef shared_ptr<type_ast_node_map> type_ast_node_map_ptr;
 
 	struct variable_context
 	{
 		string_alloca_type_map&													_variables;
-		vector<pair<string_table_str, pair<llvm_value_ptr, type_ref_ptr> > >	_added_vars;
+		vector<pair<string_table_str, pair<llvm_value_ptr_opt, type_ref_ptr> > >	_added_vars;
 		variable_context( string_alloca_type_map& vars ) : _variables( vars ) {}
 		~variable_context()
 		{
 			for_each( _variables.begin(), _variables.end(), [this]
-			( const pair<string_table_str, pair<llvm_value_ptr, type_ref_ptr> >& var )
+			( const pair<string_table_str, pair<llvm_value_ptr_opt, type_ref_ptr> >& var )
 			{
 				if ( var.second.first )
 					_variables[var.first] = var.second;
@@ -112,7 +115,7 @@ namespace cclj
 		void add_variable( string_table_str name, llvm_alloca_ptr alloca, type_ref& type )
 		{
 			auto inserter = _variables.insert( make_pair( name, make_pair( alloca, &type ) ) );
-			pair<llvm_value_ptr, type_ref_ptr> old_value( nullptr, nullptr );
+			pair<llvm_value_ptr_opt, type_ref_ptr> old_value( nullptr, nullptr );
 			if ( inserter.second == false )
 			{
 				old_value = inserter.first->second;
@@ -138,7 +141,7 @@ namespace cclj
 							, llvm::ExecutionEngine& eng );
 
 
-		llvm_type_ptr type_ref_type( type_ref& type );
+		llvm_type_ptr_opt type_ref_type( type_ref& type );
 	};
 
 	struct reader_context;
@@ -149,8 +152,8 @@ namespace cclj
 		virtual ~value_accessor(){}
 	public:
 		virtual type_ref& value_type() = 0;
-		virtual llvm_value_ptr get_value( compiler_context& context ) = 0;
-		virtual void set_value( compiler_context& context, llvm_value_ptr value ) = 0;
+		virtual llvm_value_ptr_opt get_value( compiler_context& context ) = 0;
+		virtual void set_value( compiler_context& context, llvm_value_ptr_opt value ) = 0;
 	};
 
 	//intermediary to allow arbitrary symbol resolution via the ast plugin system.
@@ -170,8 +173,8 @@ namespace cclj
 
 		//used by the system.
 		virtual type_ref& resolved_type() = 0;
-		virtual llvm_value_ptr load( compiler_context& context, data_buffer<llvm_value_ptr> indexes ) = 0;
-		virtual void store( compiler_context& context, data_buffer<llvm_value_ptr> indexes, llvm_value_ptr val ) = 0;
+		virtual llvm_value_ptr_opt load( compiler_context& context, data_buffer<llvm_value_ptr> indexes ) = 0;
+		virtual void store( compiler_context& context, data_buffer<llvm_value_ptr> indexes, llvm_value_ptr_opt val ) = 0;
 
 		static shared_ptr<symbol_resolution_context> create(string_table_str initial_symbol, type_ref& initial_type);
 	};
@@ -222,7 +225,7 @@ namespace cclj
 		}
 
 		virtual void compile_first_pass(compiler_context& /*context*/) {}
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context) = 0;
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context) = 0;
 	};
 
 	inline ast_node_ptr ast_node_next_op::get( ast_node& s ) { return s.next_node(); }

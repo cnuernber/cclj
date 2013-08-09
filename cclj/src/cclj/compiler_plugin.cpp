@@ -48,13 +48,15 @@ compiler_context::compiler_context( type_library_ptr tl, type_ast_node_map_ptr _
 namespace
 {
 
-	llvm_type_ptr do_get_type_ref( compiler_context& context, type_ref& type )
+	llvm_type_ptr_opt do_get_type_ref( compiler_context& context, type_ref& type )
 	{
 		if ( context._type_library->is_pointer_type( type ) )
 		{
 
-			Type* llvm_ptr = context.type_ref_type( context._type_library->deref_ptr_type( type ) );
-			return PointerType::get( llvm_ptr, 0 );
+			llvm_type_ptr_opt llvm_ptr = context.type_ref_type( context._type_library->deref_ptr_type( type ) );
+			if ( llvm_ptr )
+				return PointerType::get( llvm_ptr.get(), 0 );
+			return llvm_type_ptr_opt();
 		}
 		else
 		{
@@ -63,6 +65,10 @@ namespace
 				Type* intType = IntegerType::getInt32Ty( getGlobalContext() );
 				return PointerType::getUnqual( intType );
 			}
+			if ( &type == &context._type_library->get_void_type() )
+				return Type::getVoidTy( getGlobalContext() );
+			if ( &type == &context._type_library->get_void_type() )
+				return llvm_type_ptr_opt();
 			//else we inserted something, so we need to ensure it is valid.
 			base_numeric_types::_enum val = context._type_library->to_base_numeric_type( type );
 			llvm_type_ptr base_type = nullptr;
@@ -83,12 +89,14 @@ namespace
 
 }
 
-llvm_type_ptr compiler_context::type_ref_type( type_ref& type )
+llvm_type_ptr_opt compiler_context::type_ref_type( type_ref& type )
 {
 	pair<type_llvm_type_map::iterator,bool> inserter = _type_map.insert( make_pair( &type, nullptr ) );
 	if ( inserter.second == false )
 		return inserter.first->second;
-	inserter.first->second = do_get_type_ref( *this, type );
+	auto ptr = do_get_type_ref( *this, type );
+	if ( ptr )
+		inserter.first->second = ptr.get();
 	return inserter.first->second;
 }
 
@@ -227,7 +235,7 @@ namespace
 			return *_final_type;
 		}
 
-		llvm_value_ptr load_to_ptr( compiler_context& context )
+		llvm_value_ptr_opt load_to_ptr( compiler_context& context )
 		{
 			auto sym_iter = context._variables.find( _initial_symbol );
 			if ( sym_iter == context._variables.end() ) throw runtime_error( "failed to resolve initial symbol" );
@@ -239,7 +247,8 @@ namespace
 				throw runtime_error( "value accessors not supported yet" );
 
 
-			llvm_value_ptr start_addr = sym_iter->second.first;
+			llvm_value_ptr_opt start_addr = sym_iter->second.first;
+			if ( start_addr.empty() ) return llvm_value_ptr_opt();
 			uint32_list& lookup_chain( _data.back().data<uint32_list>() );
 			vector<llvm::Value*> lookups;
 			llvm_type_ptr int_type = llvm::Type::getInt32Ty( getGlobalContext() );
@@ -248,13 +257,14 @@ namespace
 			{
 				lookups.push_back( llvm::ConstantInt::get( int_type, idx ) );
 			} );
-			return context._builder.CreateGEP( start_addr, lookups, "gep lookup" );
+			return context._builder.CreateGEP( start_addr.get(), lookups, "gep lookup" );
 		}
 
-		virtual llvm_value_ptr load( compiler_context& context, data_buffer<llvm_value_ptr> indexes )
+		virtual llvm_value_ptr_opt load( compiler_context& context, data_buffer<llvm_value_ptr> indexes )
 		{
 			auto addr = load_to_ptr( context );
-			auto loaded_item = context._builder.CreateLoad( addr );
+			if ( addr.empty() ) return llvm_value_ptr_opt();
+			auto loaded_item = context._builder.CreateLoad( addr.get() );
 			if ( indexes.size() == 0 )
 				return loaded_item;
 			auto further_loaded = context._builder.CreateGEP( loaded_item
@@ -263,23 +273,27 @@ namespace
 			return context._builder.CreateLoad( further_loaded );
 		}
 
-		virtual void store( compiler_context& context, data_buffer<llvm_value_ptr> indexes, llvm_value_ptr val )
+		virtual void store( compiler_context& context, data_buffer<llvm_value_ptr> indexes, llvm_value_ptr_opt val )
 		{
 			auto sym_iter = context._variables.find( _initial_symbol );
 			if ( sym_iter == context._variables.end() ) throw runtime_error( "failed to resolve initial symbol" );
+			if ( sym_iter->second.first.empty() && val.empty() )
+				return;
+			if ( sym_iter->second.first.empty() || val.empty() )
+				throw runtime_error( "invalid set of void value into non-void slot or vice-versa" );
 			if ( _data.size() == 0 )
 			{
 				if ( indexes.size() == 0 )
 				{
-					context._builder.CreateStore( val, sym_iter->second.first, false );
+					context._builder.CreateStore( val.get(), sym_iter->second.first.get(), false );
 				}
 				else
 				{
-					auto addr = context._builder.CreateLoad( sym_iter->second.first );
+					auto addr = context._builder.CreateLoad( sym_iter->second.first.get() );
 					auto further_loaded = context._builder.CreateGEP( addr
 																,  ArrayRef<llvm::Value*>( indexes.begin(), indexes.end() )
 																, "" );
-					context._builder.CreateStore( val, further_loaded, false );
+					context._builder.CreateStore( val.get(), further_loaded, false );
 				}
 			}
 			else

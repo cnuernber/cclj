@@ -140,16 +140,23 @@ namespace
 
 		virtual bool executable_statement() const { return true; }
 
-		pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			vector<llvm::Value*> fn_args;
 			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 			{
 				ast_node& node(*iter);
-				fn_args.push_back( node.compile_second_pass( context ).first );
+				auto pass_result = node.compile_second_pass( context ).first;
+				if ( pass_result )
+					fn_args.push_back( pass_result.get() );
 			}
-			return make_pair( context._builder.CreateCall( &_function.function(), fn_args, "calltmp" )
-							, &_function.return_type() );
+
+			Value* retval = context._builder.CreateCall( &_function.function(), fn_args, "calltmp" );
+			type_ref& rettype = _function.return_type();
+			if ( &rettype == &context._type_library->get_void_type() )
+				retval = nullptr;
+			return make_pair( retval
+							, &rettype );
 		}
 	};
 
@@ -192,31 +199,35 @@ namespace
 			for_each( _arguments.begin(), _arguments.end(), [&]
 			(symbol* sym )
 			{
-				arg_types.push_back( context.type_ref_type( *sym->_evaled_type ) );
+				if ( sym->_evaled_type != &context._type_library->get_void_type() )
+					arg_types.push_back( context.type_ref_type( *sym->_evaled_type ).get() );
 				cclj_arg_types.push_back( sym->_evaled_type );
 			} );
 			type_ref& cclj_fn_type = context._type_library->get_type_ref( _name._name, cclj_arg_types );
-			llvm_type_ptr rettype = context.type_ref_type( *_name._evaled_type );
+			llvm_type_ptr rettype = context.type_ref_type( *_name._evaled_type ).get();
 			FunctionType* fn_type = FunctionType::get(rettype, arg_types, false);
 			string name_mangle( cclj_fn_type.to_string() );
 			
 			_function = Function::Create( fn_type, Function::ExternalLinkage, name_mangle.c_str(), &context._module );
 		}
 
-		pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			variable_context fn_context( context._variables );
 			initialize_function( context, *_function, _arguments, fn_context );
-			pair<llvm_value_ptr, type_ref_ptr> last_statement( nullptr, nullptr );
+			pair<llvm_value_ptr_opt, type_ref_ptr> last_statement( nullptr, nullptr );
 			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 			{
 				last_statement = iter->compile_second_pass( context );
 			}
-			if ( last_statement.first == nullptr ) throw runtime_error( "function definition failed" );
-			Value* retVal = context._builder.CreateRet( last_statement.first );
+			Value* retval = nullptr;
+			if ( last_statement.first.valid() )
+				retval = context._builder.CreateRet( last_statement.first.get() );
+			else
+				context._builder.CreateRetVoid();
 			verifyFunction(*_function );
 			context._fpm.run( *_function );
-			return make_pair( retVal, _name._evaled_type );
+			return make_pair( retval, _name._evaled_type );
 		}
 
 		
@@ -255,11 +266,15 @@ namespace
 				symbol& arg_def( *fn_args[Idx] );
 				// Create an alloca for this variable.
 				if ( arg_def._evaled_type == nullptr ) throw runtime_error( "Invalid function argument" );
-				AllocaInst *Alloca = entry_block_builder.CreateAlloca(context.type_ref_type( *arg_def._evaled_type ), 0,
-						arg_def._name.c_str());
+				AllocaInst *Alloca = nullptr;
+				if ( arg_def._evaled_type != &context._type_library->get_void_type() ) 
+				{
+					Alloca = entry_block_builder.CreateAlloca(context.type_ref_type( *arg_def._evaled_type ).get()
+																, 0, arg_def._name.c_str());
 
-				// Store the initial value into the alloca.
-				context._builder.CreateStore(AI, Alloca);
+					// Store the initial value into the alloca.
+					context._builder.CreateStore(AI, Alloca);
+				}
 				var_context.add_variable( arg_def._name, Alloca, *arg_def._evaled_type );
 			}
 		}
@@ -328,9 +343,9 @@ namespace
 		{
 		}
 		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context&)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context&)
 		{
-			return pair<llvm_value_ptr, type_ref_ptr>( nullptr, nullptr );
+			return pair<llvm_value_ptr_opt, type_ref_ptr>( nullptr, nullptr );
 		}
 	};
 	//todo - create plugin system for the macro language.
@@ -1197,11 +1212,13 @@ namespace
 		
 		virtual bool executable_statement() const { return true; }
 		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			auto symbol_iter = context._variables.find( _symbol._name );
 			if ( symbol_iter == context._variables.end() ) throw runtime_error( "missing symbol" );
-			return make_pair( context._builder.CreateLoad( symbol_iter->second.first ), &type() );
+			if ( &type() == &context._type_library->get_void_type() )
+				return make_pair( llvm_value_ptr_opt(), &type() );
+			return make_pair( context._builder.CreateLoad( symbol_iter->second.first.get() ), &type() );
 		}
 	};
 	
@@ -1216,7 +1233,7 @@ namespace
 		
 		virtual bool executable_statement() const { return true; }
 
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			return make_pair( _resolution->load( context, data_buffer<llvm_value_ptr>() ), &_resolution->resolved_type());
 		}
@@ -1233,7 +1250,7 @@ namespace
 		
 		virtual bool executable_statement() const { return true; }
 
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			switch( context._type_library->to_base_numeric_type( type() ) )
 			{
@@ -1258,7 +1275,7 @@ namespace
 		
 		virtual bool executable_statement() const { return true; }
 
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			ast_node& cond_node = children().front();
 			ast_node& true_node = *cond_node.next_node();
@@ -1272,7 +1289,7 @@ namespace
 			BasicBlock *ElseBB = BasicBlock::Create(getGlobalContext(), "else");
 
 			BasicBlock *MergeBB = BasicBlock::Create(getGlobalContext(), "ifcont");
-			context._builder.CreateCondBr( cond_result.first, ThenBB, ElseBB );
+			context._builder.CreateCondBr( cond_result.first.get(), ThenBB, ElseBB );
 			context._builder.SetInsertPoint( ThenBB );
 
 			auto true_result = true_node.compile_second_pass( context );
@@ -1299,12 +1316,16 @@ namespace
 			// Emit merge block.
 			theFunction->getBasicBlockList().push_back(MergeBB);
 			context._builder.SetInsertPoint(MergeBB);
-			PHINode *PN = context._builder.CreatePHI( context.type_ref_type(*true_result.second ), 2,
+			if ( true_result.second != &context._type_library->get_void_type() )
+			{
+				PHINode *PN = context._builder.CreatePHI( context.type_ref_type(*true_result.second ).get(), 2,
 											"iftmp");
   
-			PN->addIncoming(true_result.first, ThenBB);
-			PN->addIncoming(false_result.first, ElseBB);
-			return make_pair(PN, true_result.second);
+				PN->addIncoming(true_result.first.get(), ThenBB);
+				PN->addIncoming(false_result.first.get(), ElseBB);
+				return make_pair(PN, true_result.second);
+			}
+			return make_pair( llvm_value_ptr_opt(), true_result.second );
 		}
 	};
 
@@ -1360,9 +1381,9 @@ namespace
 				auto var_eval = var_dec.second->compile_second_pass( context );
 				if( var_eval.first )
 				{
-					auto alloca = entryBuilder.CreateAlloca( context.type_ref_type( *var_eval.second )
+					auto alloca = entryBuilder.CreateAlloca( context.type_ref_type( *var_eval.second ).get()
 																	, 0, var_dec.first->_name.c_str() );
-					context._builder.CreateStore( var_eval.first, alloca );
+					context._builder.CreateStore( var_eval.first.get(), alloca );
 					let_vars.add_variable( var_dec.first->_name, alloca, *var_eval.second );
 				}
 				else
@@ -1370,12 +1391,12 @@ namespace
 			} );
 		}
 		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			variable_context let_vars( context._variables );
 			initialize_assign_block( context, _let_vars, let_vars );
 
-			pair<llvm_value_ptr, type_ref_ptr> retval;
+			pair<llvm_value_ptr_opt, type_ref_ptr> retval;
 			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 			{
 				retval = iter->compile_second_pass( context );
@@ -1437,15 +1458,18 @@ namespace
 		}
 		//Called to allow the ast node to resolve the rest of a symbol when the symbol's first item pointed
 		//to a variable if this node type.  Used for struct lookups of the type a.b
-		virtual void resolve_symbol( reader_context& /*context*/
+		virtual void resolve_symbol( reader_context& context
 											, string_table_str split_symbol
 											, symbol_resolution_context& resolution_context )
 		{
 			auto find_result = find_if( _fields.begin(), _fields.end(), [&]
 			( symbol* sym ) { return sym->_name == split_symbol; } );
 			if ( find_result == _fields.end() ) throw runtime_error( "enable to result symbol" );
-			uint32_t find_idx = static_cast<uint32_t>( find_result - _fields.begin() );
-			resolution_context.add_GEP_index( find_idx, *(*find_result)->_evaled_type );
+			if ( (*find_result)->_evaled_type != &context._type_library->get_void_type() )
+			{
+				uint32_t find_idx = static_cast<uint32_t>( find_result - _fields.begin() );
+				resolution_context.add_GEP_index( find_idx, *(*find_result)->_evaled_type );
+			}
 		}
 
 		//compiler-created constructor
@@ -1467,7 +1491,8 @@ namespace
 			for_each( _fields.begin(), _fields.end(), [&]
 			( symbol* field )
 			{
-				arg_types.push_back( context.type_ref_type( *field->_evaled_type ) );
+				if ( field->_evaled_type != &context._type_library->get_void_type() )
+					arg_types.push_back( context.type_ref_type( *field->_evaled_type ).get() );
 			} );
 			//Create struct type definition to llvm.
 			llvm_type_ptr struct_type = StructType::create( getGlobalContext(), arg_types );
@@ -1476,20 +1501,23 @@ namespace
 			_function = Function::Create( fn_type, GlobalValue::ExternalLinkage, "", &context._module );
 		}
 		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			variable_context vcontext( context._variables );
 			function_def_node::initialize_function( context, *_function, _fields, vcontext );
 			IRBuilder<> entryBuilder( &_function->getEntryBlock(), _function->getEntryBlock().begin() );
-			Type* struct_type = context.type_ref_type( type() );
+			Type* struct_type = context.type_ref_type( type() ).get();
 			auto struct_ptr = entryBuilder.CreateAlloca( struct_type, 0 );
 			uint32_t idx = 0;
 			for_each( _fields.begin(), _fields.end(), [&]
 			( symbol* field )
 			{
-				Value* val_ptr = context._builder.CreateConstInBoundsGEP2_32( struct_ptr, 0, idx, field->_name.c_str() );
-				Value* arg_val = context._builder.CreateLoad( context._variables.find( field->_name )->second.first );
-				context._builder.CreateStore( arg_val, val_ptr );
+				if ( field->_evaled_type != &context._type_library->get_void_type() )
+				{
+					Value* val_ptr = context._builder.CreateConstInBoundsGEP2_32( struct_ptr, 0, idx, field->_name.c_str() );
+					Value* arg_val = context._builder.CreateLoad( context._variables.find( field->_name )->second.first.get() );
+					context._builder.CreateStore( arg_val, val_ptr );
+				}
 				++idx;
 			} );
 			auto struct_val = context._builder.CreateLoad( struct_ptr );
@@ -1554,7 +1582,7 @@ namespace
 		virtual bool executable_statement() const { return true; }
 
 		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			variable_context let_vars( context._variables );
 			let_ast_node::initialize_assign_block( context, _for_vars, let_vars ); 
@@ -1565,7 +1593,7 @@ namespace
 			BasicBlock* exit_block = BasicBlock::Create( getGlobalContext(), "exit block", theFunction );
 			context._builder.CreateBr( cond_block );
 			context._builder.SetInsertPoint( cond_block );
-			llvm_value_ptr next_val = _cond_node->compile_second_pass( context ).first;
+			llvm_value_ptr next_val = _cond_node->compile_second_pass( context ).first.get();
 			context._builder.CreateCondBr( next_val, loop_update_block, exit_block );
 
 			context._builder.SetInsertPoint( loop_update_block );
@@ -1576,7 +1604,7 @@ namespace
 			}
 			context._builder.CreateBr( cond_block );
 			context._builder.SetInsertPoint( exit_block );
-			return pair<llvm_value_ptr, type_ref_ptr>( nullptr, &context._type_library->get_void_type() );
+			return pair<llvm_value_ptr_opt, type_ref_ptr>( nullptr, &context._type_library->get_void_type() );
 		}
 	};
 	
@@ -1647,19 +1675,26 @@ namespace
 		
 		virtual bool executable_statement() const { return true; }
 
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass( compiler_context& context )
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass( compiler_context& context )
 		{
-			pair<llvm_value_ptr, type_ref_ptr> assign_var (nullptr, nullptr );
+			pair<llvm_value_ptr_opt, type_ref_ptr> assign_var (nullptr, nullptr );
 			vector<llvm_value_ptr> indexes;
+			ast_node* last_child = nullptr;
 			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 			{
-				assign_var = iter->compile_second_pass( context );
-				indexes.push_back( assign_var.first );
+				if ( last_child )
+				{
+					assign_var = iter->compile_second_pass( context );
+					indexes.push_back( assign_var.first.get() );
+				}
+				last_child = &(*iter);
 			}
-			if ( assign_var.first == nullptr ) throw runtime_error( "invalid assignment variable" );
-			indexes.pop_back();
-
-			_resolve_context->store( context, indexes, assign_var.first );
+			if ( last_child == nullptr ) throw runtime_error( "invalid set ast node" );
+			assign_var = last_child->compile_second_pass( context );
+			if ( &type() != &context._type_library->get_void_type() )
+			{
+				_resolve_context->store( context, indexes, assign_var.first.get() );
+			}
 			return assign_var;
 		}
 	};
@@ -1717,14 +1752,16 @@ namespace
 		
 		virtual bool executable_statement() const { return true; }
 
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass( compiler_context& context )
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass( compiler_context& context )
 		{
-			pair<llvm_value_ptr, type_ref_ptr> assign_var (nullptr, nullptr );
+			if ( &type() == &context._type_library->get_void_type() )
+				return pair<llvm_value_ptr_opt,type_ref_ptr>( nullptr, &type() );
+			pair<llvm_value_ptr_opt, type_ref_ptr> assign_var (nullptr, nullptr );
 			vector<llvm_value_ptr> indexes;
 			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 			{
 				assign_var = iter->compile_second_pass( context );
-				indexes.push_back( assign_var.first );
+				indexes.push_back( assign_var.first.get() );
 			}
 			return make_pair( _resolve_context->load( context, indexes ), &type() );
 		}
@@ -1778,55 +1815,56 @@ namespace
 		
 		virtual bool executable_statement() const { return true; }
 
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass( compiler_context& context )
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass( compiler_context& context )
 		{
-			pair<llvm_value_ptr, type_ref_ptr> arg_eval( nullptr, nullptr );
+			pair<llvm_value_ptr_opt, type_ref_ptr> arg_eval( nullptr, nullptr );
 			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
 			{
 				arg_eval = iter->compile_second_pass( context );
 			}
-			if ( arg_eval.first == nullptr ) throw runtime_error( "invalid numeric cast" );
+			if ( arg_eval.first.empty() ) throw runtime_error( "invalid numeric cast" );
 			auto source = context._type_library->to_base_numeric_type( *arg_eval.second );
 			auto target = context._type_library->to_base_numeric_type( type() );
 			
-			Type* target_type = context.type_ref_type( type() );
+			Type* target_type = context.type_ref_type( type() ).get();
 			Value* retval = nullptr;
+			Value* sourceval = arg_eval.first.get();
 			if ( base_numeric_types::is_float_type( source ) )
 			{
 				if ( target == base_numeric_types::f64 )
-					retval = context._builder.CreateFPExt( arg_eval.first, target_type );
+					retval = context._builder.CreateFPExt( sourceval, target_type );
 				else if ( target == base_numeric_types::f32 )
-					retval = context._builder.CreateFPTrunc( arg_eval.first, target_type );
+					retval = context._builder.CreateFPTrunc( sourceval, target_type );
 				else if ( base_numeric_types::is_signed_int_type( target ) )
-					retval = context._builder.CreateFPToSI( arg_eval.first, target_type );
+					retval = context._builder.CreateFPToSI( sourceval, target_type );
 				else if ( base_numeric_types::is_unsigned_int_type( target ) )
-					retval = context._builder.CreateFPToUI( arg_eval.first, target_type );
+					retval = context._builder.CreateFPToUI( sourceval, target_type );
 			}
 			else if ( base_numeric_types::is_int_type( source ) )
 			{
 				if ( base_numeric_types::is_float_type( target ) )
 				{
 					if ( base_numeric_types::is_signed_int_type( source ) )
-						retval = context._builder.CreateSIToFP( arg_eval.first, target_type );
+						retval = context._builder.CreateSIToFP( sourceval, target_type );
 					else
-						retval = context._builder.CreateUIToFP( arg_eval.first, target_type );
+						retval = context._builder.CreateUIToFP( sourceval, target_type );
 				}
 				else 
 				{
 					if ( base_numeric_types::num_bits( source ) > base_numeric_types::num_bits( target ) )
 					{
-						retval = context._builder.CreateTrunc( arg_eval.first, target_type );
+						retval = context._builder.CreateTrunc( sourceval, target_type );
 					}
 					else if ( base_numeric_types::num_bits( source ) < base_numeric_types::num_bits( target ) )
 					{
 						if ( base_numeric_types::is_signed_int_type( target ) )
-							retval = context._builder.CreateSExt( arg_eval.first, target_type );
+							retval = context._builder.CreateSExt( sourceval, target_type );
 						else
-							retval = context._builder.CreateZExt( arg_eval.first, target_type );
+							retval = context._builder.CreateZExt( sourceval, target_type );
 					}
 					//types are same size, just do a bitcast of sorts.
 					else
-						retval = context._builder.CreateBitCast( arg_eval.first, target_type );
+						retval = context._builder.CreateBitCast( sourceval, target_type );
 				}
 			}
 
@@ -1881,10 +1919,11 @@ namespace
 
 		virtual bool executable_statement() const { return true; }
 		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass( compiler_context& context )
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass( compiler_context& context )
 		{
-			pair<llvm_value_ptr, type_ref_ptr> src_data = children()._head->compile_second_pass( context );
-			llvm_value_ptr result = context._builder.CreateBitCast( src_data.first, context.type_ref_type( type() ) );
+			pair<llvm_value_ptr_opt, type_ref_ptr> src_data = children()._head->compile_second_pass( context );
+			llvm_value_ptr result 
+					= context._builder.CreateBitCast( src_data.first.get(), context.type_ref_type( type() ).get() );
 			return make_pair( result, &type() );
 		}
 	};
@@ -1903,10 +1942,10 @@ namespace
 			cons_cell& expr = object_traits::cast_ref<cons_cell>( cell._next );
 			ast_node& src_data = context._type_checker( expr._value );
 			type_ref& src_type( src_data.type() );
-			if ( context._type_library->is_pointer_type( dest_type ) == false
-				|| context._type_library->is_pointer_type( src_type ) == false )
-				throw runtime_error( "Invalid ptr cast, src or dest are not pointer types" );
-			ptr_cast_node* retval = context._ast_allocator->construct<ptr_cast_node>( context._string_table, dest_type );
+			if ( context._type_library->is_pointer_type( src_type ) == false )
+				throw runtime_error( "Invalid ptr cast, src is not pointer types" );
+			ptr_cast_node* retval = context._ast_allocator->construct<ptr_cast_node>( context._string_table
+				, context._type_library->get_ptr_type( dest_type ) );
 			retval->children().push_back( src_data );
 			return *retval;
 		}
@@ -1939,12 +1978,12 @@ namespace
 
 		virtual bool executable_statement() const { return true; }
 		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& context)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			ast_node& lhs = *children()._head;
 			ast_node& rhs = *lhs.next_node();
-			llvm_value_ptr lhs_value = lhs.compile_second_pass( context ).first;
-			llvm_value_ptr rhs_value = rhs.compile_second_pass( context ).first;
+			llvm_value_ptr lhs_value = lhs.compile_second_pass( context ).first.get();
+			llvm_value_ptr rhs_value = rhs.compile_second_pass( context ).first.get();
 			llvm_value_ptr retval = _function( context._builder, lhs_value, rhs_value );
 			return make_pair( retval, &type() );
 		}
@@ -1987,16 +2026,17 @@ namespace
 					, [&]
 					( type_ref_ptr t )
 			{
-				fn_arg_types.push_back( context.type_ref_type( *t ) );
+				if ( t != &context._type_library->get_void_type() )
+					fn_arg_types.push_back( context.type_ref_type( *t ).get() );
 			} );
-			FunctionType* fn_type = FunctionType::get( context.type_ref_type( *_entry._ret_type ), fn_arg_types, false );
+			FunctionType* fn_type = FunctionType::get( context.type_ref_type( *_entry._ret_type ).get(), fn_arg_types, false );
 			Function* fn_dev = Function::Create( fn_type, GlobalValue::ExternalLinkage
 													, _entry._fn_type->_name.c_str(), &context._module );
 			_entry._function = fn_dev;
 			context._eng.addGlobalMapping( _entry._function, _entry._fn_entry );
 		}
 		
-		virtual pair<llvm_value_ptr, type_ref_ptr> compile_second_pass(compiler_context& /*context*/)
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& /*context*/)
 		{
 			throw runtime_error( "second pass compilation not supported" );
 		}
