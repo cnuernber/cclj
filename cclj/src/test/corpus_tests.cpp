@@ -139,6 +139,8 @@ TEST(corpus_tests, numeric_cast ) { ASSERT_TRUE( run_corpus_test( "numeric_cast"
 TEST(corpus_tests, dynamic_mem ) { ASSERT_TRUE( run_corpus_test( "dynamic_mem", 45.0f ) ); }
 TEST(corpus_tests, poly_fn ) { ASSERT_TRUE(run_corpus_test("poly_fn", 53.0f ) ); }
 TEST(corpus_tests, macro_fn2 ) { ASSERT_TRUE(run_corpus_test("macro_fn2", 55.0f ) ); }
+TEST(corpus_tests, void_fn ) { ASSERT_TRUE(run_corpus_test("void", 55.0f ) ); }
+
 
 
 
