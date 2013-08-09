@@ -60,7 +60,7 @@ namespace cclj
 		}
 		~symbol_type_context()
 		{
-			for_each( _created_symbols.begin(), _created_symbols.end(), [this]
+			for_each( _created_symbols.rbegin(), _created_symbols.rend(), [this]
 			( const pair<string_table_str, type_ref_ptr>& symbol )
 			{
 				if ( symbol.second )
@@ -102,7 +102,7 @@ namespace cclj
 		variable_context( string_alloca_type_map& vars ) : _variables( vars ) {}
 		~variable_context()
 		{
-			for_each( _variables.begin(), _variables.end(), [this]
+			for_each( _variables.rbegin(), _variables.rend(), [this]
 			( const pair<string_table_str, pair<llvm_value_ptr_opt, type_ref_ptr> >& var )
 			{
 				if ( var.second.first )
@@ -258,7 +258,7 @@ namespace cclj
 		}
 		~preprocess_symbol_context()
 		{
-			for_each( _added_symbols.begin(), _added_symbols.end(), [&]
+			for_each( _added_symbols.rbegin(), _added_symbols.rend(), [&]
 			( pair<string_table_str, lisp::object_ptr> item )
 			{
 				if ( item.second )

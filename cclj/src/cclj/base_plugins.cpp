@@ -150,10 +150,14 @@ namespace
 				if ( pass_result )
 					fn_args.push_back( pass_result.get() );
 			}
-
-			Value* retval = context._builder.CreateCall( &_function.function(), fn_args, "calltmp" );
+			
 			type_ref& rettype = _function.return_type();
-			if ( &rettype == &context._type_library->get_void_type() )
+			const char* twine = "calltmp";
+			bool is_void = &rettype == &context._type_library->get_void_type();
+			if ( is_void )
+				twine = "";
+			Value* retval = context._builder.CreateCall( &_function.function(), fn_args, twine );
+			if ( is_void )
 				retval = nullptr;
 			return make_pair( retval
 							, &rettype );
@@ -1684,7 +1688,7 @@ namespace
 			{
 				if ( last_child )
 				{
-					assign_var = iter->compile_second_pass( context );
+					assign_var = last_child->compile_second_pass( context );
 					indexes.push_back( assign_var.first.get() );
 				}
 				last_child = &(*iter);

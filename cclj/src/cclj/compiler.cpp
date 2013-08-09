@@ -491,7 +491,7 @@ namespace {
 				_global_functions.push_back( global_function_entry( fn_ptr, ret_type, fn_type ) );
 			}
 			{
-				type_ref& ret_type = _type_library->get_type_ref( base_numeric_types::u32 );
+				type_ref& ret_type = _type_library->get_void_type();
 				type_ref* arg_types[2] = { &runtime_type, &_type_library->get_unqual_ptr_type() };
 				type_ref& fn_type = _type_library->get_type_ref( "free", type_ref_ptr_buffer( arg_types, 2 ) );
 				void* fn_ptr = reinterpret_cast<void*>( &compiler_impl::rt_free );
@@ -684,11 +684,10 @@ namespace {
 			return compiler->_allocator->allocate( item_size, item_align, CCLJ_IMMEDIATE_FILE_INFO() );
 		}
 
-		static uint32_t rt_free( void* comp_ptr, void* value )
+		static void rt_free( void* comp_ptr, void* value )
 		{
 			compiler_impl* compiler = reinterpret_cast<compiler_impl*>( comp_ptr );
 			compiler->_allocator->deallocate( value );
-			return 0;
 		}
 	}; 
 }

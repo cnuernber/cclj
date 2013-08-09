@@ -1,4 +1,4 @@
-;some things logically should not return meaningful value
+;some things logically should not return meaningful values
 ;but in lisp, everything has a value so we have to deal with
 ;void somewhere
 (defn update-array|void [a|ptr[f32] len|u32]
