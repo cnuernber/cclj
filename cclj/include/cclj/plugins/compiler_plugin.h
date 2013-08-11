@@ -103,7 +103,7 @@ namespace cclj
 		variable_context( string_alloca_type_map& vars ) : _variables( vars ) {}
 		~variable_context()
 		{
-			for_each( _variables.rbegin(), _variables.rend(), [this]
+			for_each( _added_vars.rbegin(), _added_vars.rend(), [this]
 			( const pair<string_table_str, pair<llvm_value_ptr_opt, type_ref_ptr> >& var )
 			{
 				if ( var.second.first )

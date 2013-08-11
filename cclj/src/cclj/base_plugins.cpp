@@ -1072,7 +1072,7 @@ namespace
 			cons_cell* first_cell = cell;
 			cell->_value = &create_symbol( context, "defn" );
 			cell = append_cell( context, *cell );
-			string_table_str name = context._string_table->register_str( name_mangle.c_str() );
+			
 			cell->_value = &create_symbol( context, name_mangle.c_str(), &subst_type( context, *uneval_type( context, *spec._rettype ), template_arg_vals ) );
 			cell = append_cell( context, *cell );
 			array& array_data = *context._factory->create_array();
