@@ -74,7 +74,7 @@ calling functions and performing variable resolution).
 At this point it may or may not be clear that in addition to allowing lisp style standard compile time
 programming, c++ style type-based template compile time programming, I intend to allow the intrepid to provide
 their own compiler plugin shared libraries and thus produce a third type of compile time programming, one
-that allows new special forms along with their associated translation to llvm assembly.  If staements, for loops,
+that allows new special forms along with their associated translation to llvm assembly.  If statements, for loops,
 everything that runs currently is all done with compiler plugins (including macros and the entire 
 lisp preprocessing system).
 
