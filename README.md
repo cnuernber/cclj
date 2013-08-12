@@ -15,6 +15,7 @@ Create another directory sibling to cclj named "llvmbuild".
 Build llvm on windows:
 ----------------------
 under llvmbuild:
+
 1. cmake -G "Visual Studio 11" ..\llvm-3.3.src
 2. Open solution and build both release and debug.
 
@@ -22,6 +23,7 @@ under llvmbuild:
 Build llvm on linux:
 -----------------------
 under llvmbuild:
+
 1. cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ../llvm-3.3.src -j4
 2. make.
 3. mkdir lib/Release
@@ -45,13 +47,13 @@ On linux, your build files will be located under ../linux.
 
 Language examples
 =====================
-1.  All of the basic files under corpus/basic*.cclj are good starting points.
 
-[C integration, pointers](corpus/dynamic_memory.cclj)
-[compile time programming, simple](corpus/macro_fn.cclj)
-[compile time programming, advanced](corpus/macro_fn2.cclj)
-[C++ style template functions](corpus/poly_fn.cclj)
-[scope aware programming (RAII)](corpus/scope_exit.cclj)
+* All of the basic files under corpus/basic*.cclj are good starting points.
+* [C integration, pointers](corpus/dynamic_memory.cclj)
+* [compile time programming, simple](corpus/macro_fn.cclj)
+* [compile time programming, advanced](corpus/macro_fn2.cclj)
+* [C++ style template functions](corpus/poly_fn.cclj)
+* [scope aware programming (RAII)](corpus/scope_exit.cclj)
 
 
 
