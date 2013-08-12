@@ -49,8 +49,8 @@ Language examples
 =====================
 
 * All of the basic files under corpus/basic*.cclj are good starting points.
-* [C integration, pointers](corpus/dynamic_memory.cclj)
-* [compile time programming, simple](corpus/macro_fn.cclj)
+* [C integration, pointers](corpus/dynamic_mem.cclj)
+* [compile time programming, simple](corpus/basic2.cclj)
 * [compile time programming, advanced](corpus/macro_fn2.cclj)
 * [C++ style template functions](corpus/poly_fn.cclj)
 * [scope aware programming (RAII)](corpus/scope_exit.cclj)
