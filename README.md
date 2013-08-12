@@ -3,86 +3,77 @@ cclj
 
 cclj is an experimental project to write a dynamic, typed language that compiles to binary and integrates quite closely with C++.  
 
+cclj builds on windows using Visual Studio 12 or Visual Studio 12 Express.  The project also builds on a linux platform.
 
-It will use a LISP-like syntax but it will be strongly typed.  Typing adds a lot of noise to the program but it also allows some interesting features
-such as type classes and such.  The type system will be as simple as possible and strong; no implicit type conversions.  
+On all supported operating systems:
+Install perl.  From cpan (or the cygwin package system) install Data::UUID and XML::libXML.  Install python 2.7.X series.  Also install cmake.
+If you are under windows, you need the cmake for windows not cygwin cmake.  cygwin cmake doesn't include visual studio support.
 
+Get llvm 3.3 src code, place in a sibling directory to cclj named "llvm-3.3.src".
+Create another directory sibling to cclj named "llvmbuild".
 
-I wanted it to be optionally typed and that may follow but at first, in order to make the development simpler it will just be strongly, simply typed.
-
-
-I do want meta programming facilities but not traditional lisp meta programming in that I want closer interaction with the compiler.  I would like the
-meta programming system to be able to extend the compiler and to query information about program and type information.  As such, it will have to wait
-until the main compiler is working to some extent.  For instance, it would be really good to be able to query the properties and functions on the
-objects at compile time and generate code.  Or to query the enumeration values in an enumeration at compile to to generate string->enum mappings and
-so forth.  
-
-
-As far as the c++ integration goes, I would like to be able to make C++ virtual calls natively from the language.  This may require the clang AST to be
-integrated to some extent.  I would also like to be able to call C functions and C++ member functions (non virtual).  Furthermore I would like
-generalized support for the RAII paradigm; basically I would like to at any point be able to tell the compiler to ensure a function gets called before
-the stack unwinds.  But I would like this to work at the closure/function level as opposed to the object level.  I would
-also like support for c++ exceptions and stack unwinding although I do not know how difficult this is and it may be quite hard to do across compilers.
+Build llvm on windows:
+----------------------
+under llvmbuild:
+1. cmake -G "Visual Studio 11" ..\llvm-3.3.src
+2. Open solution and build both release and debug.
 
 
-I like clojure's rules about syntax *especially* the differentiation using vectors and lists for different sections.  In general I do not want to get
-into problems with precedence and I do not want to get into problems relating to function overloading (that is what type classes are for).  So the
-language will be bare and simple.  I *do*, however, think namespaces are necessary.
+Build llvm on linux:
+-----------------------
+under llvmbuild:
+1. cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ../llvm-3.3.src -j4
+2. make.
+3. mkdir lib/Release
+4. mkdie lib/Debug
+5. mv lib/* lib/Release
+6. mkdir ../llvmbuild2
+7. cd ../llvmbuild2
+8. make -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug ../llvm-3.3.src -j4
+9. mv lib/* ../llvmbuild/lib/Debug
 
 
-I think clojure made a fairly large mistake in their dot notation system for member functions.  I understand the theory that the function is the first
-member of the list, but the problem is that this makes intellisense far, far harder to achieve.  Great intellisense makes a large difference and,
-like it or not, objects are huge part of the way people think and solve problems.
+Build cclj
+------------------------
+1. cd build/xpj
+2. perl xpjp.pl
+
+On windows, your build files will be located under ../Win32
+On linux, your build files will be located under ../linux.
 
 
-Gradual or optional typing seems very important to me.  It would be awesome if the types could be elided and there was a smooth path
-to a normal dynamically typed list.  For instance:
 
-    (defn add [a b] (+ a b)) ;works on objects, numbers are boxed and upcasted to number tower numbers where necessary.
-	
-	(defn add|f32 [a|f32 b|f32] ;works on floating point numbers only, compile or runtime error if miscalled
-		(+ a b))
-		
-	(defn [num-type] add|num-type [a|num-type b|num-type] (+ a b)) ;works on anything where the + operator works
+Language examples
+=====================
+1.  All of the basic files under corpus/basic*.cclj are good starting points.
+
+[C integration, pointers](corpus/dynamic_memory.cclj)
+[compile time programming, simple](corpus/macro_fn.cclj)
+[compile time programming, advanced](corpus/macro_fn2.cclj)
+[C++ style template functions](corpus/poly_fn.cclj)
+[scope aware programming (RAII)](corpus/scope_exit.cclj)
 
 
-	
-Should the type go in front or behind the variable?  A lot of inspiration comes from typed-script; the problem is colon notation.
 
-	
-Some possible examples:
 
-	(namespace a
-		
-		(defn f32:fn [ f32:a i32:b i32:c ]
-		  "some function information"
-		  (let [d (+ b c)]
-			(if (< d 4)
-			  (a)
-			  (a*a))))
-	)
-	
-	(let [scoped_var (scope (fn [] (fopen fname)) (fn [:this] (fclose this))]
-		  (fread (scoped_var.this)))
-		  
-		  
-Does lack of typing information make the language dynamic using objectsD
-or does it mean the function is generic?  Probably dynamic as that would
-make it match traditional LISP far closer.
+Compiler Architecture
+========================
+This needs to be fleshed out more in the wiki but here are the main points.
 
-It would also be awesome if, instead of having a completely declarative way
-of defining functions akin to c++ templates, there was a way to compute the function
-at compile time using computations performed on the types themselves.  This allows
-a more natural path to template specialization and partial specialization.  But the
-syntax is confusing to think about.
+* Processing of the lisp code, once passed the reader, is highly modular.
+* The lisp preprocessing system can be extended with lisp_evaluators.
+* Most features are implemented with compiler plugins.  In fact the entire language is implemented
+with compiler plugins
 
-Generically, you are saying something like:
+A compiler plugin is responsible for taking a lisp expression and translating it into an AST node.
+An AST node is mainly responsible for producing llvm code (although they can also be responsible for
+calling functions and performing variable resolution).
 
-given a symbol with one or more type specializations, what further definitions
-are defined?
+At this point it may or may not be clear that in addition to allowing lisp style standard compile time
+programming, c++ style type-based template compile time programming, I intend to allow the intrepid to provide
+their own compiler plugin shared libraries and thus produce a third type of compile time programming, one
+that allows new special forms along with their associated translation to llvm assembly.  If staements, for loops,
+everything that runs currently is all done with compiler plugins (including macros and the entire 
+lisp preprocessing system).
 
-    (param-dec abba [| compile time variable list, types or compile time constants |] )
-	
-    (param-def abba
-	  ((compile time expression to match)
-	   (runtime expression abba evaluates to)))
+The plugin interface is described [here](cclj/include/cclj/plugins/compiler_plugin.h).
