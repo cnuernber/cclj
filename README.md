@@ -49,11 +49,11 @@ Language examples
 =====================
 
 * All of the basic files under corpus/basic*.cclj are good starting points.
-* [C integration, pointers](blob/master/corpus/dynamic_memory.cclj)
-* [compile time programming, simple](blob/master/corpus/macro_fn.cclj)
-* [compile time programming, advanced](blob/master/corpus/macro_fn2.cclj)
-* [C++ style template functions](blob/master/corpus/poly_fn.cclj)
-* [scope aware programming (RAII)](blob/master/corpus/scope_exit.cclj)
+* [C integration, pointers](corpus/dynamic_memory.cclj)
+* [compile time programming, simple](corpus/macro_fn.cclj)
+* [compile time programming, advanced](corpus/macro_fn2.cclj)
+* [C++ style template functions](corpus/poly_fn.cclj)
+* [scope aware programming (RAII)](corpus/scope_exit.cclj)
 
 
 
@@ -78,4 +78,4 @@ that allows new special forms along with their associated translation to llvm as
 everything that runs currently is all done with compiler plugins (including macros and the entire 
 lisp preprocessing system).
 
-The plugin interface is described [here](blob/master/cclj/include/cclj/plugins/compiler_plugin.h).
+The plugin interface is described [here](cclj/include/cclj/plugins/compiler_plugin.h).
