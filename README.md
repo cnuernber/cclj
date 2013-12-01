@@ -3,20 +3,20 @@ cclj
 
 cclj is an experimental project to write a dynamic, typed language that compiles to binary and integrates quite closely with C++.  
 
-cclj builds on windows using Visual Studio 12 or Visual Studio 12 Express.  The project also builds on a linux platform.
+cclj builds on windows using Visual Studio 13 or Visual Studio 13 Express.  The project also builds on a linux platform.
 
 On all supported operating systems:
 Install perl.  From cpan (or the cygwin package system) install Data::UUID and XML::libXML.  Install python 2.7.X series.  Also install cmake.
 If you are under windows, you need the cmake for windows not cygwin cmake.  cygwin cmake doesn't include visual studio support.
 
-Get llvm 3.3 src code, place in a sibling directory to cclj named "llvm-3.3.src".
+Get llvm 3.4 src code, place in a sibling directory to cclj named "llvm-3.4.src".
 Create another directory sibling to cclj named "llvmbuild".
 
 Build llvm on windows:
 ----------------------
 under llvmbuild:
 
-1. cmake -G "Visual Studio 11" ..\llvm-3.3.src
+1. cmake -G "Visual Studio 12" ..\llvm-3.4.src
 2. Open solution and build both release and debug.
 
 
@@ -24,14 +24,14 @@ Build llvm on linux:
 -----------------------
 under llvmbuild:
 
-1. cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ../llvm-3.3.src -j4
+1. cmake -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release ../llvm-3.4.src -j4
 2. make.
 3. mkdir lib/Release
 4. mkdie lib/Debug
 5. mv lib/* lib/Release
 6. mkdir ../llvmbuild2
 7. cd ../llvmbuild2
-8. make -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug ../llvm-3.3.src -j4
+8. make -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Debug ../llvm-3.4.src -j4
 9. mv lib/* ../llvmbuild/lib/Debug
 
 

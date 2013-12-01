@@ -28,11 +28,14 @@
 
 namespace llvm
 {
+	namespace legacy
+	{
+		class FunctionPassManager;
+	}
 	class Value;
 	class AllocaInst;
 	class Type;
 	class Module;
-	class FunctionPassManager;
 	class ExecutionEngine;
 	class BasicBlock;
 }
@@ -141,7 +144,7 @@ namespace cclj
 	struct compiler_context
 	{
 		llvm::Module&				_module;
-		llvm::FunctionPassManager&	_fpm;
+		llvm::legacy::FunctionPassManager&	_fpm;
 		llvm::ExecutionEngine&		_eng;
 		type_library_ptr			_type_library;
 		type_ast_node_map_ptr		_symbol_map;
@@ -151,7 +154,7 @@ namespace cclj
 		compiler_scope_list			_scopes;
 
 		compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
-							, llvm::Module& m,  llvm::FunctionPassManager& fpm
+							, llvm::Module& m,  llvm::legacy::FunctionPassManager& fpm
 							, llvm::ExecutionEngine& eng );
 
 

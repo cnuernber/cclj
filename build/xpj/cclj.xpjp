@@ -232,7 +232,7 @@ sub llvm_lib_name
 			<apply-template name="static_lib_t"/>
 			<apply-template name="cclj_headers"/>
 			<search type="header">
-				../../../llvm-3.3.src/include/
+				../../../llvm-3.4.src/include/
 				../../../llvmbuild/include/
 				../../pcre
 			</search>

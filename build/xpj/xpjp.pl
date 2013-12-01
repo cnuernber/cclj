@@ -295,7 +295,7 @@ $xpj = {};
 
 $xpj->{'platform'} = $^O;
 if ( lc($^O) =~ /win|cygwin/ ) {
-	$xpj->{tool} = "vc12";
+	$xpj->{tool} = "vc13";
 	$xpj->{platform} = "Win32";
 }
 else
