@@ -33,6 +33,9 @@ using namespace cclj::lisp;
 using namespace cclj::plugins;
 using namespace llvm;
 
+#define CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(data_type) \
+} namespace cclj { CCLJ_SLAB_ALLOCATOR_REQUIRES_DESTRUCTION(data_type) } namespace {
+
 namespace 
 {
 	vector<string> split_symbol( symbol& sym )
@@ -1239,7 +1242,9 @@ namespace
 			, _resolution( res )
 		{
 		}
-		
+		virtual ~resolution_ast_node()
+		{
+		}
 		virtual bool executable_statement() const { return true; }
 
 		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
@@ -1247,6 +1252,8 @@ namespace
 			return make_pair( _resolution->load( context, data_buffer<llvm_value_ptr>() ), &_resolution->resolved_type());
 		}
 	};
+
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(resolution_ast_node);
 
 	struct numeric_constant_ast_node : public ast_node
 	{
@@ -1274,6 +1281,7 @@ namespace
 			throw runtime_error( "bad numeric constant" );
 		}
 	};
+
 
 	struct if_ast_node : public ast_node
 	{
@@ -1415,6 +1423,8 @@ namespace
 		}
 	};
 
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(let_ast_node);
+
 	struct let_compiler_plugin : public compiler_plugin
 	{
 		let_compiler_plugin( string_table_ptr st )
@@ -1546,6 +1556,8 @@ namespace
 		}
 	};
 
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(pod_def_ast_node);
+
 	struct pod_def_compiler_plugin : public compiler_plugin
 	{
 		pod_def_compiler_plugin( string_table_ptr st )
@@ -1618,7 +1630,8 @@ namespace
 			return pair<llvm_value_ptr_opt, type_ref_ptr>( nullptr, &context._type_library->get_void_type() );
 		}
 	};
-	
+
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(for_loop_ast_node);
 
 	struct for_loop_plugin : public compiler_plugin
 	{
@@ -1710,6 +1723,8 @@ namespace
 		}
 	};
 
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(set_ast_node);
+
 
 	struct set_plugin : public compiler_plugin
 	{
@@ -1777,6 +1792,8 @@ namespace
 			return make_pair( _resolve_context->load( context, indexes ), &type() );
 		}
 	};
+
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(get_ast_node);
 	
 	struct get_plugin : public compiler_plugin
 	{
@@ -1999,6 +2016,8 @@ namespace
 		}
 	};
 
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(scope_ast_node);
+
 	struct scope_plugin : public compiler_plugin
 	{
 		scope_plugin( string_table_ptr st ) : compiler_plugin( st->register_str( "scope plugin" ) ) {}
@@ -2052,6 +2071,9 @@ namespace
 			return make_pair( retval, &type() );
 		}
 	};
+
+
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(binary_ast_node);
 
 
 	struct global_function_ast_node : public ast_node, public llvm_function_provider

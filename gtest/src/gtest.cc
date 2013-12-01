@@ -169,6 +169,8 @@ static const char kTestShardStatusFile[] = "GTEST_SHARD_STATUS_FILE";
 
 namespace internal {
 
+TestFactoryBase::~TestFactoryBase(){}
+
 // The text used in failure messages to indicate the start of the
 // stack trace.
 const char kStackTraceMarker[] = "\nStack trace:\n";
