@@ -162,6 +162,16 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 			return ( type._name == string_table()->register_str( "ptr" ) );
 		}
 
+		bool is_tuple_type(type_ref& type)
+		{
+			return (type._name == string_table()->register_str("tuple"));
+		}
+
+		bool is_void_type(const type_ref& type)
+		{
+			return &type == &get_void_type();
+		}
+
 		type_ref& get_void_type()
 		{
 			return get_type_ref( "void" );
@@ -181,7 +191,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 
 		
 
-		base_numeric_types::_enum to_base_numeric_type( type_ref& dtype )
+		base_numeric_types::_enum to_base_numeric_type( const type_ref& dtype )
 		{
 			if ( dtype._specializations.size() )
 				return base_numeric_types::no_known_type;

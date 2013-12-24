@@ -141,6 +141,18 @@ namespace cclj
 
 	typedef vector<compiler_scope> compiler_scope_list;
 
+	class user_compiler_data
+	{
+	protected:
+		virtual ~user_compiler_data(){}
+	public:
+		friend class shared_ptr<user_compiler_data>;
+	};
+
+	typedef shared_ptr<user_compiler_data> user_compiler_data_ptr;
+
+	typedef unordered_map<string_table_str, user_compiler_data_ptr> string_compiler_data_map;
+
 	struct compiler_context
 	{
 		llvm::Module&				_module;
@@ -152,6 +164,7 @@ namespace cclj
 		string_alloca_type_map		_variables;
 		type_llvm_type_map			_type_map;
 		compiler_scope_list			_scopes;
+		string_compiler_data_map	_user_compiler_data;
 
 		compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
 							, llvm::Module& m,  llvm::legacy::FunctionPassManager& fpm
@@ -237,9 +250,14 @@ namespace cclj
 		ast_node_list& children() { return _children; }
 		const ast_node_list& children() const { return _children; }
 		virtual type_ref& type() { return _type; }
+		virtual const type_ref& type() const { return _type; }
 		//return true if you can be executed at the top level.
 		virtual bool executable_statement() const { return false; }
 
+		virtual uint32_t eval_to_uint32(type_library& ) const 
+		{ 
+			throw runtime_error("ast node not capable of evaluation to uint32_t"); 
+		}
 		 
 		//Not all nodes are callback, but if your node is registered as a global symbol in the type
 		//table then it needs to be able to handle this call.

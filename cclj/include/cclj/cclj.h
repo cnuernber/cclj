@@ -26,6 +26,7 @@
 #include <cstring>
 #include <atomic>
 #include <stdexcept>
+#include <sstream>
 
 namespace cclj
 {
@@ -58,6 +59,7 @@ namespace cclj
 	using std::atomic_fetch_add;
 	using std::atomic_fetch_sub;
 	using std::bind;
+	using std::stringstream;
 
 
 	class garbage_collector;

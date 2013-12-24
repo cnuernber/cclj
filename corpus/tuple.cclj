@@ -8,5 +8,5 @@
 	  (set retval (+ retval value)))
 	retval))
 	
-	
-(multiply (create-tuple 5|f32 5|u32))
+(let [data (create-tuple 5|f32 5|u32)]
+	(multiply data))

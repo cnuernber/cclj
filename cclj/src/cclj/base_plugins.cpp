@@ -1266,6 +1266,30 @@ namespace
 		
 		virtual bool executable_statement() const { return true; }
 
+		virtual uint32_t eval_to_uint32(type_library& library) const
+		{
+			switch (library.to_base_numeric_type(type()))
+			{
+			case base_numeric_types::f32:
+				return static_cast<uint32_t>(*reinterpret_cast<float*>(_data));
+			case base_numeric_types::f64:
+				return static_cast<uint32_t>(*reinterpret_cast<double*>(_data));
+			case base_numeric_types::i8:
+			case base_numeric_types::u8:
+				return static_cast<uint32_t>(*reinterpret_cast<uint8_t*>(_data));
+			case base_numeric_types::i16:
+			case base_numeric_types::u16:
+				return static_cast<uint32_t>(*reinterpret_cast<uint16_t*>(_data));
+			case base_numeric_types::i32:
+			case base_numeric_types::u32:
+				return static_cast<uint32_t>(*reinterpret_cast<uint32_t*>(_data));
+			case base_numeric_types::i64:
+			case base_numeric_types::u64:
+				return static_cast<uint32_t>(*reinterpret_cast<uint64_t*>(_data));
+			}
+			throw runtime_error("invalid numeric type for numeric constant");
+		}
+
 		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
 			switch( context._type_library->to_base_numeric_type( type() ) )
@@ -1520,31 +1544,38 @@ namespace
 			FunctionType* fn_type = FunctionType::get( struct_type, arg_types, false );
 			_function = Function::Create( fn_type, GlobalValue::ExternalLinkage, "", &context._module );
 		}
+		static pair<llvm_value_ptr_opt, type_ref_ptr> create_struct_value_constructor(compiler_context& context
+																			, data_buffer<symbol*> fields
+																			, Function& function
+																			, type_ref& return_type )
+		{
+			variable_context vcontext(context._variables);
+			function_def_node::initialize_function(context, function, fields, vcontext);
+			IRBuilder<> entryBuilder(&function.getEntryBlock(), function.getEntryBlock().begin());
+			Type* struct_type = context.type_ref_type(return_type).get();
+			auto struct_ptr = entryBuilder.CreateAlloca(struct_type, 0);
+			uint32_t idx = 0;
+			for_each(fields.begin(), fields.end(), [&]
+				(symbol* field)
+			{
+				if (field->_evaled_type != &context._type_library->get_void_type())
+				{
+					Value* val_ptr = context._builder.CreateConstInBoundsGEP2_32(struct_ptr, 0, idx, field->_name.c_str());
+					Value* arg_val = context._builder.CreateLoad(context._variables.find(field->_name)->second.first.get());
+					context._builder.CreateStore(arg_val, val_ptr);
+				}
+				++idx;
+			});
+			auto struct_val = context._builder.CreateLoad(struct_ptr);
+			context._builder.CreateRet(struct_val);
+			verifyFunction(function);
+			context._fpm.run(function);
+			return make_pair(struct_val, &return_type);
+		}
 		
 		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
-			variable_context vcontext( context._variables );
-			function_def_node::initialize_function( context, *_function, _fields, vcontext );
-			IRBuilder<> entryBuilder( &_function->getEntryBlock(), _function->getEntryBlock().begin() );
-			Type* struct_type = context.type_ref_type( type() ).get();
-			auto struct_ptr = entryBuilder.CreateAlloca( struct_type, 0 );
-			uint32_t idx = 0;
-			for_each( _fields.begin(), _fields.end(), [&]
-			( symbol* field )
-			{
-				if ( field->_evaled_type != &context._type_library->get_void_type() )
-				{
-					Value* val_ptr = context._builder.CreateConstInBoundsGEP2_32( struct_ptr, 0, idx, field->_name.c_str() );
-					Value* arg_val = context._builder.CreateLoad( context._variables.find( field->_name )->second.first.get() );
-					context._builder.CreateStore( arg_val, val_ptr );
-				}
-				++idx;
-			} );
-			auto struct_val = context._builder.CreateLoad( struct_ptr );
-			context._builder.CreateRet( struct_val );
-			verifyFunction(*_function );
-			context._fpm.run( *_function );
-			return make_pair( struct_val, &type() );
+			return create_struct_value_constructor(context, _fields, *_function, type());
 		}
 		
 		virtual type_ref& return_type() { return type(); }
@@ -1590,6 +1621,132 @@ namespace
 			return *new_node;
 		}
 	};
+
+	typedef unordered_map<type_ref_ptr, Function*> type_function_map;
+
+	struct create_tuple_compiler_data : public user_compiler_data
+	{
+		type_function_map _create_tuple_map;
+	};
+
+	struct create_tuple_ast_node : public ast_node, public llvm_function_provider
+	{
+		Function*			_function;
+		vector<symbol*>		_fields; //required to create the actual constructor.
+		create_tuple_ast_node(string_table_ptr st, const type_ref& type )
+			: ast_node(st->register_str("create tuple"), type)
+			, _function(nullptr)
+		{
+		}
+
+		virtual ast_node& apply(reader_context& context, data_buffer<ast_node_ptr> args)
+		{
+			function_call_node* new_node
+				= context._ast_allocator->construct<function_call_node>(context._string_table, *this);
+
+			for_each(args.begin(), args.end(), [&]
+				(ast_node_ptr arg)
+			{
+				new_node->children().push_back(*arg);
+			});
+			return *new_node;
+		}
+		
+		virtual void compile_first_pass(compiler_context& context)
+		{
+			string_table& str_table = *context._type_library->string_table();
+
+			pair<string_compiler_data_map::iterator, bool> inserter
+				= context._user_compiler_data.insert(make_pair(str_table.register_str("create_tuple")
+														, user_compiler_data_ptr()));
+			if (inserter.second)
+			{
+				inserter.first->second = make_shared<create_tuple_compiler_data>();
+			}
+			create_tuple_compiler_data& compiler_data = static_cast<create_tuple_compiler_data&>(*inserter.first->second);
+			pair<type_function_map::iterator, bool> fn_insert =
+				compiler_data._create_tuple_map.insert(make_pair(&type(), nullptr));
+			if (fn_insert.second)
+			{
+				vector<llvm_type_ptr> arg_types;
+				for (auto iter = children().begin(), end = children().end()
+					;  iter != end; ++iter)
+				{
+					iter->compile_first_pass(context);
+					auto compiler_type = iter->type();
+					if (!context._type_library->is_void_type(compiler_type))
+					{
+						auto llvm_type = context.type_ref_type(iter->type());
+						if (llvm_type.valid())
+							arg_types.push_back(llvm_type.get());
+					}
+				}
+				//Create struct type definition to llvm.
+				llvm_type_ptr struct_type = StructType::create(getGlobalContext(), arg_types);
+				context._type_map.insert(make_pair(&type(), struct_type));
+				FunctionType* fn_type = FunctionType::get(struct_type, arg_types, false);
+				_function = Function::Create(fn_type, GlobalValue::ExternalLinkage, "", &context._module);
+				fn_insert.first->second = _function;
+			}
+			else
+				_function = fn_insert.first->second;
+		}
+
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			return pod_def_ast_node::create_struct_value_constructor(context, _fields, *_function, type());
+		}
+
+		virtual type_ref& return_type() { return type(); }
+		virtual Function& function()
+		{
+			if (_function == nullptr)
+				throw runtime_error("podtype first pass not called yet");
+			return *_function;
+		}
+	};
+
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(create_tuple_ast_node);
+
+	struct create_tuple_compiler_plugin : public compiler_plugin
+	{
+		create_tuple_compiler_plugin(string_table_ptr st)
+		: compiler_plugin(st->register_str("create tuple"))
+		{
+		}
+
+		virtual ast_node& type_check(reader_context& context, lisp::cons_cell& cell)
+		{
+			vector<ast_node*> tuple_args;
+			vector<type_ref_ptr> tuple_types;
+			for (cons_cell* type_cell = object_traits::cast<cons_cell>(cell._next);
+				type_cell; type_cell = object_traits::cast<cons_cell>(type_cell->_next))
+			{
+				ast_node& arg = context._type_checker(type_cell);
+				tuple_args.push_back(&arg);
+				tuple_types.push_back(&arg.type());
+			}
+			type_ref& new_type = context._type_library->get_type_ref("tuple", tuple_types);
+			create_tuple_ast_node& retval
+				= *context._ast_allocator->construct<create_tuple_ast_node>(context._string_table, new_type);
+			uint32_t arg_idx = 0;
+			stringstream num_converter;
+			for_each(tuple_args.begin(), tuple_args.end(), [&]
+				(ast_node* node)
+			{
+				num_converter.clear();
+				num_converter << "_" << arg_idx;
+				string_table_str arg_name = context._string_table->register_str(num_converter.str().c_str());
+				symbol* new_symbol = context._factory->create_symbol();
+				new_symbol->_evaled_type = &node->type();
+				new_symbol->_name = arg_name;
+				retval._fields.push_back(new_symbol);
+			});
+			return retval;
+		}
+	};
+
+
 
 	struct for_loop_ast_node : public ast_node
 	{
@@ -1771,7 +1928,7 @@ namespace
 	{
 		symbol_resolution_context_ptr _resolve_context;
 		get_ast_node( string_table_ptr st, symbol_resolution_context_ptr sr, const type_ref& type )
-			: ast_node( st->register_str( "set node" ), type )
+			: ast_node( st->register_str( "get node" ), type )
 			, _resolve_context( sr )
 		{
 		}
@@ -1818,7 +1975,15 @@ namespace
 				auto num_type = context._type_library->to_base_numeric_type( new_node.type() );
 				if ( base_numeric_types::is_int_type( num_type ) == false )
 					throw runtime_error( "indexes into arrays must be integers" );
-				resolved_type = &context._type_library->deref_ptr_type( *resolved_type );
+				if (context._type_library->is_tuple_type(*resolved_type))
+				{
+					//new_node must resolve to a numeric constant that we can figure out here.
+					uint32_t tuple_idx = new_node.eval_to_uint32(*context._type_library);
+					if (tuple_idx < resolved_type->_specializations.size())
+						resolved_type = resolved_type->_specializations[tuple_idx];
+				}
+				else
+					resolved_type = &context._type_library->deref_ptr_type( *resolved_type );
 			}
 			get_ast_node* retval 
 				= context._ast_allocator->construct<get_ast_node>( context._string_table, res_context, *resolved_type );
@@ -2364,7 +2529,10 @@ void base_language_plugins::register_base_compiler_plugins( string_table_ptr str
 	special_forms->insert( make_pair( str_table->register_str( "ptr-cast" )
 		, make_shared<ptr_cast_plugin>( str_table ) ) );
 	special_forms->insert( make_pair( str_table->register_str( "scope" )
-		, make_shared<scope_plugin>( str_table ) ) );
+		, make_shared<scope_plugin>(str_table)));
+	special_forms->insert(make_pair(str_table->register_str("create-tuple")
+		, make_shared<create_tuple_compiler_plugin>(str_table)));
+	
 
 	generic_lisp_special_form::register_functions( str_table, lisp_evaluators );
 	generic_preprocessor_function::register_functions( str_table, lisp_evaluators );

@@ -140,7 +140,8 @@ TEST(corpus_tests, dynamic_mem ) { ASSERT_TRUE( run_corpus_test( "dynamic_mem", 
 TEST(corpus_tests, poly_fn ) { ASSERT_TRUE(run_corpus_test("poly_fn", 53.0f ) ); }
 TEST(corpus_tests, macro_fn2 ) { ASSERT_TRUE(run_corpus_test("macro_fn2", 55.0f ) ); }
 TEST(corpus_tests, void_fn ) { ASSERT_TRUE(run_corpus_test("void", 55.0f ) ); }
-TEST(corpus_tests, scope_exit ) { ASSERT_TRUE(run_corpus_test("scope_exit", 135.0f ) ); }
+TEST(corpus_tests, scope_exit) { ASSERT_TRUE(run_corpus_test("scope_exit", 135.0f)); }
+TEST(corpus_tests, tuple) { ASSERT_TRUE(run_corpus_test("tuple", 25.0f)); }
 
 
 
