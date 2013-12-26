@@ -24,6 +24,7 @@
 #include "llvm/PassManager.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/Transforms/Scalar.h"
+#include "llvm/Support/raw_ostream.h"
 #ifdef _WIN32
 #pragma warning(pop)
 #endif
@@ -86,6 +87,18 @@ namespace
 			if ( llvm_ptr )
 				return PointerType::get( llvm_ptr.get(), 0 );
 			return llvm_type_ptr_opt();
+		}
+		else if (context._type_library->is_tuple_type(type))
+		{
+			vector<llvm_type_ptr> arg_types;
+			for (auto iter = type._specializations.begin(), end = type._specializations.end()
+				;  iter != end; ++iter)
+			{
+				if (!context._type_library->is_void_type(**iter))
+					arg_types.push_back(context.type_ref_type(**iter).get());
+			}
+			//Create struct type definition to llvm.
+			return StructType::create(getGlobalContext(), arg_types);
 		}
 		else
 		{
@@ -289,17 +302,39 @@ namespace
 			return context._builder.CreateGEP( start_addr.get(), lookups, "gep lookup" );
 		}
 
-		virtual llvm_value_ptr_opt load( compiler_context& context, data_buffer<llvm_value_ptr> indexes )
+		virtual llvm_value_ptr_opt load( compiler_context& context, data_buffer<llvm_value_ptr> indexes_src )
 		{
 			auto addr = load_to_ptr( context );
 			if ( addr.empty() ) return llvm_value_ptr_opt();
-			auto loaded_item = context._builder.CreateLoad( addr.get() );
+			auto loaded_item = addr.get();
+			vector<llvm_value_ptr> indexes;
+			if (context._type_library->is_tuple_type(resolved_type()))
+			{
+				indexes.push_back(llvm::ConstantInt::get(llvm::Type::getInt32Ty(getGlobalContext()), 0));
+			}
+			else
+			{
+				loaded_item = context._builder.CreateLoad(addr.get());
+			}
+			indexes.insert(indexes.end(), indexes_src.begin(), indexes_src.end());
+				
+
 			if ( indexes.size() == 0 )
 				return loaded_item;
 			auto further_loaded = context._builder.CreateGEP( loaded_item
-																,  ArrayRef<llvm::Value*>( indexes.begin(), indexes.end() )
+																,  ArrayRef<llvm::Value*>( indexes )
 																, "" );
-			return context._builder.CreateLoad( further_loaded );
+			auto final_load = context._builder.CreateLoad( further_loaded );
+			auto load_type = final_load->getType();
+			std::string buffer;
+			raw_string_ostream printer(buffer);
+			(void)load_type;
+
+			load_type->print(printer);
+			printer.flush();
+			string data = printer.str();
+			(void)data;
+			return final_load;
 		}
 
 		virtual void store( compiler_context& context, data_buffer<llvm_value_ptr> indexes, llvm_value_ptr_opt val )

@@ -644,7 +644,7 @@ namespace {
 
 
 			FunctionType* fn_type = FunctionType::get( comp_context.type_ref_type( *rettype ).get(), false );
-			Function* retfn = Function::Create( fn_type, GlobalValue::ExternalLinkage, "", _module );
+			Function* retfn = Function::Create( fn_type, GlobalValue::ExternalLinkage, "outerfn", _module );
 			variable_context var_context( comp_context._variables );
 			base_language_plugins::initialize_function( comp_context, *retfn, data_buffer<symbol*>(), var_context );
 			

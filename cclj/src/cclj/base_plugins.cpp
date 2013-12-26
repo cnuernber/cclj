@@ -1668,22 +1668,14 @@ namespace
 				compiler_data._create_tuple_map.insert(make_pair(&type(), nullptr));
 			if (fn_insert.second)
 			{
+				llvm_type_ptr struct_type = context.type_ref_type(type()).get();
 				vector<llvm_type_ptr> arg_types;
-				for (auto iter = children().begin(), end = children().end()
+				for (auto iter = type()._specializations.begin(), end = type()._specializations.end()
 					;  iter != end; ++iter)
 				{
-					iter->compile_first_pass(context);
-					auto compiler_type = iter->type();
-					if (!context._type_library->is_void_type(compiler_type))
-					{
-						auto llvm_type = context.type_ref_type(iter->type());
-						if (llvm_type.valid())
-							arg_types.push_back(llvm_type.get());
-					}
+					if (!context._type_library->is_void_type(**iter))
+						arg_types.push_back(context.type_ref_type(**iter).get());
 				}
-				//Create struct type definition to llvm.
-				llvm_type_ptr struct_type = StructType::create(getGlobalContext(), arg_types);
-				context._type_map.insert(make_pair(&type(), struct_type));
 				FunctionType* fn_type = FunctionType::get(struct_type, arg_types, false);
 				_function = Function::Create(fn_type, GlobalValue::ExternalLinkage, "", &context._module);
 				fn_insert.first->second = _function;
@@ -1694,7 +1686,15 @@ namespace
 
 		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
 		{
-			return pod_def_ast_node::create_struct_value_constructor(context, _fields, *_function, type());
+			//preserve the insert points
+			if (!_function)
+			{
+				//This changes the insert point.
+				compile_first_pass(context);
+
+			}
+			auto retval = pod_def_ast_node::create_struct_value_constructor(context, _fields, *_function, type());
+			return retval;
 		}
 
 		virtual type_ref& return_type() { return type(); }
@@ -1704,6 +1704,9 @@ namespace
 				throw runtime_error("podtype first pass not called yet");
 			return *_function;
 		}
+		virtual bool executable_statement() const { return false; }
+
+		
 	};
 
 	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(create_tuple_ast_node);
@@ -1722,7 +1725,7 @@ namespace
 			for (cons_cell* type_cell = object_traits::cast<cons_cell>(cell._next);
 				type_cell; type_cell = object_traits::cast<cons_cell>(type_cell->_next))
 			{
-				ast_node& arg = context._type_checker(type_cell);
+				ast_node& arg = context._type_checker(type_cell->_value);
 				tuple_args.push_back(&arg);
 				tuple_types.push_back(&arg.type());
 			}
@@ -1736,13 +1739,15 @@ namespace
 			{
 				num_converter.clear();
 				num_converter << "_" << arg_idx;
+				++arg_idx;
 				string_table_str arg_name = context._string_table->register_str(num_converter.str().c_str());
 				symbol* new_symbol = context._factory->create_symbol();
 				new_symbol->_evaled_type = &node->type();
 				new_symbol->_name = arg_name;
 				retval._fields.push_back(new_symbol);
 			});
-			return retval;
+			context._additional_top_level_nodes.push_back(&retval);
+			return retval.apply(context, tuple_args);
 		}
 	};
 
@@ -1939,18 +1944,96 @@ namespace
 		{
 			if ( &type() == &context._type_library->get_void_type() )
 				return pair<llvm_value_ptr_opt,type_ref_ptr>( nullptr, &type() );
-			pair<llvm_value_ptr_opt, type_ref_ptr> assign_var (nullptr, nullptr );
-			vector<llvm_value_ptr> indexes;
-			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
+			/*if (context._type_library->is_tuple_type(_resolve_context->resolved_type()))
 			{
-				assign_var = iter->compile_second_pass( context );
-				indexes.push_back( assign_var.first.get() );
+				//hmm, still a gep of some sort.
 			}
-			return make_pair( _resolve_context->load( context, indexes ), &type() );
+			else*/
+			{
+				pair<llvm_value_ptr_opt, type_ref_ptr> assign_var(nullptr, nullptr);
+				vector<llvm_value_ptr> indexes;
+				for (auto iter = children().begin(), end = children().end(); iter != end; ++iter)
+				{
+					assign_var = iter->compile_second_pass(context);
+					indexes.push_back(assign_var.first.get());
+				}
+				return make_pair(_resolve_context->load(context, indexes), &type());
+			}
 		}
 	};
 
 	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(get_ast_node);
+
+
+
+
+	struct numeric_cast_node : public ast_node
+	{
+		numeric_cast_node(string_table_ptr st, const type_ref& t)
+		: ast_node(st->register_str("numeric cast node"), t)
+		{
+		}
+
+		virtual bool executable_statement() const { return true; }
+
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			pair<llvm_value_ptr_opt, type_ref_ptr> arg_eval(nullptr, nullptr);
+			for (auto iter = children().begin(), end = children().end(); iter != end; ++iter)
+			{
+				arg_eval = iter->compile_second_pass(context);
+			}
+			if (arg_eval.first.empty()) throw runtime_error("invalid numeric cast");
+			auto source = context._type_library->to_base_numeric_type(*arg_eval.second);
+			auto target = context._type_library->to_base_numeric_type(type());
+
+			Type* target_type = context.type_ref_type(type()).get();
+			Value* retval = nullptr;
+			Value* sourceval = arg_eval.first.get();
+			if (base_numeric_types::is_float_type(source))
+			{
+				if (target == base_numeric_types::f64)
+					retval = context._builder.CreateFPExt(sourceval, target_type);
+				else if (target == base_numeric_types::f32)
+					retval = context._builder.CreateFPTrunc(sourceval, target_type);
+				else if (base_numeric_types::is_signed_int_type(target))
+					retval = context._builder.CreateFPToSI(sourceval, target_type);
+				else if (base_numeric_types::is_unsigned_int_type(target))
+					retval = context._builder.CreateFPToUI(sourceval, target_type);
+			}
+			else if (base_numeric_types::is_int_type(source))
+			{
+				if (base_numeric_types::is_float_type(target))
+				{
+					if (base_numeric_types::is_signed_int_type(source))
+						retval = context._builder.CreateSIToFP(sourceval, target_type);
+					else
+						retval = context._builder.CreateUIToFP(sourceval, target_type);
+				}
+				else
+				{
+					if (base_numeric_types::num_bits(source) > base_numeric_types::num_bits(target))
+					{
+						retval = context._builder.CreateTrunc(sourceval, target_type);
+					}
+					else if (base_numeric_types::num_bits(source) < base_numeric_types::num_bits(target))
+					{
+						if (base_numeric_types::is_signed_int_type(target))
+							retval = context._builder.CreateSExt(sourceval, target_type);
+						else
+							retval = context._builder.CreateZExt(sourceval, target_type);
+					}
+					//types are same size, just do a bitcast of sorts.
+					else
+						retval = context._builder.CreateBitCast(sourceval, target_type);
+				}
+			}
+
+			if (retval == nullptr) throw runtime_error("cast error");
+
+			return make_pair(retval, &type());
+		}
+	};
 	
 	struct get_plugin : public compiler_plugin
 	{
@@ -1968,13 +2051,26 @@ namespace
 			auto res_context = resolve_symbol( context, name );
 			type_ref* resolved_type = &res_context->resolved_type();
 			vector<ast_node_ptr> children;
+			auto index_type = &context._type_library->get_type_ref(base_numeric_types::i32);
 			for ( cons_cell* expr = first_expr_cell; expr; expr = object_traits::cast<cons_cell>( expr->_next ) )
 			{
-				ast_node& new_node = context._type_checker( expr->_value );
-				children.push_back( &new_node );
-				auto num_type = context._type_library->to_base_numeric_type( new_node.type() );
-				if ( base_numeric_types::is_int_type( num_type ) == false )
-					throw runtime_error( "indexes into arrays must be integers" );
+				//arguments to get need to be 32 bit integers.  This may change if we have a 64 bit variant.
+				ast_node& new_node = context._type_checker(expr->_value);
+				auto num_type = context._type_library->to_base_numeric_type(new_node.type());
+				if (base_numeric_types::is_int_type(num_type) == false)
+					throw runtime_error("indexes into arrays must be integers");
+
+				if (&new_node.type() != index_type)
+				{
+					auto numeric_node
+						= context._ast_allocator->construct<numeric_cast_node>(context._string_table, *index_type);
+
+					numeric_node->children().push_back(new_node);
+					children.push_back(numeric_node);
+				}
+				else
+					children.push_back(&new_node);
+
 				if (context._type_library->is_tuple_type(*resolved_type))
 				{
 					//new_node must resolve to a numeric constant that we can figure out here.
@@ -1995,75 +2091,6 @@ namespace
 			} );
 
 			return *retval;
-		}
-	};
-
-
-	struct numeric_cast_node : public ast_node
-	{
-		numeric_cast_node( string_table_ptr st, const type_ref& t )
-			: ast_node( st->register_str( "numeric cast node" ), t )
-		{
-		}
-		
-		virtual bool executable_statement() const { return true; }
-
-		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass( compiler_context& context )
-		{
-			pair<llvm_value_ptr_opt, type_ref_ptr> arg_eval( nullptr, nullptr );
-			for ( auto iter = children().begin(), end = children().end(); iter != end; ++iter )
-			{
-				arg_eval = iter->compile_second_pass( context );
-			}
-			if ( arg_eval.first.empty() ) throw runtime_error( "invalid numeric cast" );
-			auto source = context._type_library->to_base_numeric_type( *arg_eval.second );
-			auto target = context._type_library->to_base_numeric_type( type() );
-			
-			Type* target_type = context.type_ref_type( type() ).get();
-			Value* retval = nullptr;
-			Value* sourceval = arg_eval.first.get();
-			if ( base_numeric_types::is_float_type( source ) )
-			{
-				if ( target == base_numeric_types::f64 )
-					retval = context._builder.CreateFPExt( sourceval, target_type );
-				else if ( target == base_numeric_types::f32 )
-					retval = context._builder.CreateFPTrunc( sourceval, target_type );
-				else if ( base_numeric_types::is_signed_int_type( target ) )
-					retval = context._builder.CreateFPToSI( sourceval, target_type );
-				else if ( base_numeric_types::is_unsigned_int_type( target ) )
-					retval = context._builder.CreateFPToUI( sourceval, target_type );
-			}
-			else if ( base_numeric_types::is_int_type( source ) )
-			{
-				if ( base_numeric_types::is_float_type( target ) )
-				{
-					if ( base_numeric_types::is_signed_int_type( source ) )
-						retval = context._builder.CreateSIToFP( sourceval, target_type );
-					else
-						retval = context._builder.CreateUIToFP( sourceval, target_type );
-				}
-				else 
-				{
-					if ( base_numeric_types::num_bits( source ) > base_numeric_types::num_bits( target ) )
-					{
-						retval = context._builder.CreateTrunc( sourceval, target_type );
-					}
-					else if ( base_numeric_types::num_bits( source ) < base_numeric_types::num_bits( target ) )
-					{
-						if ( base_numeric_types::is_signed_int_type( target ) )
-							retval = context._builder.CreateSExt( sourceval, target_type );
-						else
-							retval = context._builder.CreateZExt( sourceval, target_type );
-					}
-					//types are same size, just do a bitcast of sorts.
-					else
-						retval = context._builder.CreateBitCast( sourceval, target_type );
-				}
-			}
-
-			if ( retval == nullptr ) throw runtime_error( "cast error" );
-
-			return make_pair( retval, &type() );
 		}
 	};
 
