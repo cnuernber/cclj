@@ -21,6 +21,7 @@
 #pragma warning(push,2)
 #endif
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/GlobalValue.h"
 #ifdef _WIN32
 #pragma warning(pop)
 #endif
@@ -54,6 +55,17 @@ namespace cclj
 #ifdef _WIN32
 #pragma warning(disable:4512)
 #endif
+
+
+	struct visibility
+	{
+		enum _enum
+		{
+			internal_visiblity = 0,
+			external_visibility,
+		};
+	};
+
 	struct symbol_type_context : noncopyable
 	{
 		symbol_type_ref_map&							_context_symbol_types;
@@ -153,6 +165,8 @@ namespace cclj
 
 	typedef unordered_map<string_table_str, user_compiler_data_ptr> string_compiler_data_map;
 
+	typedef data_buffer<string_table_str> qualified_name;
+
 	struct compiler_context
 	{
 		llvm::Module&				_module;
@@ -165,6 +179,7 @@ namespace cclj
 		type_llvm_type_map			_type_map;
 		compiler_scope_list			_scopes;
 		string_compiler_data_map	_user_compiler_data;
+		stringstream				_name_buffer;
 
 		compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
 							, llvm::Module& m,  llvm::legacy::FunctionPassManager& fpm
@@ -175,6 +190,11 @@ namespace cclj
 		void enter_scope();
 		void add_exit_block( llvm::BasicBlock& block );
 		void exit_scope();
+		//uses the name buffer, so this is not safe to call in a reentrant context.
+
+		string qualified_name_to_llvm_name(qualified_name nm);
+		string qualified_name_to_llvm_name(qualified_name nm, type_ref_ptr_buffer specializations);
+		llvm::GlobalValue::LinkageTypes visibility_to_linkage(visibility::_enum vis);
 	};
 	
 	struct compiler_scope_watcher

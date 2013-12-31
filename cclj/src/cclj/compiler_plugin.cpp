@@ -75,6 +75,70 @@ void compiler_context::exit_scope()
 	_scopes.pop_back();
 }
 
+
+
+string compiler_context::qualified_name_to_llvm_name(qualified_name nm)
+{
+	_name_buffer.clear();
+	bool first = true;
+	for_each(nm.begin(), nm.end(), [&](string_table_str data){
+		if (!first)
+			_name_buffer << "_";
+		first = false;
+		_name_buffer << data.c_str();
+	});
+	return _name_buffer.str();
+}
+
+namespace
+{
+	void type_ref_to_llvm_name(type_ref& type, stringstream& str)
+	{
+		str << type._name.c_str();
+		if (type._specializations.size())
+		{
+			str << "[";
+			for_each(type._specializations.begin(), type._specializations.end(), [&](type_ref_ptr type)
+			{
+				type_ref_to_llvm_name(*type, str);
+				str << " ";
+			});
+			str << "]";
+		}
+	}
+}
+
+
+string compiler_context::qualified_name_to_llvm_name(qualified_name nm, type_ref_ptr_buffer specializations)
+{
+	qualified_name_to_llvm_name(nm);
+	if (specializations.size())
+	{
+		_name_buffer << "[";
+		for_each(specializations.begin(), specializations.end(), [&](type_ref_ptr type)
+		{
+			type_ref_to_llvm_name(*type, _name_buffer);
+			_name_buffer << " ";
+		});
+		_name_buffer << "]";
+	}
+	return _name_buffer.str();
+}
+
+
+llvm::GlobalValue::LinkageTypes compiler_context::visibility_to_linkage(visibility::_enum vis)
+{
+	switch (vis)
+	{
+	case visibility::internal_visiblity:
+		return llvm::GlobalValue::LinkageTypes::PrivateLinkage;
+	case visibility::external_visibility:
+		return llvm::GlobalValue::LinkageTypes::ExternalLinkage;
+	default:
+		throw runtime_error("Unrecognized linkage type");
+	}
+}
+
 namespace
 {
 
