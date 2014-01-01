@@ -16,6 +16,7 @@
 #include "cclj/slab_allocator.h"
 #include "cclj/invasive_list.h"
 #include "cclj/option.h"
+#include "cclj/qualified_name_table.h"
 
 #ifdef _WIN32
 #pragma warning(push,2)
@@ -164,8 +165,6 @@ namespace cclj
 	typedef shared_ptr<user_compiler_data> user_compiler_data_ptr;
 
 	typedef unordered_map<string_table_str, user_compiler_data_ptr> string_compiler_data_map;
-
-	typedef data_buffer<string_table_str> qualified_name;
 
 	struct compiler_context
 	{
