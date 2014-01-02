@@ -8,6 +8,7 @@
 #include "precompile.h"
 #include "cclj/compiler.h"
 #include "cclj/plugins/base_plugins.h"
+#include "cclj/module.h"
 extern "C"
 {
 #include "pcre.h"
@@ -335,7 +336,9 @@ namespace {
 							, string_plugin_map_ptr top_level_special_forms
 							, type_ast_node_map_ptr top_level_symbols
 							, slab_allocator_ptr ast_alloc
-							, string_lisp_evaluator_map& lisp_evals )
+							, string_lisp_evaluator_map& lisp_evals
+							, qualified_name_table_ptr name_table
+							, module_ptr module)
 							: _applier()
 		{
 			type_check_function tc = [this]( object_ptr cc ) -> ast_node&
@@ -348,7 +351,7 @@ namespace {
 			};
 			_context = shared_ptr<reader_context>( new reader_context( alloc, f, l, st, tc, te, special_forms
 											, top_level_special_forms, top_level_symbols
-											, ast_alloc, lisp_evals ) );
+											, ast_alloc, lisp_evals, name_table, module));
 		}
 
 		ast_node& type_check_cell( object_ptr value )
@@ -443,13 +446,15 @@ namespace {
 		string_plugin_map_ptr			_top_level_special_forms;
 		type_ast_node_map_ptr			_top_level_symbols;
 		slab_allocator_ptr				_ast_allocator;
-		Module*							_module;
+		Module*							_llvm_module;
 		shared_ptr<ExecutionEngine>		_exec_engine;
 		shared_ptr<FunctionPassManager> _fpm;
 		vector<global_variable_entry>   _global_variables;
 		vector<global_function_entry>	_global_functions;
 		compiler_impl*					_this_ptr;
 		string_lisp_evaluator_map		_evaluators;
+		qualified_name_table_ptr		_name_table;
+		module_ptr						_module;
 
 		compiler_impl()
 			: _allocator( allocator::create_checking_allocator() )
@@ -460,7 +465,9 @@ namespace {
 			, _top_level_special_forms( make_shared<string_plugin_map>() )
 			, _top_level_symbols( make_shared<type_ast_node_map>() )
 			, _ast_allocator( make_shared<slab_allocator<> >( _allocator ) )
-			, _module( nullptr )
+			, _llvm_module( nullptr )
+			, _name_table(qualified_name_table::create_table())
+			, _module(module::create_module(_str_table, _type_library, _name_table))
 		{
 			base_language_plugins::register_base_compiler_plugins( _str_table, _top_level_special_forms, _special_forms, _evaluators );
 			register_function reg_fn = [this]( type_ref& fn_type, ast_node& comp_node )
@@ -512,7 +519,7 @@ namespace {
 			type_checker checker( _allocator, _factory, _type_library
 								, _str_table, _special_forms
 								, _top_level_special_forms, _top_level_symbols, _ast_allocator
-								, _evaluators );
+								, _evaluators, _name_table, _module );
 
 			for_each( _global_variables.begin(), _global_variables.end(), [&,this]
 			( global_variable_entry& entry )
@@ -563,17 +570,17 @@ namespace {
 			
 			InitializeNativeTarget();
 			LLVMContext &Context = getGlobalContext();
-			if ( _module == nullptr )
+			if (_llvm_module == nullptr)
 			{
-				_module = new Module("my cool jit", Context);
+				_llvm_module = new Module("my cool jit", Context);
 
 				// Create the JIT.  This takes ownership of the module.
 				string ErrStr;
-				_exec_engine = shared_ptr<ExecutionEngine> ( EngineBuilder(_module).setErrorStr(&ErrStr).create() );
+				_exec_engine = shared_ptr<ExecutionEngine>(EngineBuilder(_llvm_module).setErrorStr(&ErrStr).create());
 				if (!_exec_engine) {
 					throw runtime_error( "Could not create ExecutionEngine\n" );
 				}
-				_fpm = make_shared<FunctionPassManager>(_module);
+				_fpm = make_shared<FunctionPassManager>(_llvm_module);
 
 				// Set up the optimizer pipeline.  Start with registering info about how the
 				// target lays out data structures.
@@ -593,7 +600,7 @@ namespace {
 				_fpm->doInitialization(); 
 			}
 
-			compiler_context comp_context( _type_library, _top_level_symbols, *_module, *_fpm, *_exec_engine );
+			compiler_context comp_context(_type_library, _name_table, _module, *_llvm_module, *_fpm, *_exec_engine);
 			//The, ignoring all nodes that are not top level, create a function with the top level items
 			//compile it, and return the results.
 			for_each( ast.begin(), ast.end(), [&]
@@ -613,56 +620,17 @@ namespace {
 															, GlobalValue::LinkageTypes::CommonLinkage
 															, NULL
 															, entry._name.c_str() );
-					comp_context._module.getGlobalList().push_back( entry._variable );
+					comp_context._llvm_module.getGlobalList().push_back( entry._variable );
 					_exec_engine->addGlobalMapping( entry._variable, entry._value );
 				
 					comp_context._variables.insert( make_pair( entry._name, make_pair( entry._variable, entry._type ) ) );
 				}
 			} );
 
-			
-			for_each( _global_functions.begin(), _global_functions.end(), [&,this]
-			( global_function_entry& entry )
-			{
-				comp_context._symbol_map->find( entry._fn_type )->second->compile_first_pass( comp_context );
-			} );
+			_module->compile_first_pass(comp_context);
+			_module->compile_second_pass(comp_context);
 
-			//compile each top level node, record the type of each non-top-level.
-			type_ref_ptr rettype = nullptr;
-			for_each( ast.begin(), ast.end(), [&]
-			( ast_node_ptr node )
-			{
-				if ( node->executable_statement() == false )
-					node->compile_second_pass( comp_context );
-				else
-					rettype = &node->type();
-			} );
-
-			if ( rettype == nullptr )
-				return pair<void*,type_ref_ptr>( nullptr, nullptr );
-
-
-
-			FunctionType* fn_type = FunctionType::get( comp_context.type_ref_type( *rettype ).get(), false );
-			Function* retfn = Function::Create( fn_type, GlobalValue::ExternalLinkage, "outerfn", _module );
-			variable_context var_context( comp_context._variables );
-			base_language_plugins::initialize_function( comp_context, *retfn, data_buffer<symbol*>(), var_context );
-			
-			llvm_value_ptr_opt last_value = nullptr;
-			for_each( ast.begin(), ast.end(), [&]
-			( ast_node_ptr node )
-			{
-				if ( node->executable_statement() == true )
-					last_value = node->compile_second_pass( comp_context ).first;
-			} );
-			if ( last_value )
-				comp_context._builder.CreateRet( last_value.get() );
-			else
-				comp_context._builder.CreateRetVoid();
-			
-			verifyFunction(*retfn );
-			_fpm->run( *retfn );
-			return make_pair( _exec_engine->getPointerToFunction( retfn ), rettype );
+			return make_pair(_exec_engine->getPointerToFunction(&_module->llvm()), &_module->init_return_type());
 		}
 
 		//Create a compiler and execute this text return the last value if it is a float else exception.

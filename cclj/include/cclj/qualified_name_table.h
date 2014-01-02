@@ -31,6 +31,9 @@ namespace cclj
 		}
 		string_table_str_buffer names() const { return _names; }
 
+		string_table_str* begin() const { return _names.begin(); }
+		string_table_str* end() const { return _names.end(); }
+
 
 		//should only be used internally to the qualified name table
 		static qualified_name unsafe_create_qualified_name(string_table_str_buffer nm)

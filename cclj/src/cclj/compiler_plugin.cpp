@@ -9,6 +9,7 @@
 #include "cclj/plugins/compiler_plugin.h"
 #include "cclj/llvm_base_numeric_type_helper.h"
 #include "cclj/variant.h"
+#include "cclj/module.h"
 #ifdef _WIN32
 #pragma warning(push,2)
 #endif
@@ -34,14 +35,17 @@ using namespace cclj;
 using namespace cclj::lisp;
 using namespace llvm;
 
-compiler_context::compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
+compiler_context::compiler_context(type_library_ptr tl
+					, qualified_name_table_ptr name_table
+					, module_ptr module
 					, llvm::Module& m,  llvm::FunctionPassManager& fpm
 					, llvm::ExecutionEngine& eng )
-	: _module( m )
+	: _llvm_module( m )
+	, _name_table( name_table )
+	, _module( module )
 	, _fpm( fpm )
 	, _eng( eng )
 	, _type_library( tl )
-	, _symbol_map( _type_node_map )
 	, _builder( getGlobalContext() )
 {
 }
@@ -214,7 +218,9 @@ reader_context::reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_l
 						, string_plugin_map_ptr top_level_special_forms
 						, type_ast_node_map_ptr top_level_symbols
 						, slab_allocator_ptr ast_alloc
-						, string_lisp_evaluator_map& lisp_evals )
+						, string_lisp_evaluator_map& lisp_evals
+						, qualified_name_table_ptr name_table
+						, shared_ptr<module> module)
 	: _factory( f )
 	, _type_library( l )
 	, _string_table( st )
@@ -224,7 +230,9 @@ reader_context::reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_l
 	, _type_evaluator( te )
 	, _special_forms( special_forms )
 	, _top_level_special_forms( top_level_special_forms )
-	, _preprocessor_evaluators( lisp_evals )
+	, _preprocessor_evaluators(lisp_evals)
+	, _name_table( name_table )
+	, _module( module )
 {
 }
 

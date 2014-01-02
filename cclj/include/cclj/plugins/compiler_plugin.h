@@ -166,22 +166,28 @@ namespace cclj
 
 	typedef unordered_map<string_table_str, user_compiler_data_ptr> string_compiler_data_map;
 
+	class module;
+
+
 	struct compiler_context
 	{
-		llvm::Module&				_module;
+		llvm::Module&				_llvm_module;
 		llvm::legacy::FunctionPassManager&	_fpm;
 		llvm::ExecutionEngine&		_eng;
 		type_library_ptr			_type_library;
-		type_ast_node_map_ptr		_symbol_map;
 		llvm_builder				_builder;
 		string_alloca_type_map		_variables;
 		type_llvm_type_map			_type_map;
+		qualified_name_table_ptr	_name_table;
+		shared_ptr<module>			_module;
 		compiler_scope_list			_scopes;
 		string_compiler_data_map	_user_compiler_data;
 		stringstream				_name_buffer;
 
-		compiler_context( type_library_ptr tl, type_ast_node_map_ptr _type_node_map
-							, llvm::Module& m,  llvm::legacy::FunctionPassManager& fpm
+		compiler_context( type_library_ptr tl
+							, qualified_name_table_ptr name_table
+							, shared_ptr<module> module
+							, llvm::Module& llvm_m,  llvm::legacy::FunctionPassManager& fpm
 							, llvm::ExecutionEngine& eng );
 
 
@@ -377,6 +383,8 @@ namespace cclj
 		string_obj_ptr_map			_preprocessor_symbols;
 		vector<ast_node_ptr>		_additional_top_level_nodes;
 		string_lisp_evaluator_map	_preprocessor_evaluators;
+		qualified_name_table_ptr	_name_table;
+		shared_ptr<module>			_module;
 
 		reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_library_ptr l
 							, string_table_ptr st, type_check_function tc
@@ -385,7 +393,9 @@ namespace cclj
 							, string_plugin_map_ptr top_level_special_forms
 							, type_ast_node_map_ptr top_level_symbols
 							, slab_allocator_ptr ast_alloc
-							, string_lisp_evaluator_map& lisp_evals );
+							, string_lisp_evaluator_map& lisp_evals
+							, qualified_name_table_ptr name_table
+							, shared_ptr<module> module);
 
 		type_ref& symbol_type( lisp::symbol& symbol );
 	};

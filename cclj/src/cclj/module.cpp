@@ -93,7 +93,7 @@ namespace
 				, NULL
 				, ctx.qualified_name_to_llvm_name(_name).c_str());
 
-			ctx._module.getGlobalList().push_back(_variable);
+			ctx._llvm_module.getGlobalList().push_back(_variable);
 			ctx._eng.addGlobalMapping(_variable, _user_value);
 		}
 
@@ -159,7 +159,7 @@ namespace
 			_function = Function::Create(fn_type
 				, ctx.visibility_to_linkage(_visibility)
 				, name_mangle.c_str()
-				, &ctx._module);
+				, &ctx._llvm_module);
 		}
 
 		static void initialize_function(compiler_context& context, Function& fn, data_buffer<named_type> fn_args
@@ -482,7 +482,7 @@ namespace
 
 	template<typename dtype> struct module_symbol_internal_type_id{};
 
-	template<> struct module_symbol_internal_type_id<variable_node> {
+	template<> struct module_symbol_internal_type_id<variable_node_ptr> {
 		static module_symbol_type::_enum type() {
 			return module_symbol_type::variable;
 		}
@@ -577,9 +577,9 @@ namespace
 
 		~module_impl()
 		{
-			for_each(_symbol_map.begin(), _symbol_map.end(), [this](module_symbol_internal& symbol)
+			for_each(_symbol_map.ordered_begin(), _symbol_map.ordered_end(), [this](symbol_map_type::ordered_entry_type& symbol)
 			{
-				delete_symbol(symbol);
+				delete_symbol(symbol->second);
 			});
 		}
 
@@ -627,13 +627,32 @@ namespace
 		}
 		virtual function_factory& define_function(qualified_name name, named_type_buffer arguments, type_ref& rettype)
 		{
+			vector<function_node_ptr> insert_vec;
+			module_symbol_internal insert_symbol(insert_vec);
+			auto inserter = _symbol_map.insert(make_pair(name, insert_symbol));
+			if (inserter.first->second.type() != module_symbol_type::function)
+				throw runtime_error("failed to create function type");
+
+			vector<function_node_ptr>& existing = inserter.first->second.data<vector<function_node_ptr> >();
+
 			vector<type_ref_ptr> arg_type_buffer; 
 			for_each(arguments.begin(), arguments.end(), [&](named_type& nt)
 			{
 				arg_type_buffer.push_back(nt.type);
 			});
 			type_ref& fn_type = _type_library->get_type_ref("fn", arg_type_buffer);
-			return *add_symbol_t(name, new function_node_impl(name, rettype, arguments, fn_type));
+
+			for (size_t idx = 0, end = existing.size(); idx < end; ++idx)
+			{
+				if (&fn_type == &existing[idx]->type())
+					throw runtime_error("function already defined");
+			}
+
+			auto retval = new function_node_impl(name, rettype, arguments, fn_type);
+
+			existing.push_back(retval);
+
+			return *retval;
 		}
 		//You can only add fields to a datatype once
 		virtual datatype_node_factory& define_datatype(qualified_name name, type_ref& type)
@@ -656,6 +675,7 @@ namespace
 			{
 				retval.push_back(entry->second);
 			});
+			return retval;
 		}
 
 		virtual void append_init_ast_node(ast_node& node)
@@ -663,14 +683,17 @@ namespace
 			_init_statements.push_back(&node);
 			_init_rettype = &node.type();
 		}
-		virtual type_ref_ptr init_return_type()
+		virtual type_ref& init_return_type()
 		{
-			return _init_rettype;
+			if (!_init_rettype)
+				_init_rettype = &_type_library->get_void_type();
+			return *_init_rettype;
 		}
 		virtual void compile_first_pass(compiler_context& ctx)
 		{
-			for_each(_symbol_map.ordered_begin(), _symbol_map.ordered_end(), [&](module_symbol_internal& symbol)
+			for_each(_symbol_map.ordered_begin(), _symbol_map.ordered_end(), [&](symbol_map_type::ordered_entry_type& symbol_entry)
 			{
+				module_symbol_internal& symbol = symbol_entry->second;
 				switch (symbol.type())
 				{
 				case module_symbol_type::variable:
@@ -699,14 +722,15 @@ namespace
 			qualified_name nm = _name_table->register_name(name_args);
 			if (_init_rettype == nullptr)
 				_init_rettype = &_type_library->get_void_type();
-			_init_function = make_shared<function_node_impl>(nm, _init_rettype, named_type_buffer(), fn_type);
+			_init_function = make_shared<function_node_impl>(nm, *_init_rettype, named_type_buffer(), fn_type);
 			_init_function->set_function_body(_init_statements);
 			_init_function->compile_first_pass(ctx);
 		}
 		virtual void compile_second_pass(compiler_context& ctx)
 		{
-			for_each(_symbol_map.ordered_begin(), _symbol_map.ordered_end(), [&](module_symbol_internal& symbol)
+			for_each(_symbol_map.ordered_begin(), _symbol_map.ordered_end(), [&](symbol_map_type::ordered_entry_type& symbol_entry)
 			{
+				module_symbol_internal& symbol = symbol_entry->second;
 				switch (symbol.type())
 				{
 				case module_symbol_type::variable:
@@ -737,4 +761,9 @@ namespace
 			return _init_function->llvm();
 		}
 	};
+}
+
+shared_ptr<module> module::create_module(string_table_ptr st, type_library_ptr tl, qualified_name_table_ptr nt)
+{
+	return make_shared<module_impl>(st, tl, nt);
 }

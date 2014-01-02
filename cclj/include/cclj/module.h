@@ -307,7 +307,7 @@ namespace cclj
 
 	template<typename dtype> struct module_symbol_type_id{};
 
-	template<> struct module_symbol_type_id<variable_node> {
+	template<> struct module_symbol_type_id<variable_node_ptr> {
 		static module_symbol_type::_enum type() {
 			return module_symbol_type::variable;
 		}
@@ -361,6 +361,12 @@ namespace cclj
 		module_symbol(datatype_node_ptr data) : base(data) {}
 	};
 
+	template<> struct variant_destruct<function_node_buffer> {
+		void operator()(function_node_buffer&)
+		{
+		}
+	};
+
 
 	//modules are what are produced from reading lisp files.  They can be compiled down
 	//into actual code.
@@ -369,12 +375,12 @@ namespace cclj
 	protected:
 		virtual ~module(){}
 	public:
+		friend class shared_ptr<module>;
+
 		virtual variable_node_factory& define_variable(qualified_name name, type_ref& type) = 0;
-		virtual function_factory& define_function(qualified_name name, type_ref_ptr_buffer arguments, type_ref& rettype) = 0;
+		virtual function_factory& define_function(qualified_name name, named_type_buffer arguments, type_ref& rettype) = 0;
 		//You can only add fields to a datatype once
 		virtual datatype_node_factory& define_datatype(qualified_name name, type_ref& type) = 0;
-		//but you can add static fields and such at any time.
-		virtual datatype_node& get_or_create_datatype(qualified_name name, type_ref& type) = 0;
 		virtual module_symbol find_symbol(qualified_name name) = 0;
 		virtual vector<module_symbol> symbols() = 0;
 		variable_node_ptr find_variable(qualified_name name)
@@ -413,12 +419,16 @@ namespace cclj
 			return nullptr;
 		}
 		virtual void append_init_ast_node(ast_node& node) = 0;
-		virtual type_ref_ptr init_return_type() = 0;
+		virtual type_ref& init_return_type() = 0;
 		virtual void compile_first_pass(compiler_context& ctx) = 0;
 		virtual void compile_second_pass(compiler_context& ctx) = 0;
 		//Returns the initialization function
 		virtual llvm::Function& llvm() = 0;
+
+		static shared_ptr<module> create_module(string_table_ptr st, type_library_ptr tl, qualified_name_table_ptr nt);
 	};
+
+	typedef shared_ptr<module> module_ptr;
 }
 
 #endif
