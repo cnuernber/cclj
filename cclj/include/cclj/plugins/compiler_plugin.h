@@ -375,13 +375,11 @@ namespace cclj
 		string_table_ptr			_string_table;
 		slab_allocator_ptr			_ast_allocator;
 		symbol_type_ref_map			_context_symbol_types;
-		type_ast_node_map_ptr		_symbol_map;
 		type_check_function			_type_checker;
 		type_eval_function			_type_evaluator;
 		string_plugin_map_ptr		_special_forms;
 		string_plugin_map_ptr		_top_level_special_forms;
 		string_obj_ptr_map			_preprocessor_symbols;
-		vector<ast_node_ptr>		_additional_top_level_nodes;
 		string_lisp_evaluator_map	_preprocessor_evaluators;
 		qualified_name_table_ptr	_name_table;
 		shared_ptr<module>			_module;
@@ -391,7 +389,6 @@ namespace cclj
 							, type_eval_function te
 							, string_plugin_map_ptr special_forms
 							, string_plugin_map_ptr top_level_special_forms
-							, type_ast_node_map_ptr top_level_symbols
 							, slab_allocator_ptr ast_alloc
 							, string_lisp_evaluator_map& lisp_evals
 							, qualified_name_table_ptr name_table
@@ -413,34 +410,10 @@ namespace cclj
 		virtual string_table_str plugin_name() { return _plugin_name; }
 		//vast majority of compiler plugins operate at this level, transforming the lisp
 		//ast into the compiler ast.
-		virtual ast_node& type_check( reader_context& context, lisp::cons_cell& cell ) = 0;
+		virtual ast_node* type_check( reader_context& context, lisp::cons_cell& cell ) = 0;
 	};
 
 	typedef shared_ptr<compiler_plugin> compiler_plugin_ptr;
-
-	
-	struct global_function_entry
-	{
-		void*			_fn_entry;
-		type_ref_ptr	_ret_type;
-		type_ref_ptr	_fn_type;
-		llvm::Function*		_function;
-		global_function_entry()
-			: _fn_entry( nullptr )
-			, _ret_type( nullptr )
-			, _fn_type( nullptr )
-			, _function( nullptr )
-		{
-		}
-
-		global_function_entry( void* fn, type_ref& ret_type, type_ref& fn_type )
-			: _fn_entry( fn )
-			, _ret_type( &ret_type )
-			, _fn_type( &fn_type )
-			, _function( nullptr )
-		{
-		}
-	};
 }
 
 #endif

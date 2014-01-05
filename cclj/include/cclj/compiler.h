@@ -14,6 +14,7 @@
 namespace cclj
 {
 	class ast_node;
+	class module;
 
 	class compiler
 	{
@@ -22,14 +23,17 @@ namespace cclj
 	public:
 		friend class shared_ptr<compiler>;
 
+		//A compiler always writes to a single module.
+		virtual shared_ptr<module> module() = 0;
+
 		//transform text into the lisp datastructures.
 		virtual vector<lisp::object_ptr> read( const string& text ) = 0;
 
 		//Transform lisp datastructures into type-checked ast.
-		virtual vector<ast_node*> type_check( data_buffer<lisp::object_ptr> preprocess_result ) = 0;
+		virtual void type_check( data_buffer<lisp::object_ptr> preprocess_result ) = 0;
 
-		//compile ast to binary.
-		virtual pair<void*,type_ref_ptr> compile( data_buffer<ast_node*> ) = 0;
+		//compile module to binary.
+		virtual pair<void*,type_ref_ptr> compile() = 0;
 
 		//Create a compiler and execute this text return the last value if it is a float else exception.
 		virtual float execute( const string& text ) = 0;

@@ -51,9 +51,16 @@ namespace cclj
 	public:
 		friend class shared_ptr<qualified_name_table>;
 
+		virtual string_table_ptr string_table() = 0;
 		virtual qualified_name register_name(string_table_str_buffer name) = 0;
+		qualified_name register_name(const char* nm)
+		{
+			auto str = string_table()->register_str(nm);
+			string_table_str_buffer buf(&str, 1);
+			return register_name(buf);
+		}
 
-		static shared_ptr<qualified_name_table> create_table();
+		static shared_ptr<qualified_name_table> create_table(string_table_ptr st);
 	};
 
 	typedef shared_ptr<qualified_name_table> qualified_name_table_ptr;

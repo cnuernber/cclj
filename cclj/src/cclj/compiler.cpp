@@ -334,7 +334,6 @@ namespace {
 							, string_table_ptr st
 							, string_plugin_map_ptr special_forms
 							, string_plugin_map_ptr top_level_special_forms
-							, type_ast_node_map_ptr top_level_symbols
 							, slab_allocator_ptr ast_alloc
 							, string_lisp_evaluator_map& lisp_evals
 							, qualified_name_table_ptr name_table
@@ -350,7 +349,7 @@ namespace {
 				return eval_cell_to_type( c );
 			};
 			_context = shared_ptr<reader_context>( new reader_context( alloc, f, l, st, tc, te, special_forms
-											, top_level_special_forms, top_level_symbols
+											, top_level_special_forms
 											, ast_alloc, lisp_evals, name_table, module));
 		}
 
@@ -416,12 +415,10 @@ namespace {
 		void*				_value;
 		string_table_str	_name;
 		type_ref_ptr		_type;
-		GlobalVariable*		_variable;
 
 		global_variable_entry()
 			: _value( nullptr )
 			, _type( nullptr )
-			, _variable( nullptr )
 		{
 		}
 		
@@ -429,7 +426,6 @@ namespace {
 			: _value( v )
 			, _name( s )
 			, _type( &t )
-			, _variable( nullptr )
 		{
 		}
 	};
@@ -444,14 +440,10 @@ namespace {
 		cons_cell						_empty_cell;
 		string_plugin_map_ptr			_special_forms;
 		string_plugin_map_ptr			_top_level_special_forms;
-		type_ast_node_map_ptr			_top_level_symbols;
 		slab_allocator_ptr				_ast_allocator;
 		Module*							_llvm_module;
 		shared_ptr<ExecutionEngine>		_exec_engine;
 		shared_ptr<FunctionPassManager> _fpm;
-		vector<global_variable_entry>   _global_variables;
-		vector<global_function_entry>	_global_functions;
-		compiler_impl*					_this_ptr;
 		string_lisp_evaluator_map		_evaluators;
 		qualified_name_table_ptr		_name_table;
 		module_ptr						_module;
@@ -463,28 +455,18 @@ namespace {
 			, _factory( factory::create_factory( _allocator, _empty_cell ) )
 			, _special_forms( make_shared<string_plugin_map>() )
 			, _top_level_special_forms( make_shared<string_plugin_map>() )
-			, _top_level_symbols( make_shared<type_ast_node_map>() )
 			, _ast_allocator( make_shared<slab_allocator<> >( _allocator ) )
 			, _llvm_module( nullptr )
-			, _name_table(qualified_name_table::create_table())
+			, _name_table(qualified_name_table::create_table(_str_table))
 			, _module(module::create_module(_str_table, _type_library, _name_table))
 		{
 			base_language_plugins::register_base_compiler_plugins( _str_table, _top_level_special_forms, _special_forms, _evaluators );
-			register_function reg_fn = [this]( type_ref& fn_type, ast_node& comp_node )
-			{
-				_top_level_symbols->insert( make_pair( &fn_type, &comp_node ) );
-			};
-			binary_low_level_ast_node::register_binary_functions( reg_fn, _type_library, _str_table, _ast_allocator );
+			binary_low_level_ast_node::register_binary_functions( _module, _type_library, _str_table, _ast_allocator );
 			type_ref& base_type = _type_library->get_type_ref( base_numeric_types::i32 );
 			type_ref& ptr_lvl1 = _type_library->get_ptr_type( base_type );
 			type_ref& runtime_type = ptr_lvl1;
-			_global_variables.push_back( global_variable_entry() );
-			_global_variables.back()._name = _str_table->register_str( "rt" );
-			_this_ptr = this;
-			//Our llvm bindings always dereferences variables, so in this case we need a ptr to ourselves
-			//instead of ourselves.  It will be this way until we update the variable system.
-			_global_variables.back()._value = &_this_ptr;
-			_global_variables.back()._type = &runtime_type;
+			variable_node_factory& rt_variable = _module->define_variable(_name_table->register_name("rt"), ptr_lvl1);
+			rt_variable.set_value(this);
 
 			{
 				type_ref& ret_type = _type_library->get_ptr_type( base_numeric_types::u8 );
@@ -493,18 +475,19 @@ namespace {
 					, &_type_library->get_type_ref( base_numeric_types::u32 )
 					, &_type_library->get_type_ref( base_numeric_types::u8 )
 				};
-				type_ref& fn_type = _type_library->get_type_ref( "malloc", type_ref_ptr_buffer( arg_types, 3 ) );
-				void* fn_ptr = reinterpret_cast<void*>( &compiler_impl::rt_malloc );
-				_global_functions.push_back( global_function_entry( fn_ptr, ret_type, fn_type ) );
+
+				function_factory& fn = _module->define_function(_name_table->register_name("malloc"), type_ref_ptr_buffer(arg_types,3), ret_type);
+				fn.set_function_body(reinterpret_cast<void*>(&compiler_impl::rt_malloc));
 			}
 			{
 				type_ref& ret_type = _type_library->get_void_type();
 				type_ref* arg_types[2] = { &runtime_type, &_type_library->get_unqual_ptr_type() };
-				type_ref& fn_type = _type_library->get_type_ref( "free", type_ref_ptr_buffer( arg_types, 2 ) );
-				void* fn_ptr = reinterpret_cast<void*>( &compiler_impl::rt_free );
-				_global_functions.push_back( global_function_entry( fn_ptr, ret_type, fn_type ) );
+				function_factory& fn = _module->define_function(_name_table->register_name("free"), type_ref_ptr_buffer(arg_types, 2), ret_type);
+				fn.set_function_body(reinterpret_cast<void*>(&compiler_impl::rt_free));
 			}
 		}
+
+		virtual module_ptr module() { return _module; }
 
 		//transform text into the lisp datastructures.
 		virtual vector<lisp::object_ptr> read( const string& text )
@@ -514,29 +497,13 @@ namespace {
 		}
 
 		//Transform lisp datastructures into type-checked ast.
-		virtual vector<ast_node_ptr> type_check( data_buffer<lisp::object_ptr> preprocess_result )
+		virtual void type_check( data_buffer<lisp::object_ptr> preprocess_result )
 		{
 			type_checker checker( _allocator, _factory, _type_library
 								, _str_table, _special_forms
-								, _top_level_special_forms, _top_level_symbols, _ast_allocator
+								, _top_level_special_forms, _ast_allocator
 								, _evaluators, _name_table, _module );
 
-			for_each( _global_variables.begin(), _global_variables.end(), [&,this]
-			( global_variable_entry& entry )
-			{
-				checker._context->_context_symbol_types.insert( make_pair( entry._name, entry._type ) );
-			} );
-
-			for_each( _global_functions.begin(), _global_functions.end(), [&,this]
-			( global_function_entry& entry )
-			{
-				checker._context->_symbol_map->insert( 
-					make_pair( entry._fn_type
-						, &checker._applier.create_global_function_node( checker._context->_ast_allocator, entry,
-																				checker._context->_string_table ) ) );
-			} );
-
-			vector<ast_node_ptr> type_check_results;
 			for_each( preprocess_result.begin(), preprocess_result.end(), [&,this]
 			( object_ptr pp_result )
 			{
@@ -545,26 +512,25 @@ namespace {
 					cons_cell& top_cell = object_traits::cast_ref<cons_cell>( pp_result );
 					symbol& first_item = object_traits::cast_ref<symbol>( top_cell._value );
 					string_plugin_map::iterator iter = _top_level_special_forms->find( first_item._name );
+					ast_node_ptr typecheck_result = nullptr;
 					if ( iter != _top_level_special_forms->end() )
 					{
-						type_check_results.push_back( &iter->second->type_check( *checker._context, top_cell ) );
+						typecheck_result = iter->second->type_check(*checker._context, top_cell);
 					}
 					else
 					{
-						type_check_results.push_back( &checker._applier.type_check_apply( *checker._context, top_cell ) );
+						typecheck_result = &checker._applier.type_check_apply(*checker._context, top_cell);
 					}
+					if (typecheck_result)
+						_module->append_init_ast_node(*typecheck_result);
 				}
 				else
 					throw runtime_error( "invalid program, top level item is not a list" );
 			} );
-			type_check_results.insert( type_check_results.end() 
-										, checker._context->_additional_top_level_nodes.begin()
-										, checker._context->_additional_top_level_nodes.end() );
-			return type_check_results;
 		}
 
 		//compile ast to binary.
-		virtual pair<void*,type_ref_ptr> compile( data_buffer<ast_node_ptr> ast )
+		virtual pair<void*,type_ref_ptr> compile()
 		{
 			//run through and compile first steps.
 			
@@ -601,31 +567,6 @@ namespace {
 			}
 
 			compiler_context comp_context(_type_library, _name_table, _module, *_llvm_module, *_fpm, *_exec_engine);
-			//The, ignoring all nodes that are not top level, create a function with the top level items
-			//compile it, and return the results.
-			for_each( ast.begin(), ast.end(), [&]
-			( ast_node_ptr node )
-			{
-				node->compile_first_pass(comp_context);
-			} );
-
-			for_each( _global_variables.begin(), _global_variables.end(), [&,this]
-			( global_variable_entry& entry )
-			{
-				auto llvm_type = comp_context.type_ref_type( *entry._type );
-				if ( llvm_type )
-				{
-					entry._variable = new GlobalVariable( llvm_type.get()
-															, true
-															, GlobalValue::LinkageTypes::CommonLinkage
-															, NULL
-															, entry._name.c_str() );
-					comp_context._llvm_module.getGlobalList().push_back( entry._variable );
-					_exec_engine->addGlobalMapping( entry._variable, entry._value );
-				
-					comp_context._variables.insert( make_pair( entry._name, make_pair( entry._variable, entry._type ) ) );
-				}
-			} );
 
 			_module->compile_first_pass(comp_context);
 			_module->compile_second_pass(comp_context);
@@ -637,8 +578,8 @@ namespace {
 		virtual float execute( const string& text )
 		{
 			vector<object_ptr> read_result = read( text );
-			vector<ast_node_ptr> type_check_result = type_check( read_result );
-			pair<void*,type_ref_ptr> compile_result = compile( type_check_result );
+			type_check( read_result );
+			pair<void*,type_ref_ptr> compile_result = compile();
 			if ( _type_library->to_base_numeric_type( *compile_result.second ) != base_numeric_types::f32 )
 				throw runtime_error( "failed to evaluate lisp data to float function" );
 			typedef float (*anon_fn_type)();

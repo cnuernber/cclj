@@ -67,6 +67,7 @@ namespace cclj
 		virtual ~function_factory(){}
 	public:
 		virtual void set_function_body(ast_node_buffer body) = 0;
+		virtual void set_function_body(void* fn_ptr) = 0;
 		virtual void set_visibility(visibility::_enum visibility) = 0;
 		virtual function_node& node() = 0;
 	};
@@ -82,7 +83,11 @@ namespace cclj
 		//a type composed of the fn name and the types as specializations
 		virtual type_ref& type() = 0;
 		virtual qualified_name name() = 0;
+		//external functions are ones that are defined via external
+		//fn pointers, they do not have ast node buffers as bodies.
+		virtual bool is_external() const = 0;
 		virtual ast_node_buffer get_function_body() = 0;
+		virtual void*			get_function_external_body() = 0;
 		virtual void compile_first_pass(compiler_context& ctx) = 0;
 		virtual void compile_second_pass(compiler_context& ctx) = 0;
 		virtual llvm::Function& llvm() = 0;
@@ -250,6 +255,7 @@ namespace cclj
 		//A property may be either a field or accessor pair.
 		virtual vector<datatype_property> properties() = 0;
 		virtual datatype_property find_property(string_table_str name) = 0;
+		virtual datatype_property get_property_by_index(int64_t idx) = 0;
 
 		virtual data_buffer<datatype_property> static_properties() = 0;
 		virtual datatype_property find_static_property(string_table_str name) = 0;
@@ -366,6 +372,99 @@ namespace cclj
 		{
 		}
 	};
+	class module;
+	typedef shared_ptr<module> module_ptr;
+
+
+	struct variable_lookup_entry_type
+	{
+		enum _enum
+		{
+			unknown_entry_type = 0,
+			string_table_str,
+			int64,
+		};
+	};
+
+	template<typename dtype>
+	struct variable_lookup_type_id
+	{
+	};
+
+	template<> struct variable_lookup_type_id<int64_t> {
+		static variable_lookup_entry_type::_enum type() { return variable_lookup_entry_type::int64; }
+	};
+
+	template<> struct variable_lookup_type_id<string_table_str> {
+		static variable_lookup_entry_type::_enum type() { return variable_lookup_entry_type::string_table_str; }
+	};
+
+
+	struct variable_lookup_traits
+	{
+		typedef variable_lookup_entry_type::_enum id_type;
+		enum {
+			buffer_size = sizeof(string_table_str),
+		};
+		static id_type empty_type() { return variable_lookup_entry_type::unknown_entry_type; }
+		template<typename dtype>
+		static id_type typeof() { return variable_lookup_type_id<dtype>::type(); }
+
+		template<typename rettype, typename visitor>
+		static rettype do_visit(char* data, id_type type, visitor v)
+		{
+			switch (type)
+			{
+			case variable_lookup_entry_type::string_table_str: return v(*reinterpret_cast<string_table_str*>(data));
+			case variable_lookup_entry_type::int64: return v(*reinterpret_cast<int64_t*>(data));
+			default: break;
+			}
+			throw runtime_error("failed to visit type");
+		}
+	};
+
+	typedef variant_traits_impl<variable_lookup_traits> variable_lookup_traits_impl;
+
+	struct variable_lookup_entry : public variant<variable_lookup_traits_impl>
+	{
+		typedef variant<variable_lookup_traits_impl> base;
+		variable_lookup_entry(){}
+		variable_lookup_entry(int64_t data) : base(data){}
+		variable_lookup_entry(string_table_str data) : base(data){}
+		variable_lookup_entry(const variable_lookup_entry& other) : base(other) {}
+		variable_lookup_entry& operator=(const variable_lookup_entry& other)
+		{
+			base::operator=(other);
+			return *this;
+		}
+	};
+
+	typedef vector<variable_lookup_entry> variable_lookup_entry_list;
+
+	//Lookup chain is a chain of arguments passed to the get/set special forms.
+	//member fields/accessors may be accessed by ordinal as well as name.
+	struct variable_lookup_chain
+	{
+		qualified_name name;
+		variable_lookup_entry_list lookup_chain;
+		variable_lookup_chain(qualified_name _name = qualified_name()) : name(_name) {}
+	};
+
+	struct variable_lookup_typecheck_result
+	{
+		type_ref_ptr	type;
+		bool			read;
+		bool			write;
+
+		variable_lookup_typecheck_result() : type(nullptr), read(false), write(false){}
+		variable_lookup_typecheck_result(type_ref& _type, bool r, bool w)
+			: type(&_type)
+			, read(r)
+			, write(w)
+		{
+		}
+	};
+
 
 
 	//modules are what are produced from reading lisp files.  They can be compiled down
@@ -377,9 +476,12 @@ namespace cclj
 	public:
 		friend class shared_ptr<module>;
 
+		virtual string_table_ptr string_table() = 0;
 		virtual variable_node_factory& define_variable(qualified_name name, type_ref& type) = 0;
 		virtual function_factory& define_function(qualified_name name, named_type_buffer arguments, type_ref& rettype) = 0;
-		//You can only add fields to a datatype once
+		//helper when you don't care about the argument names.
+		function_factory& define_function(qualified_name name, type_ref_ptr_buffer arguments, type_ref& rettype);
+		
 		virtual datatype_node_factory& define_datatype(qualified_name name, type_ref& type) = 0;
 		virtual module_symbol find_symbol(qualified_name name) = 0;
 		virtual vector<module_symbol> symbols() = 0;
@@ -391,6 +493,7 @@ namespace cclj
 			return nullptr;
 		}
 
+		virtual datatype_node_ptr find_datatype(type_ref& type) = 0;
 		datatype_node_ptr find_datatype(qualified_name name)
 		{
 			auto symbol = find_symbol(name);
@@ -418,6 +521,49 @@ namespace cclj
 			}
 			return nullptr;
 		}
+
+		//A variable type check scope is anywhere we are created a local scope.  Upon entry to a function,
+		//let, for, etc.  All these create scopes where new variables may be added to the record.
+		virtual void begin_variable_type_check_scope() = 0;
+		virtual void add_local_variable_type(string_table_str name, type_ref& type) = 0;
+		virtual option<variable_lookup_typecheck_result> type_check_variable_access(const variable_lookup_chain& lookup_args) = 0;
+		virtual void end_variable_type_check_scope() = 0;
+
+		struct module_type_check_variable_scope
+		{
+			module_ptr module;
+			module_type_check_variable_scope(module_ptr md)
+				: module(md)
+			{
+				module->begin_variable_type_check_scope();
+			}
+			~module_type_check_variable_scope()
+			{
+				module->end_variable_type_check_scope();
+			}
+		};
+
+		virtual void begin_variable_compilation_scope() = 0;
+		virtual void add_local_variable(qualified_name name, type_ref& type, llvm::Value& value) = 0;
+		virtual pair<llvm::Value*, type_ref_ptr> load_variable(const variable_lookup_chain& lookup_args) = 0;
+		virtual void store_variable(const variable_lookup_chain& lookup_args, llvm::Value& value) = 0;
+		virtual void end_variable_compilation_scope() = 0;
+
+		struct module_compilation_variable_scope
+		{
+			module_ptr module;
+			module_compilation_variable_scope(module_ptr md)
+				: module(md)
+			{
+				module->begin_variable_compilation_scope();
+			}
+			~module_compilation_variable_scope()
+			{
+				module->end_variable_compilation_scope();
+			}
+		};
+
+
 		virtual void append_init_ast_node(ast_node& node) = 0;
 		virtual type_ref& init_return_type() = 0;
 		virtual void compile_first_pass(compiler_context& ctx) = 0;
@@ -425,10 +571,11 @@ namespace cclj
 		//Returns the initialization function
 		virtual llvm::Function& llvm() = 0;
 
+
 		static shared_ptr<module> create_module(string_table_ptr st, type_library_ptr tl, qualified_name_table_ptr nt);
 	};
 
-	typedef shared_ptr<module> module_ptr;
+	
 }
 
 #endif

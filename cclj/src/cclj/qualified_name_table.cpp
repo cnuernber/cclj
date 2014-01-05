@@ -57,10 +57,12 @@ namespace
 	typedef unordered_map<qualified_name_key, vector<string_table_str> > qualified_name_key_map;
 	struct qualified_name_table_impl : public qualified_name_table
 	{
+		string_table_ptr		_string_table;
 		qualified_name_key_map _names;
 
-		qualified_name_table_impl() {}
+		qualified_name_table_impl(string_table_ptr st) : _string_table( st ) {}
 
+		virtual string_table_ptr string_table() { return _string_table; }
 
 		virtual qualified_name register_name(string_table_str_buffer name)
 		{

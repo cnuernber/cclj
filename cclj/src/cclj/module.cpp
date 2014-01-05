@@ -114,6 +114,7 @@ namespace
 		vector<named_type>		_arguments;
 		type_ref&				_function_type;
 		vector<ast_node_ptr>	_body;
+		void*					_external_body;
 		visibility::_enum		_visibility;
 
 		llvm::Function*			_function;
@@ -124,12 +125,25 @@ namespace
 			, _return_type(rettype)
 			, _function_type(fn_type)
 			, _visibility(visibility::internal_visiblity)
+			, _external_body( nullptr )
 			, _function(nullptr)
 		{
 			_arguments.assign(args.begin(), args.end());
 		}
 
-		virtual void set_function_body(ast_node_buffer body) { _body.assign(body.begin(), body.end()); }
+		virtual void set_function_body(ast_node_buffer body) 
+		{ 
+			if (_external_body)
+				throw runtime_error("functions may either be defined via external pointers or ast nodes but not both");
+			_body.assign(body.begin(), body.end()); 
+		}
+
+		virtual void set_function_body(void* fn_ptr)
+		{
+			if (_body.empty() == false)
+				throw runtime_error("functions may either be defined via external pointers or ast nodes but not both");
+			_external_body = fn_ptr;
+		}
 
 		virtual void set_visibility(visibility::_enum visibility) { _visibility = visibility; }
 		virtual function_node& node() { return *this; }
@@ -140,7 +154,9 @@ namespace
 		//a type composed of the fn name and the types as specializations
 		virtual type_ref& type() { return _function_type; }
 		virtual qualified_name name() { return _name; }
+		virtual bool is_external() const { return _external_body != nullptr; }
 		virtual ast_node_buffer get_function_body() { return _body; }
+		virtual void*			get_function_external_body() { return _external_body; }
 		virtual void compile_first_pass(compiler_context& ctx)
 		{
 			vector<llvm_type_ptr> arg_types;
@@ -160,6 +176,9 @@ namespace
 				, ctx.visibility_to_linkage(_visibility)
 				, name_mangle.c_str()
 				, &ctx._llvm_module);
+
+			if ( _external_body )
+				ctx._eng.addGlobalMapping(_function, _external_body);
 		}
 
 		static void initialize_function(compiler_context& context, Function& fn, data_buffer<named_type> fn_args
@@ -197,25 +216,28 @@ namespace
 
 		virtual void compile_second_pass(compiler_context& ctx)
 		{
-			pair<llvm_value_ptr_opt, type_ref_ptr> last_statement(nullptr, nullptr);
+			if (_external_body == nullptr)
 			{
-				compiler_scope_watcher _fn_scope(ctx);
-				variable_context fn_context(ctx._variables);
-				initialize_function(ctx, *_function, _arguments, fn_context);
-
-				for (auto iter = _body.begin(), end = _body.end(); iter != end; ++iter)
+				pair<llvm_value_ptr_opt, type_ref_ptr> last_statement(nullptr, nullptr);
 				{
-					ast_node& item = **iter;
-					last_statement = item.compile_second_pass(ctx);
+					compiler_scope_watcher _fn_scope(ctx);
+					variable_context fn_context(ctx._variables);
+					initialize_function(ctx, *_function, _arguments, fn_context);
+
+					for (auto iter = _body.begin(), end = _body.end(); iter != end; ++iter)
+					{
+						ast_node& item = **iter;
+						last_statement = item.compile_second_pass(ctx);
+					}
 				}
+				Value* retval = nullptr;
+				if (last_statement.first.valid())
+					retval = ctx._builder.CreateRet(last_statement.first.get());
+				else
+					ctx._builder.CreateRetVoid();
+				verifyFunction(*_function);
+				ctx._fpm.run(*_function);
 			}
-			Value* retval = nullptr;
-			if (last_statement.first.valid())
-				retval = ctx._builder.CreateRet(last_statement.first.get());
-			else
-				ctx._builder.CreateRetVoid();
-			verifyFunction(*_function);
-			ctx._fpm.run(*_function);
 		}
 
 		virtual llvm::Function& llvm()
@@ -554,10 +576,15 @@ namespace
 		}
 	};
 
+	typedef vector<named_type> named_type_list;
+	typedef vector<named_type_list> named_type_list_list;
+
 
 	struct module_impl : public module
 	{
 		typedef vectormap<qualified_name, module_symbol_internal> symbol_map_type;
+		typedef unordered_map<type_ref_ptr, datatype_node_ptr> type_datatype_map;
+
 		string_table_ptr			_string_table;
 		type_library_ptr			_type_library;
 		qualified_name_table_ptr	_name_table;
@@ -565,6 +592,9 @@ namespace
 		vector<ast_node_ptr>		_init_statements;
 		type_ref_ptr				_init_rettype;
 		shared_ptr<function_node_impl>			_init_function;
+		named_type_list_list		_local_variable_typecheck_stack;
+		type_datatype_map			_datatypes;
+
 
 		module_impl(string_table_ptr st
 					, type_library_ptr tl
@@ -582,6 +612,13 @@ namespace
 				delete_symbol(symbol->second);
 			});
 		}
+
+
+		virtual string_table_ptr string_table() 
+		{
+			return _string_table;
+		}
+
 
 		void delete_symbol(module_symbol_internal& symbol)
 		{
@@ -611,6 +648,14 @@ namespace
 				delete_symbol(symbol);
 				throw runtime_error("symbol already defined");
 			}
+			else
+			{
+				if (symbol.type() == module_symbol_type::datatype)
+				{
+					datatype_node_ptr dtype = symbol.data<datatype_node_ptr>();
+					_datatypes.insert(make_pair(const_cast<type_ref_ptr>(&dtype->type()), dtype));
+				}
+			}
 		}
 
 		template<typename dtype>
@@ -635,12 +680,11 @@ namespace
 
 			vector<function_node_ptr>& existing = inserter.first->second.data<vector<function_node_ptr> >();
 
-			vector<type_ref_ptr> arg_type_buffer; 
-			for_each(arguments.begin(), arguments.end(), [&](named_type& nt)
-			{
-				arg_type_buffer.push_back(nt.type);
-			});
-			type_ref& fn_type = _type_library->get_type_ref("fn", arg_type_buffer);
+			vector<type_ref_ptr> arg_buffer;
+			for (size_t idx = 0, end = arguments.size(); idx < end; ++idx)
+				arg_buffer.push_back(arguments[idx].type);
+
+			type_ref& fn_type = _type_library->get_type_ref("fn", arg_buffer);
 
 			for (size_t idx = 0, end = existing.size(); idx < end; ++idx)
 			{
@@ -654,6 +698,7 @@ namespace
 
 			return *retval;
 		}
+
 		//You can only add fields to a datatype once
 		virtual datatype_node_factory& define_datatype(qualified_name name, type_ref& type)
 		{
@@ -668,6 +713,15 @@ namespace
 			return module_symbol();
 		}
 
+
+		virtual datatype_node_ptr find_datatype(type_ref& type)
+		{
+			auto iter = _datatypes.find(&type);
+			if (iter != _datatypes.end())
+				return iter->second;
+			return nullptr;
+		}
+
 		virtual vector<module_symbol> symbols()
 		{
 			vector<module_symbol> retval;
@@ -676,6 +730,152 @@ namespace
 				retval.push_back(entry->second);
 			});
 			return retval;
+		}
+
+
+
+		virtual void begin_variable_type_check_scope()
+		{
+			_local_variable_typecheck_stack.push_back(named_type_list());
+		}
+
+		virtual void add_local_variable_type(string_table_str name, type_ref& type)
+		{
+			if (_local_variable_typecheck_stack.empty())
+				throw runtime_error("variable added with empty type check stack");
+			_local_variable_typecheck_stack.back().push_back(named_type(name, &type));
+		}
+
+		virtual option<variable_lookup_typecheck_result> type_check_variable_access(const variable_lookup_chain& lookup_args)
+		{
+			type_ref_ptr base_variable_type = nullptr;
+			if (lookup_args.name.names.size() == 1)
+			{
+				string_table_str var_name = lookup_args.name.names[0];
+				//run through the stack backwards looking for variables.
+				for (size_t stack_idx = 0, stack_end = _local_variable_typecheck_stack.size()
+							; stack_idx < stack_end && base_variable_type == nullptr
+							; ++stack_idx)
+				{
+					const named_type_list& variables = _local_variable_typecheck_stack[stack_end - stack_idx - 1];
+					for (size_t var_idx = 0, var_end = variables.size()
+						; var_idx < var_end && base_variable_type == nullptr
+						; ++var_idx)
+					{
+						const named_type& var_entry = variables[var_end - var_idx - 1];
+						if (var_entry.name == var_name)
+							base_variable_type = var_entry.type;
+					}
+				}
+			}
+			if (base_variable_type == nullptr)
+			{
+				auto find_result = _symbol_map.find(lookup_args.name);
+				if (find_result != _symbol_map.end())
+				{
+					const module_symbol_internal& symbol = find_result->second;
+					switch (symbol.type())
+					{
+					case module_symbol_type::variable:
+						base_variable_type = &symbol.data<variable_node_ptr>()->type();
+						break;
+					case module_symbol_type::function:
+					{
+						const vector<function_node_ptr>& functions = symbol.data<vector<function_node_ptr> >();
+						if (functions.size() == 1)
+							base_variable_type = &_type_library->get_ptr_type(functions[0]->type());
+						else
+							throw runtime_error("ambiguous function pointer reference to overloaded function");
+					}
+						break;
+					case module_symbol_type::datatype:
+						throw runtime_error("unimplemented");
+					}
+				}
+			}
+			if (base_variable_type == nullptr)
+				throw runtime_error("failed to resolve symbol");
+
+			bool can_read = true;
+			bool can_write = true;
+
+			for (size_t idx = 0, end = lookup_args.lookup_chain.size()
+				; idx < end && base_variable_type != nullptr; ++idx)
+			{
+				const variable_lookup_entry& entry = lookup_args.lookup_chain[idx];
+				switch (entry.type())
+				{
+				case variable_lookup_entry_type::string_table_str:
+				{
+					auto dtype_ptr = find_datatype(*base_variable_type);
+					base_variable_type = nullptr;
+					if (dtype_ptr)
+					{
+						auto prop_entry = dtype_ptr->find_property(entry.data<string_table_str>());
+						switch (prop_entry.type())
+						{
+						case datatype_property_type::field:
+							base_variable_type = prop_entry.data<named_type>().type;
+							break;
+						case datatype_property_type::accessor:
+						{
+							auto prop_access = prop_entry.data<accessor>();
+							base_variable_type = prop_access.type;
+							can_read = can_read && prop_access.getter != nullptr;
+							can_write = can_write && prop_access.setter != nullptr;
+						}
+							break;
+						}
+					}
+				}
+					break;
+				
+					//these work on ptr types, array types, and datatypes
+				case variable_lookup_entry_type::int64:
+				{
+					//the actual uint32 value is ignored at this point.
+					if (_type_library->is_pointer_type(*base_variable_type))
+					{
+						base_variable_type = &_type_library->deref_ptr_type(*base_variable_type);
+					}
+					else
+					{
+						auto dtype_ptr = find_datatype(*base_variable_type);
+						base_variable_type = nullptr;
+						if (dtype_ptr)
+						{
+							auto prop_entry = dtype_ptr->get_property_by_index(entry.data<int64_t>());
+							switch (prop_entry.type())
+							{
+							case datatype_property_type::field:
+								base_variable_type = prop_entry.data<named_type>().type;
+								break;
+							case datatype_property_type::accessor:
+							{
+								auto prop_access = prop_entry.data<accessor>();
+								base_variable_type = prop_access.type;
+								can_read = can_read && prop_access.getter != nullptr;
+								can_write = can_write && prop_access.setter != nullptr;
+							}
+								break;
+							}
+						}
+					}
+				}
+					break;
+				}
+			}
+			if (base_variable_type != nullptr)
+				return variable_lookup_typecheck_result(*base_variable_type, can_read, can_write);
+			else
+				return option<variable_lookup_typecheck_result>();
+		}
+
+		virtual void end_variable_type_check_scope()
+		{
+			if (_local_variable_typecheck_stack.empty())
+				throw runtime_error("variable added with empty type check stack");
+			_local_variable_typecheck_stack.pop_back();
 		}
 
 		virtual void append_init_ast_node(ast_node& node)
@@ -761,6 +961,20 @@ namespace
 			return _init_function->llvm();
 		}
 	};
+}
+
+
+function_factory& module::define_function(qualified_name name, type_ref_ptr_buffer arguments, type_ref& rettype)
+{
+	stringstream str_builder;
+	vector<named_type> arg_buffer(arguments.size());
+	for (size_t idx = 0, end = arguments.size(); idx < end; ++idx)
+	{
+		str_builder.clear();
+		str_builder << "arg" << idx;
+		arg_buffer[idx] = named_type(string_table()->register_str(str_builder.str().c_str()), arguments[idx]);
+	}
+	return define_function(name, named_type_buffer(arg_buffer), rettype);
 }
 
 shared_ptr<module> module::create_module(string_table_ptr st, type_library_ptr tl, qualified_name_table_ptr nt)

@@ -216,7 +216,6 @@ reader_context::reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_l
 						, type_eval_function te
 						, string_plugin_map_ptr special_forms
 						, string_plugin_map_ptr top_level_special_forms
-						, type_ast_node_map_ptr top_level_symbols
 						, slab_allocator_ptr ast_alloc
 						, string_lisp_evaluator_map& lisp_evals
 						, qualified_name_table_ptr name_table
@@ -225,7 +224,6 @@ reader_context::reader_context( allocator_ptr alloc, lisp::factory_ptr f, type_l
 	, _type_library( l )
 	, _string_table( st )
 	, _ast_allocator( ast_alloc )
-	, _symbol_map( top_level_symbols )
 	, _type_checker( tc )
 	, _type_evaluator( te )
 	, _special_forms( special_forms )

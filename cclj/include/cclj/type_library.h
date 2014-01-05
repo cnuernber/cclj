@@ -159,7 +159,8 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 
 		bool is_pointer_type( type_ref& type )
 		{
-			return ( type._name == string_table()->register_str( "ptr" ) );
+			return ( type._name == string_table()->register_str( "ptr" )
+					&& type._specializations.size() == 1);
 		}
 
 		bool is_tuple_type(type_ref& type)
