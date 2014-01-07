@@ -256,6 +256,9 @@ namespace cclj
 		virtual vector<datatype_property> properties() = 0;
 		virtual datatype_property find_property(string_table_str name) = 0;
 		virtual datatype_property get_property_by_index(int64_t idx) = 0;
+		virtual int32_t index_of_field(string_table_str name) = 0;
+		virtual int32_t index_of_field(int64_t field_index) = 0;
+
 
 		virtual data_buffer<datatype_property> static_properties() = 0;
 		virtual datatype_property find_static_property(string_table_str name) = 0;
@@ -383,6 +386,7 @@ namespace cclj
 			unknown_entry_type = 0,
 			string_table_str,
 			int64,
+			value,
 		};
 	};
 
@@ -399,12 +403,16 @@ namespace cclj
 		static variable_lookup_entry_type::_enum type() { return variable_lookup_entry_type::string_table_str; }
 	};
 
+	template<> struct variable_lookup_type_id<llvm::Value*> {
+		static variable_lookup_entry_type::_enum type() { return variable_lookup_entry_type::value; }
+	};
+
 
 	struct variable_lookup_traits
 	{
 		typedef variable_lookup_entry_type::_enum id_type;
 		enum {
-			buffer_size = sizeof(string_table_str),
+			buffer_size = sizeof(int64_t),
 		};
 		static id_type empty_type() { return variable_lookup_entry_type::unknown_entry_type; }
 		template<typename dtype>
@@ -417,6 +425,7 @@ namespace cclj
 			{
 			case variable_lookup_entry_type::string_table_str: return v(*reinterpret_cast<string_table_str*>(data));
 			case variable_lookup_entry_type::int64: return v(*reinterpret_cast<int64_t*>(data));
+			case variable_lookup_entry_type::value: return v(*reinterpret_cast<llvm::Value*>(data));
 			default: break;
 			}
 			throw runtime_error("failed to visit type");
@@ -431,7 +440,8 @@ namespace cclj
 		variable_lookup_entry(){}
 		variable_lookup_entry(int64_t data) : base(data){}
 		variable_lookup_entry(string_table_str data) : base(data){}
-		variable_lookup_entry(const variable_lookup_entry& other) : base(other) {}
+		variable_lookup_entry(llvm::Value* data) : base(data){}
+		variable_lookup_entry(const variable_lookup_entry& other) : base(static_cast<const base&>( other ) ) {}
 		variable_lookup_entry& operator=(const variable_lookup_entry& other)
 		{
 			base::operator=(other);
@@ -529,35 +539,35 @@ namespace cclj
 		virtual option<variable_lookup_typecheck_result> type_check_variable_access(const variable_lookup_chain& lookup_args) = 0;
 		virtual void end_variable_type_check_scope() = 0;
 
-		struct module_type_check_variable_scope
+		struct type_check_variable_scope
 		{
 			module_ptr module;
-			module_type_check_variable_scope(module_ptr md)
+			type_check_variable_scope(module_ptr md)
 				: module(md)
 			{
 				module->begin_variable_type_check_scope();
 			}
-			~module_type_check_variable_scope()
+			~type_check_variable_scope()
 			{
 				module->end_variable_type_check_scope();
 			}
 		};
 
 		virtual void begin_variable_compilation_scope() = 0;
-		virtual void add_local_variable(qualified_name name, type_ref& type, llvm::Value& value) = 0;
-		virtual pair<llvm::Value*, type_ref_ptr> load_variable(const variable_lookup_chain& lookup_args) = 0;
-		virtual void store_variable(const variable_lookup_chain& lookup_args, llvm::Value& value) = 0;
+		virtual void add_local_variable(string_table_str name, type_ref& type, llvm::Value& value) = 0;
+		virtual pair<llvm::Value*, type_ref_ptr> load_variable(compiler_context& context, const variable_lookup_chain& lookup_args) = 0;
+		virtual void store_variable(compiler_context& context, const variable_lookup_chain& lookup_args, llvm::Value& value) = 0;
 		virtual void end_variable_compilation_scope() = 0;
 
-		struct module_compilation_variable_scope
+		struct compilation_variable_scope
 		{
 			module_ptr module;
-			module_compilation_variable_scope(module_ptr md)
+			compilation_variable_scope(module_ptr md)
 				: module(md)
 			{
 				module->begin_variable_compilation_scope();
 			}
-			~module_compilation_variable_scope()
+			~compilation_variable_scope()
 			{
 				module->end_variable_compilation_scope();
 			}

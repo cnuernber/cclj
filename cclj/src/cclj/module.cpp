@@ -396,6 +396,13 @@ namespace
 			return datatype_property();
 		}
 
+		virtual datatype_property get_property_by_index(int64_t idx)
+		{
+			if (idx >= 0 && idx < _properties.ordered_values.size())
+				return _properties.ordered_values[(unsigned int)idx]->second;
+			return datatype_property();
+		}
+
 		virtual data_buffer<datatype_property> static_properties()
 		{
 			vector<datatype_property> retval;
@@ -579,21 +586,35 @@ namespace
 	typedef vector<named_type> named_type_list;
 	typedef vector<named_type_list> named_type_list_list;
 
+	struct local_variable_entry
+	{
+		named_type		name;
+		llvm::Value*	value;
+		local_variable_entry() : value(nullptr) {}
+		local_variable_entry(string_table_str name, type_ref& type, llvm::Value& value)
+			: name(name, &type)
+			, value(&value)
+		{}
+	};
+
+	typedef vector<local_variable_entry> local_variable_entry_list;
+	typedef vector<local_variable_entry_list> local_variable_entry_list_list;
 
 	struct module_impl : public module
 	{
 		typedef vectormap<qualified_name, module_symbol_internal> symbol_map_type;
 		typedef unordered_map<type_ref_ptr, datatype_node_ptr> type_datatype_map;
 
-		string_table_ptr			_string_table;
-		type_library_ptr			_type_library;
-		qualified_name_table_ptr	_name_table;
-		symbol_map_type				_symbol_map;
-		vector<ast_node_ptr>		_init_statements;
-		type_ref_ptr				_init_rettype;
-		shared_ptr<function_node_impl>			_init_function;
-		named_type_list_list		_local_variable_typecheck_stack;
-		type_datatype_map			_datatypes;
+		string_table_ptr				_string_table;
+		type_library_ptr				_type_library;
+		qualified_name_table_ptr		_name_table;
+		symbol_map_type					_symbol_map;
+		vector<ast_node_ptr>			_init_statements;
+		type_ref_ptr					_init_rettype;
+		shared_ptr<function_node_impl>	_init_function;
+		named_type_list_list			_local_variable_typecheck_stack;
+		type_datatype_map				_datatypes;
+		local_variable_entry_list_list	_local_variable_compile_stack;
 
 
 		module_impl(string_table_ptr st
@@ -746,12 +767,29 @@ namespace
 			_local_variable_typecheck_stack.back().push_back(named_type(name, &type));
 		}
 
+		variable_lookup_typecheck_result type_check_property(datatype_property& prop, bool can_read, bool can_write)
+		{
+			
+			switch (prop.type())
+			{
+			case datatype_property_type::field:
+				return variable_lookup_typecheck_result(*prop.data<named_type>().type, can_read, can_write);
+			case datatype_property_type::accessor:
+			{
+				auto prop_access = prop.data<accessor>();
+				return variable_lookup_typecheck_result(*prop_access.type, can_read && prop_access.getter, can_write && prop_access.setter);
+			}
+				break;
+			}
+			return variable_lookup_typecheck_result();
+		}
+
 		virtual option<variable_lookup_typecheck_result> type_check_variable_access(const variable_lookup_chain& lookup_args)
 		{
 			type_ref_ptr base_variable_type = nullptr;
-			if (lookup_args.name.names.size() == 1)
+			if (lookup_args.name.names().size() == 1)
 			{
-				string_table_str var_name = lookup_args.name.names[0];
+				string_table_str var_name = lookup_args.name.names()[0];
 				//run through the stack backwards looking for variables.
 				for (size_t stack_idx = 0, stack_end = _local_variable_typecheck_stack.size()
 							; stack_idx < stack_end && base_variable_type == nullptr
@@ -812,20 +850,10 @@ namespace
 					if (dtype_ptr)
 					{
 						auto prop_entry = dtype_ptr->find_property(entry.data<string_table_str>());
-						switch (prop_entry.type())
-						{
-						case datatype_property_type::field:
-							base_variable_type = prop_entry.data<named_type>().type;
-							break;
-						case datatype_property_type::accessor:
-						{
-							auto prop_access = prop_entry.data<accessor>();
-							base_variable_type = prop_access.type;
-							can_read = can_read && prop_access.getter != nullptr;
-							can_write = can_write && prop_access.setter != nullptr;
-						}
-							break;
-						}
+						auto result = type_check_property(prop_entry, can_read, can_write);
+						base_variable_type = result.type;
+						can_read = result.read;
+						can_write = result.write;
 					}
 				}
 					break;
@@ -845,23 +873,21 @@ namespace
 						if (dtype_ptr)
 						{
 							auto prop_entry = dtype_ptr->get_property_by_index(entry.data<int64_t>());
-							switch (prop_entry.type())
-							{
-							case datatype_property_type::field:
-								base_variable_type = prop_entry.data<named_type>().type;
-								break;
-							case datatype_property_type::accessor:
-							{
-								auto prop_access = prop_entry.data<accessor>();
-								base_variable_type = prop_access.type;
-								can_read = can_read && prop_access.getter != nullptr;
-								can_write = can_write && prop_access.setter != nullptr;
-							}
-								break;
-							}
+							auto result = type_check_property(prop_entry, can_read, can_write);
+							base_variable_type = result.type;
+							can_read = result.read;
+							can_write = result.write;
 						}
 					}
 				}
+					break;
+				case variable_lookup_entry_type::value:
+					if (_type_library->is_pointer_type(*base_variable_type))
+					{
+						base_variable_type = &_type_library->deref_ptr_type(*base_variable_type);
+					}
+					else
+						base_variable_type = nullptr;
 					break;
 				}
 			}
@@ -876,6 +902,186 @@ namespace
 			if (_local_variable_typecheck_stack.empty())
 				throw runtime_error("variable added with empty type check stack");
 			_local_variable_typecheck_stack.pop_back();
+		}
+
+
+		virtual void begin_variable_compilation_scope()
+		{
+			_local_variable_compile_stack.push_back(local_variable_entry_list());
+		}
+
+		virtual void add_local_variable(string_table_str name, type_ref& type, llvm::Value& value)
+		{
+			if (_local_variable_compile_stack.empty())
+				throw runtime_error("invalid local variable management");
+			_local_variable_compile_stack.back().push_back(local_variable_entry(name, type, value));
+		}
+
+		struct variable_lookup_resolution_result
+		{
+			llvm::Value*			initial_resolution;
+			type_ref_ptr			final_type;
+			bool					is_stack;
+			vector<llvm::Value*>	GEPArgs;
+
+			variable_lookup_resolution_result()
+				: initial_resolution(nullptr)
+				, final_type(nullptr)
+				, is_stack(false)
+			{
+			}
+		};
+
+		variable_lookup_resolution_result lookup_compile_variable(const variable_lookup_chain& lookup_args)
+		{
+			variable_lookup_resolution_result retval;
+
+			if (lookup_args.name.names().size() == 1)
+			{
+				string_table_str var_name = lookup_args.name.names()[0];
+				//run through the stack backwards looking for variables.
+				for (size_t stack_idx = 0, stack_end = _local_variable_compile_stack.size()
+					; stack_idx < stack_end && retval.initial_resolution == nullptr
+					; ++stack_idx)
+				{
+					const local_variable_entry_list& variables = _local_variable_compile_stack[stack_end - stack_idx - 1];
+					for (size_t var_idx = 0, var_end = variables.size()
+						; var_idx < var_end && retval.initial_resolution == nullptr
+						; ++var_idx)
+					{
+						const local_variable_entry& var_entry = variables[var_end - var_idx - 1];
+						if (var_entry.name.name == var_name)
+						{
+							retval.initial_resolution = var_entry.value;
+							retval.final_type = var_entry.name.type;
+							retval.is_stack = true;
+						}
+					}
+				}
+			}
+			if (retval.initial_resolution == nullptr)
+			{
+				auto find_result = _symbol_map.find(lookup_args.name);
+				if (find_result != _symbol_map.end())
+				{
+					module_symbol_internal& symbol = find_result->second;
+					switch (symbol.type())
+					{
+						//Need a special way to get function pointers for overloaded functions.
+						//This is probably not the way to do it.
+					case module_symbol_type::function:
+						break;
+					case module_symbol_type::variable:
+					{
+						variable_node_ptr variable = symbol.data<variable_node_ptr>();
+						retval.initial_resolution = &variable->llvm_variable();
+						retval.final_type = &variable->type();
+					}
+						break;
+					}
+				}
+			}
+
+			if (retval.initial_resolution && lookup_args.lookup_chain.size())
+			{
+				//bailing to only handle variable lookups. Accessors can come later.
+				if (retval.is_stack)
+					retval.GEPArgs.push_back(llvm::ConstantInt::get(llvm::IntegerType::getInt32Ty(llvm::getGlobalContext()), 0));
+				for (size_t idx = 0, end = lookup_args.lookup_chain.size(); 
+					idx < end && retval.final_type != nullptr ; ++idx)
+				{
+					const variable_lookup_entry& lookup_entry(lookup_args.lookup_chain[idx]);
+					switch (lookup_entry.type())
+					{
+					case variable_lookup_entry_type::string_table_str:
+					{
+						auto str = lookup_entry.data<string_table_str>();
+						auto dtype = find_datatype(*retval.final_type);
+						retval.final_type = nullptr;
+						if (dtype)
+						{
+							auto prop = dtype->find_property(str);
+							if (prop.type() == datatype_property_type::field)
+							{
+								int32_t val_idx = dtype->index_of_field(str);
+								retval.GEPArgs.push_back(llvm::ConstantInt::get(llvm::IntegerType::getInt32Ty(llvm::getGlobalContext()), val_idx));
+								retval.final_type = prop.data<named_type>().type;
+							}
+							else
+								retval.final_type = nullptr;
+						}
+					}
+						break;
+					case variable_lookup_entry_type::int64:
+					{
+						auto val_idx = static_cast<int32_t>( lookup_entry.data<int64_t>() );
+						if (_type_library->is_pointer_type(*retval.final_type))
+						{
+							retval.GEPArgs.push_back(llvm::ConstantInt::get(llvm::IntegerType::getInt32Ty(llvm::getGlobalContext()), val_idx));
+							retval.final_type = &_type_library->deref_ptr_type(*retval.final_type);
+						}
+						else
+						{
+							auto dtype = find_datatype(*retval.final_type);
+							auto prop = dtype->get_property_by_index(val_idx);
+							if (prop.type() == datatype_property_type::field)
+							{
+								int32_t val_idx = dtype->index_of_field(val_idx);
+								retval.GEPArgs.push_back(llvm::ConstantInt::get(llvm::IntegerType::getInt32Ty(llvm::getGlobalContext()), val_idx));
+								retval.final_type = prop.data<named_type>().type;
+							}
+						}
+					}
+						break;
+					case variable_lookup_entry_type::value:
+					{
+						auto value = lookup_entry.data<llvm::Value*>();
+						//need to cast this to a 32 bit integer else kaboom in the gep instr itself.
+						retval.GEPArgs.push_back(value);
+						retval.final_type = &_type_library->deref_ptr_type(*retval.final_type);
+					}
+						break;
+					}
+				}
+			}
+			if (retval.final_type)
+				return retval;
+			else
+				return variable_lookup_resolution_result();
+		}
+
+
+		virtual pair<llvm::Value*, type_ref_ptr> load_variable(compiler_context& context, const variable_lookup_chain& lookup_args)
+		{
+			variable_lookup_resolution_result lookup_result = lookup_compile_variable(lookup_args);
+			if (lookup_result.initial_resolution)
+			{
+				llvm::Value* loaded_value = nullptr;
+				if (lookup_result.GEPArgs.size())
+				{
+					llvm::Value* new_ptr = context._builder.CreateGEP(lookup_result.initial_resolution, lookup_result.GEPArgs);
+					loaded_value = context._builder.CreateLoad(new_ptr);
+				}
+				else
+				{
+					loaded_value = lookup_result.initial_resolution;
+					if (lookup_result.is_stack)
+						loaded_value = context._builder.CreateLoad(loaded_value);
+				}
+				return pair<llvm::Value*, type_ref_ptr>(loaded_value, lookup_result.final_type);
+			}
+			return pair<llvm::Value*, type_ref_ptr>(nullptr, nullptr);
+		}
+
+		virtual void store_variable(const variable_lookup_chain& lookup_args, llvm::Value& value)
+		{
+
+		}
+		virtual void end_variable_compilation_scope()
+		{
+			if (_local_variable_compile_stack.empty())
+				throw runtime_error("invalid local variable management");
+			_local_variable_compile_stack.pop_back();
 		}
 
 		virtual void append_init_ast_node(ast_node& node)
