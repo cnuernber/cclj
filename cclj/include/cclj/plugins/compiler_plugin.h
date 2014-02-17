@@ -397,14 +397,12 @@ namespace cclj
 	//Compiler plugins process special forms.
 	class compiler_plugin
 	{
-		string_table_str _plugin_name;
 	protected:
 		virtual ~compiler_plugin(){}
 
 	public:
-		compiler_plugin( string_table_str pname ) : _plugin_name( pname ) {}
+		compiler_plugin() {}
 		friend class shared_ptr<compiler_plugin>;
-		virtual string_table_str plugin_name() { return _plugin_name; }
 		//vast majority of compiler plugins operate at this level, transforming the lisp
 		//ast into the compiler ast.
 		virtual ast_node* type_check( reader_context& context, lisp::cons_cell& cell ) = 0;

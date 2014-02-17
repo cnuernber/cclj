@@ -301,6 +301,52 @@ ast_node& base_language_plugins::type_check_numeric_constant(reader_context& con
 	return *context._ast_allocator->construct<numeric_constant_ast_node>(context._string_table, num_value, *constant_type);
 }
 
+namespace {
+	class defn_compiler_plugin : public compiler_plugin
+	{
+		virtual ast_node* type_check(reader_context& context, lisp::cons_cell& cell)
+		{
+			cons_cell& fn_name_cell = object_traits::cast_ref<cons_cell>(cell._next);
+			symbol& fn_name = object_traits::cast_ref<symbol>(fn_name_cell._value);
+			if (fn_name._unevaled_type == nullptr)
+				throw runtime_error("Function definitions must have a type");
+
+			context.symbol_type(fn_name);
+			cons_cell& arg_array_cell = object_traits::cast_ref<cons_cell>(fn_name_cell._next);
+			array&  arg_array = object_traits::cast_ref<array>(arg_array_cell._value);
+			cons_cell& body = object_traits::cast_ref<cons_cell>(arg_array_cell._next);
+			
+			vector<named_type> fn_args;
+			module::type_check_variable_scope typecheck_variable_scope(context._module);
+			for (size_t idx = 0, end = arg_array._data.size(); idx < end; ++idx)
+			{
+				symbol& arg_symbol = object_traits::cast_ref<symbol>(arg_array._data[idx]);
+				type_ref& arg_type = context.symbol_type(arg_symbol);
+				fn_args.push_back(named_type(arg_symbol._name, &arg_type));
+				context._module->add_local_variable_type(arg_symbol._name, arg_type);
+			}
+			vector<ast_node_ptr> body_nodes;
+			for (cons_cell* body_item = &body; body_item; body_item = object_traits::cast<cons_cell>(body_item->_next) )
+			{
+				body_nodes.push_back(&context._type_checker(body_item->_value));
+			}
+			function_factory& factory = context._module->define_function(context._name_table->register_name(fn_name._name)
+																			, named_type_buffer( fn_args )
+																			, context.symbol_type( fn_name ) );
+			factory.set_function_body(body_nodes);
+			return nullptr;
+		}
+	};
+}
+
+void base_language_plugins::register_base_compiler_plugins(string_table_ptr str_table
+	, string_plugin_map_ptr top_level_special_forms
+	, string_plugin_map_ptr /*special_forms*/
+	, string_lisp_evaluator_map& /*lisp_evaluators*/)
+{
+	top_level_special_forms->insert(make_pair( str_table->register_str("defn"), make_shared<defn_compiler_plugin>() ));
+}
+
 namespace
 {
 	typedef function<llvm::Value* (IRBuilder<>& builder, llvm_value_ptr lhs, llvm_value_ptr rhs)> binary_fn_implementation;
