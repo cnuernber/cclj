@@ -115,6 +115,7 @@ namespace
 		type_ref&				_function_type;
 		vector<ast_node_ptr>	_body;
 		void*					_external_body;
+		compile_pass_fn			_user_body;
 		visibility::_enum		_visibility;
 
 		llvm::Function*			_function;
@@ -132,7 +133,9 @@ namespace
 		}
 
 		virtual void set_function_body(ast_node_buffer body) 
-		{ 
+		{
+			if (_user_body)
+				throw runtime_error("functions may either be defined via external pointers or ast nodes but not both");
 			if (_external_body)
 				throw runtime_error("functions may either be defined via external pointers or ast nodes but not both");
 			_body.assign(body.begin(), body.end()); 
@@ -140,9 +143,20 @@ namespace
 
 		virtual void set_function_body(void* fn_ptr)
 		{
+			if ( _user_body )
+				throw runtime_error("functions may either be defined via external pointers or ast nodes but not both");
 			if (_body.empty() == false)
 				throw runtime_error("functions may either be defined via external pointers or ast nodes but not both");
 			_external_body = fn_ptr;
+		}
+
+		virtual void set_function_override_body(compile_pass_fn fn)
+		{
+			if (_body.empty() == false)
+				throw runtime_error("functions may either be defined via external pointers or ast nodes but not both");
+			if (_external_body)
+				throw runtime_error("functions may either be defined via external pointers or ast nodes but not both");
+			_user_body = fn;
 		}
 
 		virtual void set_visibility(visibility::_enum visibility) { _visibility = visibility; }
@@ -157,6 +171,7 @@ namespace
 		virtual bool is_external() const { return _external_body != nullptr; }
 		virtual ast_node_buffer get_function_body() { return _body; }
 		virtual void*			get_function_external_body() { return _external_body; }
+		virtual compile_pass_fn get_function_override_body() { return _user_body; }
 		virtual void compile_first_pass(compiler_context& ctx)
 		{
 			vector<llvm_type_ptr> arg_types;
@@ -181,8 +196,7 @@ namespace
 				ctx._eng.addGlobalMapping(_function, _external_body);
 		}
 
-		static void initialize_function(compiler_context& context, Function& fn, data_buffer<named_type> fn_args
-			, variable_context& var_context)
+		static void initialize_function(compiler_context& context, Function& fn, data_buffer<named_type> fn_args )
 		{
 			size_t arg_idx = 0;
 			for (Function::arg_iterator AI = fn.arg_begin(); arg_idx != fn_args.size();
@@ -210,7 +224,7 @@ namespace
 					// Store the initial value into the alloca.
 					context._builder.CreateStore(AI, Alloca);
 				}
-				var_context.add_variable(arg_def.name, Alloca, *arg_def.type);
+				context._module->add_local_variable(arg_def.name, *arg_def.type, *Alloca );
 			}
 		}
 
@@ -221,13 +235,20 @@ namespace
 				pair<llvm_value_ptr_opt, type_ref_ptr> last_statement(nullptr, nullptr);
 				{
 					compiler_scope_watcher _fn_scope(ctx);
-					variable_context fn_context(ctx._variables);
-					initialize_function(ctx, *_function, _arguments, fn_context);
+					module::compilation_variable_scope fn_context(ctx._module);
+					initialize_function(ctx, *_function, _arguments);
 
-					for (auto iter = _body.begin(), end = _body.end(); iter != end; ++iter)
+					if (_user_body)
 					{
-						ast_node& item = **iter;
-						last_statement = item.compile_second_pass(ctx);
+						last_statement = _user_body(ctx);
+					}
+					else
+					{
+						for (auto iter = _body.begin(), end = _body.end(); iter != end; ++iter)
+						{
+							ast_node& item = **iter;
+							last_statement = item.compile_second_pass(ctx);
+						}
 					}
 				}
 				Value* retval = nullptr;
@@ -401,6 +422,41 @@ namespace
 			if (idx >= 0 && idx < _properties.ordered_values.size())
 				return _properties.ordered_values[(unsigned int)idx]->second;
 			return datatype_property();
+		}
+
+		virtual int32_t index_of_field(string_table_str name)
+		{
+			int32_t field_idx = 0;
+			for (auto iter = _properties.ordered_begin(), end = _properties.ordered_end(); iter != end; ++iter)
+			{
+				if ((*iter)->first == name)
+				{
+					if ((*iter)->second.type() != datatype_property_type::field)
+						throw runtime_error("property is not a field");
+					return field_idx;
+				}
+				if ((*iter)->second.type() == datatype_property_type::field)
+					++field_idx;
+			}
+			throw runtime_error("Failed to find any property by name");
+		}
+
+		virtual int32_t index_of_field(int64_t prop_idx )
+		{
+			int32_t field_idx = 0;
+			int64_t cur_prop_idx = 0;
+			for (auto iter = _properties.ordered_begin(), end = _properties.ordered_end(); iter != end; ++iter, ++cur_prop_idx)
+			{
+				if (prop_idx == cur_prop_idx)
+				{
+					if ((*iter)->second.type() != datatype_property_type::field)
+						throw runtime_error("property is not a field");
+					return field_idx;
+				}
+				if ((*iter)->second.type() == datatype_property_type::field)
+					++field_idx;
+			}
+			throw runtime_error("property index out of range");
 		}
 
 		virtual data_buffer<datatype_property> static_properties()
@@ -1026,8 +1082,8 @@ namespace
 							auto prop = dtype->get_property_by_index(val_idx);
 							if (prop.type() == datatype_property_type::field)
 							{
-								int32_t val_idx = dtype->index_of_field(val_idx);
-								retval.GEPArgs.push_back(llvm::ConstantInt::get(llvm::IntegerType::getInt32Ty(llvm::getGlobalContext()), val_idx));
+								int32_t field_idx = dtype->index_of_field(val_idx);
+								retval.GEPArgs.push_back(llvm::ConstantInt::get(llvm::IntegerType::getInt32Ty(llvm::getGlobalContext()), field_idx));
 								retval.final_type = prop.data<named_type>().type;
 							}
 						}
@@ -1073,9 +1129,23 @@ namespace
 			return pair<llvm::Value*, type_ref_ptr>(nullptr, nullptr);
 		}
 
-		virtual void store_variable(const variable_lookup_chain& lookup_args, llvm::Value& value)
+		virtual void store_variable(cclj::compiler_context& context, const variable_lookup_chain& lookup_args, llvm::Value& value)
 		{
-
+			variable_lookup_resolution_result lookup_result = lookup_compile_variable(lookup_args);
+			if (lookup_result.initial_resolution)
+			{
+				if (lookup_result.GEPArgs.size())
+				{
+					llvm::Value* new_ptr = context._builder.CreateGEP(lookup_result.initial_resolution, lookup_result.GEPArgs);
+					context._builder.CreateStore(&value, new_ptr);
+				}
+				else
+				{
+					llvm::Value* loaded_value = lookup_result.initial_resolution;
+					if (lookup_result.is_stack)
+						loaded_value = context._builder.CreateStore(&value, loaded_value);
+				}
+			}
 		}
 		virtual void end_variable_compilation_scope()
 		{

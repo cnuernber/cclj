@@ -461,7 +461,7 @@ namespace {
 			, _module(module::create_module(_str_table, _type_library, _name_table))
 		{
 			base_language_plugins::register_base_compiler_plugins( _str_table, _top_level_special_forms, _special_forms, _evaluators );
-			binary_low_level_ast_node::register_binary_functions( _module, _type_library, _str_table, _ast_allocator );
+			binary_low_level_ast_node::register_binary_functions( _module, _type_library, _name_table );
 			type_ref& base_type = _type_library->get_type_ref( base_numeric_types::i32 );
 			type_ref& ptr_lvl1 = _type_library->get_ptr_type( base_type );
 			type_ref& runtime_type = ptr_lvl1;

@@ -104,6 +104,8 @@ namespace cclj
 		{
 			return traits_type::visit( _data, _type_id, visitor );
 		}
+
+		bool empty() const { return _type_id == traits_type::empty_type(); }
 	};
 
 	

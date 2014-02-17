@@ -60,6 +60,7 @@ namespace cclj
 	};
 
 	typedef data_buffer<named_type> named_type_buffer;
+	typedef function<pair<llvm_value_ptr_opt, type_ref_ptr> (compiler_context&)> compile_pass_fn;
 
 	class function_factory
 	{
@@ -68,9 +69,11 @@ namespace cclj
 	public:
 		virtual void set_function_body(ast_node_buffer body) = 0;
 		virtual void set_function_body(void* fn_ptr) = 0;
+		virtual void set_function_override_body(compile_pass_fn) = 0;
 		virtual void set_visibility(visibility::_enum visibility) = 0;
 		virtual function_node& node() = 0;
 	};
+
 
 	class function_node
 	{
@@ -88,6 +91,7 @@ namespace cclj
 		virtual bool is_external() const = 0;
 		virtual ast_node_buffer get_function_body() = 0;
 		virtual void*			get_function_external_body() = 0;
+		virtual compile_pass_fn get_function_override_body() = 0;
 		virtual void compile_first_pass(compiler_context& ctx) = 0;
 		virtual void compile_second_pass(compiler_context& ctx) = 0;
 		virtual llvm::Function& llvm() = 0;
@@ -425,10 +429,17 @@ namespace cclj
 			{
 			case variable_lookup_entry_type::string_table_str: return v(*reinterpret_cast<string_table_str*>(data));
 			case variable_lookup_entry_type::int64: return v(*reinterpret_cast<int64_t*>(data));
-			case variable_lookup_entry_type::value: return v(*reinterpret_cast<llvm::Value*>(data));
+			case variable_lookup_entry_type::value: return v(*reinterpret_cast<llvm::Value**>(data));
 			default: break;
 			}
 			throw runtime_error("failed to visit type");
+		}
+	};
+
+	template <> struct variant_destruct<string_table_str>
+	{
+		void operator()(string_table_str&)
+		{
 		}
 	};
 

@@ -44,8 +44,7 @@ namespace cclj { namespace plugins {
 	class binary_low_level_ast_node
 	{
 	public:
-		static void register_binary_functions( shared_ptr<module> module, type_library_ptr type_lib
-			, string_table_ptr str_table, slab_allocator_ptr ast_allocator );
+		static void register_binary_functions(shared_ptr<module> module, type_library_ptr type_lib, qualified_name_table_ptr name_table);
 	};
 	
 	

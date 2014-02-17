@@ -59,6 +59,10 @@ namespace cclj
 			string_table_str_buffer buf(&str, 1);
 			return register_name(buf);
 		}
+		qualified_name register_name(const string& nm)
+		{
+			return register_name(nm.c_str());
+		}
 
 		static shared_ptr<qualified_name_table> create_table(string_table_ptr st);
 	};

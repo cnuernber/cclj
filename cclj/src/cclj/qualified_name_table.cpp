@@ -79,7 +79,7 @@ namespace
 	};
 }
 
-qualified_name_table_ptr qualified_name_table::create_table()
+qualified_name_table_ptr qualified_name_table::create_table(string_table_ptr st)
 {
-	return make_shared<qualified_name_table_impl>();
+	return make_shared<qualified_name_table_impl>(st);
 }
