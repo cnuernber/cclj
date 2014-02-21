@@ -12,6 +12,7 @@
 #include "cclj/data_buffer.h"
 #include "cclj/string_table.h"
 #include "cclj/allocator.h"
+#include "cclj/noncopyable.h"
 
 namespace cclj
 {
@@ -103,7 +104,7 @@ CCLJ_LIST_ITERATE_BASE_NUMERIC_TYPES
 	class type_ref;
 	typedef type_ref* type_ref_ptr;
 	typedef data_buffer<type_ref_ptr> type_ref_ptr_buffer;
-	class type_ref
+	class type_ref : noncopyable
 	{
 	public:
 		string_table_str			_name;

@@ -630,7 +630,7 @@ namespace
 			case module_symbol_type::variable: return data<variable_node_ptr>();
 			case module_symbol_type::function:
 			{
-				const vector<function_node_ptr> item = data<vector<function_node_ptr> >();
+				const vector<function_node_ptr>& item = data<vector<function_node_ptr> >();
 				return function_node_buffer(const_cast<vector<function_node_ptr>&>(item));
 			}
 			case module_symbol_type::datatype: return data<datatype_node_ptr>();

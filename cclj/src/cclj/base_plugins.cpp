@@ -376,9 +376,10 @@ namespace
 		named_type arg_names[] = { named_type(lhs_name, &lhs_type), named_type(rhs_name, &rhs_type) };
 		named_type_buffer arg_buffer(arg_names, 2);
 		function_factory& new_fn = module->define_function(name_table->register_name(name), arg_buffer, retval_type);
-		compile_pass_fn fn_body = [&](compiler_context&ctx)
+		type_ref_ptr retval_type_ptr(&retval_type);
+		compile_pass_fn fn_body = [=](compiler_context&ctx)
 		{
-			return implement_binary_function(ctx, impl, retval_type);
+			return implement_binary_function(ctx, impl, *retval_type_ptr);
 		};
 		new_fn.set_function_override_body(fn_body);
 	}
