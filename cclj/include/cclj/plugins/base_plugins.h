@@ -33,6 +33,8 @@ namespace cclj { namespace plugins {
 		ast_node& type_check_apply( reader_context& context, lisp::cons_cell& cell );
 		ast_node& type_check_numeric_constant( reader_context& context, lisp::constant& cell );
 
+		static vector<string> split_symbol(lisp::symbol& sym);
+
 		static void register_base_compiler_plugins( string_table_ptr str_table
 													, string_plugin_map_ptr top_level_special_forms
 													, string_plugin_map_ptr special_forms

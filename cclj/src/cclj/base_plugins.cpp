@@ -113,23 +113,25 @@ namespace
 		for_each(resolved_args.begin(), resolved_args.end(), [&](ast_node_ptr arg_node) { new_node->children().push_back(*arg_node); });
 		return *new_node;
 	}
-	vector<string> split_symbol(symbol& sym)
+}
+
+
+vector<string> base_language_plugins::split_symbol(symbol& sym)
+{
+	vector<string> retval;
+	string temp(sym._name.c_str());
+	size_t last_offset = 0;
+	for (size_t off = temp.find('.'); off != string::npos;
+		off = temp.find('.', off + 1))
 	{
-		vector<string> retval;
-		string temp(sym._name.c_str());
-		size_t last_offset = 0;
-		for (size_t off = temp.find('.'); off != string::npos;
-			off = temp.find('.', off + 1))
-		{
-			retval.push_back(temp.substr(last_offset, off - last_offset));
-			last_offset = off + 1;
-		}
-		if (last_offset < temp.size())
-		{
-			retval.push_back(temp.substr(last_offset, temp.size() - last_offset));
-		}
-		return retval;
+		retval.push_back(temp.substr(last_offset, off - last_offset));
+		last_offset = off + 1;
 	}
+	if (last_offset < temp.size())
+	{
+		retval.push_back(temp.substr(last_offset, temp.size() - last_offset));
+	}
+	return retval;
 }
 
 ast_node& base_language_plugins::type_check_apply(reader_context& context, lisp::cons_cell& cell)

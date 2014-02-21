@@ -6,6 +6,7 @@
 //	license are located under the top cclj directory
 //==============================================================================
 #include "precompile.h"
+#include "cclj/plugins/base_plugins.h"
 #include "cclj/plugins/language_plugins.h"
 #include "cclj/module.h"
 
@@ -224,6 +225,151 @@ namespace {
 			return new_node;
 		}
 	};
+
+
+	struct for_loop_ast_node : public ast_node
+	{
+		vector<pair<symbol*, ast_node*> >	_for_vars;
+		ast_node_ptr						_cond_node;
+
+		for_loop_ast_node(string_table_ptr st, type_library_ptr lt)
+			: ast_node(lt->get_void_type())
+		{
+		}
+
+
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			compiler_scope_watcher _for_scoping(context);
+			module::compilation_variable_scope _for_var_scope(context._module);
+			let_ast_node::initialize_assign_block(context, _for_vars);
+			Function* theFunction = context._builder.GetInsertBlock()->getParent();
+
+			BasicBlock* loop_update_block = BasicBlock::Create(getGlobalContext(), "loop update", theFunction);
+			BasicBlock* cond_block = BasicBlock::Create(getGlobalContext(), "cond block", theFunction);
+			BasicBlock* exit_block = BasicBlock::Create(getGlobalContext(), "exit block", theFunction);
+			context._builder.CreateBr(cond_block);
+			context._builder.SetInsertPoint(cond_block);
+			llvm_value_ptr next_val = _cond_node->compile_second_pass(context).first.get();
+			context._builder.CreateCondBr(next_val, loop_update_block, exit_block);
+
+			context._builder.SetInsertPoint(loop_update_block);
+			//output looping
+			for (auto iter = children().begin(), end = children().end(); iter != end; ++iter)
+			{
+				iter->compile_second_pass(context);
+			}
+			context._builder.CreateBr(cond_block);
+			context._builder.SetInsertPoint(exit_block);
+			return pair<llvm_value_ptr_opt, type_ref_ptr>(nullptr, &context._type_library->get_void_type());
+		}
+	};
+
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(for_loop_ast_node);
+
+	struct for_loop_plugin : public compiler_plugin
+	{
+		for_loop_plugin()
+		{
+		}
+		virtual ast_node* type_check(reader_context& context, lisp::cons_cell& cell)
+		{
+			// for loop is an array of init statements
+			// a boolean conditional, 
+			// an array of update statements
+			// and the rest is the for body.
+			cons_cell& init_cell = object_traits::cast_ref<cons_cell>(cell._next);
+			cons_cell& cond_cell = object_traits::cast_ref<cons_cell>(init_cell._next);
+			cons_cell& update_cell = object_traits::cast_ref<cons_cell>(cond_cell._next);
+			cons_cell& body_start = object_traits::cast_ref<cons_cell>(update_cell._next);
+			object_ptr_buffer init_list = object_traits::cast_ref<array>(init_cell._value)._data;
+			object_ptr_buffer update_list = object_traits::cast_ref<array>(update_cell._value)._data;
+			vector<pair<symbol*, ast_node*> > init_nodes;
+			module::type_check_variable_scope __for_scope(context._module);
+			for (size_t idx = 0, end = init_list.size(); idx < end; idx += 2)
+			{
+				symbol& var_name = object_traits::cast_ref<symbol>(init_list[idx]);
+				ast_node& var_expr = context._type_checker(init_list[idx + 1]);
+				init_nodes.push_back(make_pair(&var_name, &var_expr));
+				context._module->add_local_variable_type(var_name._name, var_expr.type());
+			}
+			ast_node& cond_node = context._type_checker(cond_cell._value);
+			if (context._type_library->to_base_numeric_type(cond_node.type())
+				!= base_numeric_types::i1)
+				throw runtime_error("invalid for statement; condition not boolean");
+			vector<ast_node*> body_nodes;
+			for (cons_cell* body_cell = &body_start; body_cell
+				; body_cell = object_traits::cast<cons_cell>(body_cell->_next))
+			{
+				body_nodes.push_back(&context._type_checker(body_cell->_value));
+			}
+			for_each(update_list.begin(), update_list.end(), [&]
+				(object_ptr item)
+			{
+				body_nodes.push_back(&context._type_checker(item));
+			});
+			for_loop_ast_node* new_node
+				= context._ast_allocator->construct<for_loop_ast_node>(context._string_table, context._type_library);
+			new_node->_for_vars = init_nodes;
+			new_node->_cond_node = &cond_node;
+			for_each(body_nodes.begin(), body_nodes.end(), [&]
+				(ast_node_ptr node)
+			{
+				new_node->children().push_back(*node);
+			});
+			return new_node;
+		}
+	};
+
+	struct set_ast_node : public ast_node
+	{
+		variable_lookup_chain _chain;
+		set_ast_node(const type_ref& type, const variable_lookup_chain& c) : ast_node(type), _chain(c) {}
+
+		virtual pair<llvm_value_ptr_opt, type_ref_ptr> compile_second_pass(compiler_context& context)
+		{
+			pair<llvm_value_ptr_opt, type_ref_ptr> expr_result = children().begin()->compile_second_pass(context);
+			if ( expr_result.first.valid() )
+				context._module->store_variable(context, _chain, expr_result.first.deref());
+			return expr_result;
+		}
+	};
+
+	CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(set_ast_node);
+
+	struct set_plugin : public compiler_plugin
+	{
+		set_plugin(){}
+		//syntax is (set target expr)
+		//target->a->b->c = expr;
+		virtual ast_node* type_check(reader_context& context, lisp::cons_cell& cell)
+		{
+			cons_cell& symbol_cell = object_traits::cast_ref<cons_cell>(cell._next);
+			symbol& target = object_traits::cast_ref<symbol>(symbol_cell._value);
+			vector<cons_cell*> arg_cells;
+			for (cons_cell* next_cell = object_traits::cast<cons_cell>(symbol_cell._next);
+				next_cell; next_cell = object_traits::cast<cons_cell>(next_cell->_next))
+				arg_cells.push_back(next_cell);
+			if (arg_cells.size() == 0)
+				throw runtime_error("invalid number of arguments to set");
+
+			cons_cell* expr_cell = arg_cells.back();
+			arg_cells.pop_back();
+
+			variable_lookup_chain lookup_chain;
+			vector<string> split_data = base_language_plugins::split_symbol(target);
+			lookup_chain.name = context._name_table->register_name(split_data);
+			option<variable_lookup_typecheck_result> results = context._module->type_check_variable_access(lookup_chain);
+			if (results.empty() || !results->read)
+				throw runtime_error("invalid set");
+			ast_node& expr_node = context._type_checker(expr_cell->_value);
+			if (&expr_node.type() != results->type)
+				throw runtime_error("invalid set");
+			ast_node* retval = context._ast_allocator->construct<set_ast_node>(*results->type, lookup_chain);
+			retval->children().push_back(expr_node);
+			return retval;
+		}
+	};
 }
 
 
@@ -237,6 +383,10 @@ void language_plugins::register_plugins(qualified_name_table_ptr name_table
 		, make_shared<if_compiler_plugin>()));
 	special_forms->insert(make_pair(string_table->register_str("let")
 		, make_shared<let_compiler_plugin>()));
+	special_forms->insert(make_pair(string_table->register_str("for")
+		, make_shared<for_loop_plugin>()));
+	special_forms->insert(make_pair(string_table->register_str("set")
+		, make_shared<set_plugin>()));
 }
 
 

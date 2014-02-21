@@ -64,6 +64,17 @@ namespace cclj
 			return register_name(nm.c_str());
 		}
 
+		qualified_name register_name(data_buffer<string> name)
+		{
+			if (name.size() == 1)
+				return register_name(name[0].c_str());
+
+			vector<string_table_str> data_buf(name.size());
+			auto str_table = string_table();
+			for (size_t idx = 0, end = name.size(); idx < end; ++idx)
+				data_buf[idx] = str_table->register_str(name[idx].c_str());
+			return register_name(data_buf);
+		}
 		static shared_ptr<qualified_name_table> create_table(string_table_ptr st);
 	};
 
