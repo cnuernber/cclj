@@ -651,6 +651,10 @@ namespace
 			: name(name, &type)
 			, value(&value)
 		{}
+		local_variable_entry(string_table_str name, type_ref& void_type)
+			: name(name, &void_type)
+			, value(nullptr)
+		{}
 	};
 
 	typedef vector<local_variable_entry> local_variable_entry_list;
@@ -971,6 +975,14 @@ namespace
 			if (_local_variable_compile_stack.empty())
 				throw runtime_error("invalid local variable management");
 			_local_variable_compile_stack.back().push_back(local_variable_entry(name, type, value));
+		}
+
+		virtual void add_void_local_variable(string_table_str name)
+		{
+			if (_local_variable_compile_stack.empty())
+				throw runtime_error("invalid local variable management");
+
+			_local_variable_compile_stack.back().push_back(local_variable_entry(name, _type_library->get_void_type()));
 		}
 
 		struct variable_lookup_resolution_result

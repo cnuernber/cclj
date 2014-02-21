@@ -112,36 +112,6 @@ namespace cclj
 	typedef unordered_map<type_ref_ptr, ast_node_ptr> type_ast_node_map;
 	typedef shared_ptr<type_ast_node_map> type_ast_node_map_ptr;
 
-	struct variable_context
-	{
-		string_alloca_type_map&													_variables;
-		vector<pair<string_table_str, pair<llvm_value_ptr_opt, type_ref_ptr> > >	_added_vars;
-		variable_context( string_alloca_type_map& vars ) : _variables( vars ) {}
-		~variable_context()
-		{
-			for_each( _added_vars.rbegin(), _added_vars.rend(), [this]
-			( const pair<string_table_str, pair<llvm_value_ptr_opt, type_ref_ptr> >& var )
-			{
-				if ( var.second.first )
-					_variables[var.first] = var.second;
-				else
-					_variables.erase( var.first );
-			});
-		}
-		
-		void add_variable( string_table_str name, llvm_alloca_ptr alloca, type_ref& type )
-		{
-			auto inserter = _variables.insert( make_pair( name, make_pair( alloca, &type ) ) );
-			pair<llvm_value_ptr_opt, type_ref_ptr> old_value( nullptr, nullptr );
-			if ( inserter.second == false )
-			{
-				old_value = inserter.first->second;
-				inserter.first->second = make_pair( alloca, &type );
-			}
-			_added_vars.push_back( make_pair( name, old_value ) );
-		}
-	};
-
 	struct compiler_scope
 	{
 		vector<llvm::BasicBlock*> _blocks;
@@ -176,7 +146,6 @@ namespace cclj
 		llvm::ExecutionEngine&		_eng;
 		type_library_ptr			_type_library;
 		llvm_builder				_builder;
-		string_alloca_type_map		_variables;
 		type_llvm_type_map			_type_map;
 		qualified_name_table_ptr	_name_table;
 		shared_ptr<module>			_module;
@@ -228,30 +197,6 @@ namespace cclj
 		virtual void set_value( compiler_context& context, llvm_value_ptr_opt value ) = 0;
 	};
 
-	//intermediary to allow arbitrary symbol resolution via the ast plugin system.
-	struct symbol_resolution_context
-	{
-	protected:
-		virtual ~symbol_resolution_context(){}
-	public:
-		friend class shared_ptr<symbol_resolution_context>;
-
-		virtual string_table_str initial_symbol() = 0;
-		//provided by the AST plugins
-		virtual void add_GEP_index( uint32_t idx, type_ref& type ) = 0;
-		//obviously the accessor will need to last the lifetime of the compiler system.
-		virtual void add_value_accessor( value_accessor& accessor ) = 0; 
-
-
-		//used by the system.
-		virtual type_ref& resolved_type() = 0;
-		virtual llvm_value_ptr_opt load( compiler_context& context, data_buffer<llvm_value_ptr> indexes ) = 0;
-		virtual void store( compiler_context& context, data_buffer<llvm_value_ptr> indexes, llvm_value_ptr_opt val ) = 0;
-
-		static shared_ptr<symbol_resolution_context> create(string_table_str initial_symbol, type_ref& initial_type);
-	};
-
-	typedef shared_ptr<symbol_resolution_context> symbol_resolution_context_ptr;
 
 	CCLJ_DEFINE_INVASIVE_SINGLE_LIST(ast_node); 
 	//AST nodes are allocated with the slab allocator.  This means they do not need
@@ -287,16 +232,6 @@ namespace cclj
 		virtual ast_node& apply( reader_context& /*context*/, data_buffer<ast_node_ptr> /*args*/ )
 		{
 			throw runtime_error( "ast node cannot handle apply" );
-		}
-
-		//Called to allow the ast node to resolve the rest of a symbol when the symbol's first item pointed
-		//to a variable if this node type.  Used for chained lookups of the type a.b.c.d regardless of if
-		//getting or setting.  This allows AST nodes to provide custom get/set code for properties.
-		virtual void resolve_symbol( reader_context& /*context*/
-											, string_table_str /*split_symbol*/
-											, symbol_resolution_context& /*resolution_context*/ )
-		{
-			throw runtime_error( "ast node cannot resolve symbol" );
 		}
 
 		virtual void compile_first_pass(compiler_context& /*context*/) {}

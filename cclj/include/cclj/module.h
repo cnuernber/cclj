@@ -566,6 +566,7 @@ namespace cclj
 
 		virtual void begin_variable_compilation_scope() = 0;
 		virtual void add_local_variable(string_table_str name, type_ref& type, llvm::Value& value) = 0;
+		virtual void add_void_local_variable(string_table_str name) = 0;
 		virtual pair<llvm::Value*, type_ref_ptr> load_variable(compiler_context& context, const variable_lookup_chain& lookup_args) = 0;
 		virtual void store_variable(compiler_context& context, const variable_lookup_chain& lookup_args, llvm::Value& value) = 0;
 		virtual void end_variable_compilation_scope() = 0;

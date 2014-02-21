@@ -28,14 +28,12 @@
 #endif
 
 #include "cclj/llvm_base_numeric_type_helper.h"
+#include "cclj/plugins/plugin_impl_helper.h"
 
 using namespace cclj;
 using namespace cclj::lisp;
 using namespace cclj::plugins;
 using namespace llvm;
-
-#define CCLJ_BASE_PLUGINS_DESTRUCT_AST_NODE(data_type) \
-} namespace cclj { CCLJ_SLAB_ALLOCATOR_REQUIRES_DESTRUCTION(data_type) } namespace {
 
 namespace
 {
